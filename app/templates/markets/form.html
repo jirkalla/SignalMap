@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
+
+{% if error %}
+<div class="max-w-lg bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ action }}" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
+  {{ text_field('code', t('market.code_label'), market.code if market else '', required=True, placeholder=t('market.code_placeholder')) }}
+  {{ text_field('language', t('market.language_label'), market.language if market else '', required=True, placeholder=t('market.language_placeholder')) }}
+  {{ text_field('country', t('market.country_label'), market.country if market else '', placeholder=t('market.country_placeholder')) }}
+  {{ text_field('label', t('market.label_label'), market.label if market else '', placeholder=t('market.label_placeholder')) }}
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

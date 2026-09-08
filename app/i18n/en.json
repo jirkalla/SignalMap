@@ -3,6 +3,23 @@
   "nav.clients": "Clients",
   "nav.docs": "API Docs",
   "nav.help": "Guide",
+  "nav.markets": "Markets",
+
+  "market.list_title": "Markets",
+  "market.create_title": "New market",
+  "market.edit_title": "Edit market",
+  "market.code_label": "Code",
+  "market.code_placeholder": "de-DE",
+  "market.language_label": "Language",
+  "market.language_placeholder": "de",
+  "market.country_label": "Country",
+  "market.country_placeholder": "DE",
+  "market.label_label": "Label",
+  "market.label_placeholder": "German (Germany)",
+  "market.prompts_using_label": "Prompts using it",
+  "market.empty_state": "No markets yet. Prompts need at least one market to be created.",
+  "market.delete_button": "Delete",
+  "market.delete_confirm": "Delete this market? This can't be undone.",
 
   "help.title": "How to use SignalMap",
   "help.lede": "A walkthrough of the phase-1 workflow: client, prompt set, prompt, run.",
@@ -23,7 +40,8 @@
   "help.prompts.title": "Prompts",
   "help.prompts.body": "A prompt is one exact question sent to an AI model.",
   "help.prompts.text": "The exact question text, sent to the model as-is.",
-  "help.prompts.market": "The language/country context for the question — affects what sources and language context the model uses.",
+  "help.prompts.market": "The language/country context the question belongs to — used to classify and compare prompts across markets. It does not change the request sent to the model, so write the prompt text itself in that market's language.",
+  "help.markets_cta": "Markets are managed on their own page.",
   "help.prompts.topic": "Optional label for grouping or filtering prompts later.",
   "help.prompts.active": "Inactive prompts stay in history but aren't offered for new runs.",
   "help.running.title": "Running a prompt",
@@ -109,5 +127,8 @@
   "errors.run_not_found": "Run not found.",
   "errors.model_not_found": "Model not found.",
   "errors.provider_not_supported": "This provider is not supported yet.",
-  "errors.provider_call_failed": "The provider call failed."
+  "errors.provider_call_failed": "The provider call failed.",
+  "errors.market_not_found": "Market not found.",
+  "errors.market_code_conflict": "A market with this code already exists.",
+  "errors.market_in_use": "This market is used by {count} prompt(s) and can't be deleted. Remove or reassign those prompts first."
 }
