@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: signalmap_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: signalmap
+      POSTGRES_USER: signalmap_user
+      POSTGRES_PASSWORD: change_me_locally
+    ports:
+      - "55432:5432"        # host:container
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: signalmap_app
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://signalmap_user:change_me_locally@postgres:5432/signalmap
+    ports:
+      - "58000:8000"         # host:container
+    volumes:
+      - .:/code
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  pgdata:
