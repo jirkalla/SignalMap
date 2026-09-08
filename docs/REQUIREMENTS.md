@@ -88,6 +88,24 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   Compose on the developer's PC and on a future VPS deployment — no
   environment-specific setup steps outside `.env` values.
 
+## 3a. Phase 1 amendments (2026-09-08)
+
+Two deliberate deviations from the scope above, decided when building the
+phase-1 prototype, recorded here rather than left as conversation history:
+
+- **Tailwind CSS is in scope now, not deferred.** §4 below originally
+  listed "Tailwind visual styling" as out of scope for phase 1. The
+  prototype is being used to present the project, so a plain-HTML screen
+  would undersell it — Tailwind is loaded via CDN (no build step), so the
+  cost of doing this now is negligible.
+- **i18n (NFR-2) ships as mechanism only, not path-prefix routing.** The
+  signalmap-conventions skill recommends URL path-prefix locale routing
+  (`/de/...`, `/en/...`) as the long-term direction. Phase 1 implements the
+  `t()` translation mechanism with real EN/DE content and a cookie-based
+  locale switch instead — full path-prefix routing touches every route and
+  is a bigger architectural change than "exactly Tasks 1–6" calls for. The
+  skill's recommended direction is still the target for a later phase.
+
 ## 4. Explicitly Out of Scope for Phase 1
 
 - Authentication and user accounts (single shared local access for now).

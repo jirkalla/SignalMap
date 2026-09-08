@@ -11,6 +11,20 @@ building the run endpoint before the models exist) creates rework.
 
 ---
 
+## How to run
+
+1. `cp .env.example .env` and fill in `GOOGLE_API_KEY`
+   (https://aistudio.google.com/apikey) — the app starts without it, but
+   triggering a run will fail.
+2. `docker compose up -d --build`
+3. `docker compose exec app alembic upgrade head` — creates the schema and
+   seed data (markets, the Google provider, the two Gemini models). This is
+   the only manual setup step, per NFR-8.
+4. Open http://localhost:58000/clients to use the app, or
+   http://localhost:58000/docs for the interactive API reference.
+
+---
+
 ## Task 1 — Database models & migration
 Turn `schema_phase1.sql` into SQLAlchemy models and a working Alembic
 migration, plus seed data (markets, Google provider, the two Gemini models).

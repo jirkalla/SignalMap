@@ -6,11 +6,14 @@ services:
     environment:
       POSTGRES_DB: signalmap
       POSTGRES_USER: signalmap_user
-      POSTGRES_PASSWORD: change_me_locally
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
     ports:
       - "55432:5432"        # host:container
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18+ images store the cluster under a version-specific
+      # subdirectory of /var/lib/postgresql itself, not .../data directly —
+      # mounting at .../data (the pre-18 convention) fails at startup.
+      - pgdata:/var/lib/postgresql
 
   app:
     build: .
@@ -18,8 +21,8 @@ services:
     restart: unless-stopped
     depends_on:
       - postgres
-    environment:
-      DATABASE_URL: postgresql://signalmap_user:change_me_locally@postgres:5432/signalmap
+    env_file:
+      - .env
     ports:
       - "58000:8000"         # host:container
     volumes:

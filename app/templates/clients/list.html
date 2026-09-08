@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button %}
+{% block title %}{{ t('client.list_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">{{ t('client.list_title') }}</h1>
+  <a href="/clients/new">{{ button(t('common.new')) }}</a>
+</div>
+
+{% if clients %}
+<div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        <th class="py-3 px-4 font-medium">{{ t('common.name') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('client.industry_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('common.created_at') }}</th>
+        <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for client in clients %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50">
+        <td class="py-3 px-4"><a href="/clients/{{ client.id }}" class="font-medium text-stone-900 hover:underline">{{ client.name }}</a></td>
+        <td class="py-3 px-4 text-stone-600">{{ client.industry or t('common.none') }}</td>
+        <td class="py-3 px-4 text-stone-500">{{ client.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="py-3 px-4 text-right"><a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="md:hidden space-y-3">
+  {% for client in clients %}
+  <a href="/clients/{{ client.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="font-medium text-stone-900">{{ client.name }}</div>
+    <div class="text-sm text-stone-500 mt-1">{{ client.industry or t('common.none') }}</div>
+    <div class="text-xs text-stone-400 mt-2">{{ client.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('client.empty_state') }}</p>
+{% endif %}
+{% endblock %}

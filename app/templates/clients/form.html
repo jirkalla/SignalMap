@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, textarea_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
+
+{% if error %}
+<div class="max-w-lg bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ action }}" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
+  {{ text_field('name', t('client.name_label'), client.name if client else '', required=True) }}
+  {{ text_field('industry', t('client.industry_label'), client.industry if client else '') }}
+  {{ textarea_field('notes', t('client.notes_label'), client.notes if client else '', rows=4) }}
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

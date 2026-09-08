@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, button %}
+{% block title %}{{ client.name }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-2">
+  <h1 class="text-xl font-semibold">{{ client.name }}</h1>
+  <a href="/clients/{{ client.id }}/edit" class="text-sm text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+</div>
+<div class="text-sm text-stone-500 mb-8 space-y-1">
+  <div>{{ t('client.industry_label') }}: {{ client.industry or t('common.none') }}</div>
+  {% if client.notes %}<div class="whitespace-pre-line mt-2">{{ client.notes }}</div>{% endif %}
+</div>
+
+<h2 class="text-lg font-semibold mb-3">{{ t('client.prompt_sets_title') }}</h2>
+
+<form method="post" action="/clients/{{ client.id }}/prompt-sets" class="max-w-md bg-white border border-stone-200 rounded-lg p-4 mb-6 flex flex-wrap items-end gap-3">
+  <div class="flex-1 min-w-[160px] mb-0">
+    {{ text_field('name', t('prompt_set.name_label'), '', required=True) }}
+  </div>
+  {{ button(t('common.new')) }}
+</form>
+
+{% if prompt_sets %}
+<div class="grid sm:grid-cols-2 gap-3">
+  {% for ps in prompt_sets %}
+  <a href="/prompt-sets/{{ ps.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white hover:border-stone-400">
+    <div class="font-medium">{{ ps.name }}</div>
+    <div class="text-xs text-stone-400 mt-1">{{ ps.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('prompt_set.empty_state') }}</p>
+{% endif %}
+{% endblock %}

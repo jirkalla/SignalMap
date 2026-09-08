@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button %}
+{% block title %}{{ prompt_set.name }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/clients/{{ prompt_set.client_id }}" class="hover:underline">{{ prompt_set.client.name }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-6">{{ prompt_set.name }}</h1>
+
+<h2 class="text-lg font-semibold mb-3">{{ t('prompt.create_title') }}</h2>
+<form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 max-w-2xl">
+  {{ textarea_field('text', t('prompt.text_label'), '', rows=3, required=True) }}
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ select_field('market_id', t('prompt.market_label'), markets, required=True) }}
+    {{ text_field('topic', t('prompt.topic_label'), '') }}
+  </div>
+  {{ checkbox_field('is_active', t('prompt.active_label'), checked=True) }}
+  {{ button(t('common.save')) }}
+</form>
+
+<h2 class="text-lg font-semibold mb-3">{{ t('prompt.title') }}</h2>
+{% if prompts %}
+<div class="space-y-3">
+  {% for p in prompts %}
+  <a href="/prompts/{{ p.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white hover:border-stone-400">
+    <div class="text-stone-900">{{ p.text }}</div>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500 mt-2">
+      <span>{{ p.market.code }}</span>
+      {% if p.topic %}<span>{{ p.topic }}</span>{% endif %}
+      <span>{{ t('common.yes') if p.is_active else t('common.no') }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('prompt.empty_state') }}</p>
+{% endif %}
+{% endblock %}

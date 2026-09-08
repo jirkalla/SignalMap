@@ -4,3 +4,7 @@ sqlalchemy
 psycopg[binary]
 alembic
 python-dotenv
+pydantic-settings
+jinja2
+python-multipart
+google-genai

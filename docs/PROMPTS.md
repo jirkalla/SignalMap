@@ -14,6 +14,14 @@ provider, the two ai_model rows — gemini-3.5-flash and gemini-3.1-flash-lite)
 as a data migration or seed script — tell me which approach you recommend
 and why before implementing it.
 
+> **Decided (2026-09-08):** data migration, not a separate seed script. The
+> seed inserts live in the same `alembic/versions/0001_phase1_schema.py`
+> migration that creates the tables (which itself executes
+> `schema_phase1.sql` verbatim), so `alembic upgrade head` remains the only
+> manual setup step after `docker compose up` — matching NFR-8 and the
+> phase-1 acceptance criteria in `docs/REQUIREMENTS.md` §6 exactly ("no
+> manual steps beyond running the Alembic migration").
+
 Follow the project conventions: English code/comments throughout, models
 organized one file per aggregate under app/models/, table/column naming
 exactly as in schema_phase1.sql.

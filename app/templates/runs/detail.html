@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import status_badge %}
+{% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/prompts/{{ run.prompt_id }}" class="hover:underline">{{ t('run.prompt_label') }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-6">{{ t('run.detail_title') }} #{{ run.id }}</h1>
+
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.metadata_title') }}</h2>
+  <dl class="grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('common.status') }}</dt>
+      <dd>{{ status_badge(run.status) }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.model_label') }}</dt>
+      <dd>{{ run.model.display_name or run.model.model_name }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.provider_label') }}</dt>
+      <dd>{{ run.model.provider.name }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.market_label') }}</dt>
+      <dd>{{ run.prompt.market.code }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.started_label') }}</dt>
+      <dd>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.finished_label') }}</dt>
+      <dd>{{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') if run.finished_at else t('common.none') }}</dd>
+    </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>
+      <dd>{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</dd>
+    </div>
+  </dl>
+</div>
+
+{% if run.status == 'error' %}
+<div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold uppercase tracking-wide mb-2">{{ t('run.error_label') }}</h2>
+  <p class="text-sm whitespace-pre-line">{{ run.error_message }}</p>
+</div>
+{% endif %}
+
+{% if raw_response %}
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.rendered_answer_label') }}</h2>
+  <p class="whitespace-pre-line text-stone-900">{{ raw_response.rendered_text or t('common.none') }}</p>
+</div>
+
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}</h2>
+  {% if citations %}
+  <ul class="space-y-3">
+    {% for c in citations %}
+    <li class="border-t border-stone-100 pt-3 first:border-t-0 first:pt-0">
+      <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words">{{ c.source_title or c.source_url }}</a>
+      <div class="text-xs text-stone-500 mt-1">{{ c.source_domain }}{% if c.citation_position is not none %} · #{{ c.citation_position }}{% endif %}</div>
+      {% if c.cited_answer_span %}<div class="text-sm text-stone-600 mt-1 italic">&ldquo;{{ c.cited_answer_span }}&rdquo;</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-stone-500 text-sm">{{ t('run.citations_empty') }}</p>
+  {% endif %}
+</div>
+
+<details class="bg-white border border-stone-200 rounded-lg p-4">
+  <summary class="text-sm font-semibold text-stone-500 uppercase tracking-wide cursor-pointer">{{ t('run.raw_json_label') }}</summary>
+  <pre class="mt-3 text-xs font-mono bg-stone-50 border border-stone-200 rounded-md p-3 overflow-x-auto">{{ raw_payload_json }}</pre>
+</details>
+{% endif %}
+{% endblock %}

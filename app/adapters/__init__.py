@@ -1,0 +1,21 @@
+"""Registry mapping a Provider.code to its adapter class.
+
+Adding a new provider later means adding a new adapter module plus one
+entry here — routers never import a specific adapter class directly.
+"""
+
+from app.adapters.base import ProviderAdapter
+from app.adapters.google import GoogleGeminiAdapter
+
+ADAPTERS: dict[str, type[ProviderAdapter]] = {
+    "google_gemini": GoogleGeminiAdapter,
+}
+
+
+def get_adapter(provider_code: str) -> ProviderAdapter:
+    """Instantiate the adapter registered for `provider_code`.
+
+    Raises KeyError if no adapter is registered — callers should turn that
+    into a structured AppError rather than a raw 500.
+    """
+    return ADAPTERS[provider_code]()
