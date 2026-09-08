@@ -24,6 +24,26 @@ def _extract_domain(url: str | None) -> str | None:
         return None
 
 
+def _resolve_source_domain(web: types.Web | None, source_url: str | None) -> str | None:
+    """Pick the best available domain for one grounding chunk.
+
+    Gemini's grounding chunks expose `web.uri` as an opaque
+    vertexaisearch.cloud.google.com redirect link, not the publisher URL —
+    parsing it never yields the real domain. The SDK's `web.domain` field is
+    the right source when populated, but as observed it currently comes
+    back None; `web.title` is, in practice, already the bare domain (e.g.
+    "wikipedia.org") for Google Search grounding chunks, so it's the
+    reliable fallback. URL-parsing is the last resort only.
+    """
+    domain = getattr(web, "domain", None) if web else None
+    if domain:
+        return domain
+    title = getattr(web, "title", None) if web else None
+    if title:
+        return title
+    return _extract_domain(source_url)
+
+
 def _map_citations(candidate: types.Candidate | None) -> tuple[list[AdapterCitation], bool]:
     """Turn one candidate's grounding metadata into canonical citations.
 
@@ -59,7 +79,7 @@ def _map_citations(candidate: types.Candidate | None) -> tuple[list[AdapterCitat
             AdapterCitation(
                 source_url=source_url,
                 source_title=source_title,
-                source_domain=_extract_domain(source_url),
+                source_domain=_resolve_source_domain(web, source_url),
                 citation_position=position,
                 cited_answer_span=cited_answer_span,
             )
