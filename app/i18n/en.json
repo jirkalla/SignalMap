@@ -40,6 +40,7 @@
   "prompt.detail_title": "Prompt",
   "prompt.trigger_run": "Run prompt",
   "prompt.select_model": "Model",
+  "prompt.no_models_available": "No model is available to run yet — a provider needs an active model and a working adapter before it appears here.",
   "prompt.runs_title": "Runs",
   "prompt.runs_empty": "No runs yet — trigger one above.",
   "prompt.version_label": "Version",

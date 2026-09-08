@@ -40,6 +40,7 @@
   "prompt.detail_title": "Prompt",
   "prompt.trigger_run": "Prompt ausführen",
   "prompt.select_model": "Modell",
+  "prompt.no_models_available": "Noch kein Modell verfügbar — ein Anbieter braucht ein aktives Modell und einen funktionierenden Adapter, bevor er hier erscheint.",
   "prompt.runs_title": "Läufe",
   "prompt.runs_empty": "Noch keine Läufe — starte oben einen.",
   "prompt.version_label": "Version",

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, button, status_badge %}
+{% from "partials/macros.html" import select_grouped_field, button, status_badge %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -19,10 +19,13 @@
 
 <form method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3">
   <div class="flex-1 min-w-[200px] mb-0">
-    {{ select_field('model_id', t('prompt.select_model'), models) }}
+    {{ select_grouped_field('model_id', t('prompt.select_model'), model_groups, required=True) }}
   </div>
-  {{ button(t('prompt.trigger_run')) }}
+  {{ button(t('prompt.trigger_run'), disabled=not model_groups) }}
 </form>
+{% if not model_groups %}
+<p class="text-sm text-stone-500 -mt-6 mb-8">{{ t('prompt.no_models_available') }}</p>
+{% endif %}
 
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.runs_title') }}</h2>
 {% if runs %}
