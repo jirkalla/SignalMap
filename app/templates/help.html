@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import status_badge %}
+{% block title %}{{ t('help.title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-2">{{ t('help.title') }}</h1>
+<p class="text-stone-500 mb-8 max-w-2xl">{{ t('help.lede') }}</p>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.overview.title') }}</h2>
+  <p class="text-stone-700 mb-4 max-w-2xl">{{ t('help.overview.body') }}</p>
+  <div class="flex items-stretch gap-0 overflow-x-auto pb-1">
+    {% for label, example in [
+      (t('help.chain.client'), 'Acme Corporation'),
+      (t('help.chain.prompt_set'), 'Brand Perception Q3'),
+      (t('help.chain.prompt'), t('prompt.market_label') ~ ': cs-CZ'),
+      (t('help.chain.run'), 'Gemini 3.5 Flash')
+    ] %}
+    <div class="flex items-center">
+      {% if not loop.first %}<span class="px-3 text-stone-300">→</span>{% endif %}
+      <div class="min-w-[150px] bg-white border border-stone-200 rounded-lg px-4 py-3">
+        <div class="text-[10px] uppercase tracking-wide text-stone-400 mb-1">{{ label }}</div>
+        <div class="text-sm font-medium text-stone-900">{{ example }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.clients.title') }}</h2>
+  <p class="text-stone-700 mb-4 max-w-2xl">{{ t('help.clients.body') }}</p>
+  <div class="overflow-x-auto bg-white border border-stone-200 rounded-lg">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-2 px-4 font-medium">{{ t('common.name') }}</th>
+          <th class="py-2 px-4 font-medium">{{ t('common.description') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.name_label') }}</td><td class="py-2 px-4">{{ t('help.clients.name') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.industry_label') }}</td><td class="py-2 px-4">{{ t('help.clients.industry') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.notes_label') }}</td><td class="py-2 px-4">{{ t('help.clients.notes') }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.prompt_sets.title') }}</h2>
+  <div class="max-w-2xl bg-stone-100 border-l-2 border-stone-400 rounded-r-lg px-4 py-3 text-sm text-stone-700">
+    {{ t('help.prompt_sets.body') }}
+  </div>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.prompts.title') }}</h2>
+  <p class="text-stone-700 mb-4 max-w-2xl">{{ t('help.prompts.body') }}</p>
+  <div class="overflow-x-auto bg-white border border-stone-200 rounded-lg">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-2 px-4 font-medium">{{ t('common.name') }}</th>
+          <th class="py-2 px-4 font-medium">{{ t('common.description') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('prompt.text_label') }}</td><td class="py-2 px-4">{{ t('help.prompts.text') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('prompt.market_label') }}</td><td class="py-2 px-4">{{ t('help.prompts.market') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('prompt.topic_label') }}</td><td class="py-2 px-4">{{ t('help.prompts.topic') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('prompt.active_label') }}</td><td class="py-2 px-4">{{ t('help.prompts.active') }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.running.title') }}</h2>
+  <p class="text-stone-700 max-w-2xl">{{ t('help.running.body') }}</p>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.results.title') }}</h2>
+  <p class="text-stone-700 mb-4 max-w-2xl">{{ t('help.results.body') }}</p>
+  <div class="grid sm:grid-cols-2 gap-3 max-w-2xl">
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="mb-2">{{ status_badge('success') }}</div>
+      <p class="text-sm text-stone-600">{{ t('help.results.success') }}</p>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="mb-2">{{ status_badge('error') }}</div>
+      <p class="text-sm text-stone-600">{{ t('help.results.error') }}</p>
+    </div>
+  </div>
+</section>
+
+<section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.language.title') }}</h2>
+  <p class="text-stone-700 max-w-2xl">{{ t('help.language.body') }}</p>
+</section>
+
+<section>
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.glossary.title') }}</h2>
+  <div class="grid sm:grid-cols-2 gap-3 max-w-2xl">
+    {% for term, definition in [
+      (t('help.chain.client'), t('help.glossary.client')),
+      (t('help.chain.prompt_set'), t('help.glossary.prompt_set')),
+      (t('help.chain.prompt'), t('help.glossary.prompt')),
+      (t('prompt.market_label'), t('help.glossary.market')),
+      (t('help.chain.run'), t('help.glossary.run')),
+      (t('help.chain.citation'), t('help.glossary.citation'))
+    ] %}
+    <div class="bg-white border border-stone-200 rounded-lg p-3">
+      <div class="font-mono text-xs text-stone-900 font-medium mb-1">{{ term }}</div>
+      <div class="text-sm text-stone-600">{{ definition }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
