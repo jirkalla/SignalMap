@@ -10,6 +10,7 @@ from app.models.market import Market
 from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, Provider
 from app.models.run import Citation, RawResponse, Run
+from app.models.settings import SystemInstructionTemplate
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "Run",
     "RawResponse",
     "Citation",
+    "SystemInstructionTemplate",
 ]

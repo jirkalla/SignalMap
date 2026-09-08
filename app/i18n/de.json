@@ -4,6 +4,14 @@
   "nav.docs": "API-Dokumentation",
   "nav.help": "Anleitung",
   "nav.markets": "Märkte",
+  "nav.settings": "Einstellungen",
+
+  "settings.title": "Einstellungen",
+  "settings.lede": "System-Instruktions-Vorlage pro Anbieter — der Lokalisierungs-Hinweis, der bei jedem Lauf für Anbieter ohne echtes geografisches/sprachliches API-Targeting mitgeschickt wird (heute: Google Gemini).",
+  "settings.template_label": "System-Instruktions-Vorlage",
+  "settings.placeholders_hint": "Verfügbare Platzhalter: {market_code}, {language}, {country}, {label} — werden aus dem Markt des Laufs befüllt.",
+  "settings.empty_hint": "Leer bedeutet: für diesen Anbieter wird gar keine System-Instruktion gesendet.",
+  "settings.no_providers": "Noch keine Anbieter.",
 
   "market.list_title": "Märkte",
   "market.create_title": "Neuer Markt",
@@ -139,5 +147,6 @@
   "errors.provider_call_failed": "Der Aufruf beim Anbieter ist fehlgeschlagen.",
   "errors.market_not_found": "Markt nicht gefunden.",
   "errors.market_code_conflict": "Ein Markt mit diesem Code existiert bereits.",
-  "errors.market_in_use": "Dieser Markt wird von {count} Prompt(s) verwendet und kann nicht gelöscht werden. Entferne oder ändere diese Prompts zuerst."
+  "errors.market_in_use": "Dieser Markt wird von {count} Prompt(s) verwendet und kann nicht gelöscht werden. Entferne oder ändere diese Prompts zuerst.",
+  "errors.provider_not_found": "Anbieter nicht gefunden."
 }

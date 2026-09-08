@@ -4,6 +4,14 @@
   "nav.docs": "API Docs",
   "nav.help": "Guide",
   "nav.markets": "Markets",
+  "nav.settings": "Settings",
+
+  "settings.title": "Settings",
+  "settings.lede": "Per-provider system-instruction template — the locale-framing hint sent with every run for providers that have no real geographic/language API targeting (today: Google Gemini).",
+  "settings.template_label": "System-instruction template",
+  "settings.placeholders_hint": "Available placeholders: {market_code}, {language}, {country}, {label} — filled in from the run's market.",
+  "settings.empty_hint": "Empty means no system_instruction is sent at all for this provider.",
+  "settings.no_providers": "No providers yet.",
 
   "market.list_title": "Markets",
   "market.create_title": "New market",
@@ -139,5 +147,6 @@
   "errors.provider_call_failed": "The provider call failed.",
   "errors.market_not_found": "Market not found.",
   "errors.market_code_conflict": "A market with this code already exists.",
-  "errors.market_in_use": "This market is used by {count} prompt(s) and can't be deleted. Remove or reassign those prompts first."
+  "errors.market_in_use": "This market is used by {count} prompt(s) and can't be deleted. Remove or reassign those prompts first.",
+  "errors.provider_not_found": "Provider not found."
 }

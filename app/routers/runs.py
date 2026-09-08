@@ -21,26 +21,44 @@ from sqlalchemy.orm import Session
 from app.adapters import ADAPTERS, get_adapter
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Citation, Market, RawResponse, Run
+from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
 from app.routers.prompts import _get_prompt_or_404
 from app.templating import get_t, render
 
 router = APIRouter(tags=["runs"])
 
+DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE = (
+    "The person asking this question is located in {label} and writing in "
+    "{language}. Answer in {language}, using regional context and examples "
+    "relevant there where applicable."
+)
 
-def _market_system_instruction(market: Market) -> str:
-    """Build a locale-framing hint from a prompt's market.
+
+def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
+    """Build a locale-framing hint from a prompt's market, using `provider`'s
+
+    editable template (see /settings and app/models/settings.py). No saved
+    row yet -> the built-in default above. A row with an empty template ->
+    None, meaning no system_instruction is sent for this provider at all.
 
     Text-only hint, not real geographic search bias — see the docstring on
     ProviderAdapter.run for why (Gemini's grounding tool has no location
     parameter at all; Anthropic's web_search tool does and should use its
     real `user_location` instead of this once that adapter exists).
     """
-    where = market.label or market.code
-    return (
-        f"The person asking this question is located in {where} and writing in "
-        f"{market.language}. Answer in {market.language}, using regional context and "
-        f"examples relevant there where applicable."
+    row = db.scalar(select(SystemInstructionTemplate).where(SystemInstructionTemplate.provider_id == provider.id))
+    if row is None:
+        template = DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
+    elif not row.template.strip():
+        return None
+    else:
+        template = row.template
+
+    return template.format(
+        market_code=market.code,
+        language=market.language,
+        country=market.country or "",
+        label=market.label or market.code,
     )
 
 
@@ -82,7 +100,7 @@ def trigger_run(
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
 
-    system_instruction = _market_system_instruction(market)
+    system_instruction = _market_system_instruction(db, model.provider, market)
     request_payload = {
         "model": model.model_name,
         "prompt_text": prompt.text,
