@@ -40,6 +40,29 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
 Every later `docker compose up -d --build` is enough for subsequent runs;
 step 3 only needs re-running after a new migration is added.
 
+## Stop it
+
+```bash
+docker compose stop
+```
+
+Stops the containers but keeps them (and the database volume) around — the
+fastest way back in is plain `docker compose up -d` next time, no rebuild
+or migration needed.
+
+To remove the containers too (data survives, in the `pgdata` volume):
+
+```bash
+docker compose down
+```
+
+To wipe the database as well — next start needs `alembic upgrade head`
+again:
+
+```bash
+docker compose down -v
+```
+
 ## Stack
 
 FastAPI + SQLAlchemy + PostgreSQL, Jinja2 + HTMX (Vue3 islands planned for
