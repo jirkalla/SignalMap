@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_grouped_field, button, status_badge %}
+{% from "partials/macros.html" import select_grouped_field, select_field, button, status_badge %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -21,11 +21,17 @@
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_grouped_field('model_id', t('prompt.select_model'), model_groups, required=True) }}
   </div>
+  <div class="flex-1 min-w-[200px] mb-0">
+    {{ select_field('market_id', t('prompt.market_label'), markets, selected=prompt.market_id, required=True) }}
+  </div>
   {{ button(t('prompt.trigger_run'), disabled=not model_groups) }}
 </form>
-{% if not model_groups %}
-<p class="text-sm text-stone-500 -mt-6 mb-8">{{ t('prompt.no_models_available') }}</p>
-{% endif %}
+<div class="-mt-6 mb-8 space-y-1">
+  <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
+  {% if not model_groups %}
+  <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
+  {% endif %}
+</div>
 
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.runs_title') }}</h2>
 {% if runs %}
@@ -34,6 +40,7 @@
     <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
       <tr>
         <th class="py-3 px-4 font-medium">{{ t('run.model_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('run.market_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('run.started_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('common.status') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('run.latency_label') }}</th>
@@ -44,6 +51,10 @@
       {% for run in runs %}
       <tr class="border-t border-stone-100 hover:bg-stone-50">
         <td class="py-3 px-4">{{ run.model.display_name or run.model.model_name }}</td>
+        <td class="py-3 px-4 font-mono text-xs text-stone-600">
+          {{ run.market.code }}
+          {% if run.market_id != prompt.market_id %}<span class="text-amber-700">*</span>{% endif %}
+        </td>
         <td class="py-3 px-4 text-stone-500">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
         <td class="py-3 px-4">{{ status_badge(run.status) }}</td>
         <td class="py-3 px-4 text-stone-500">{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</td>
@@ -60,7 +71,9 @@
       <span class="font-medium">{{ run.model.display_name or run.model.model_name }}</span>
       {{ status_badge(run.status) }}
     </div>
-    <div class="text-xs text-stone-400 mt-2">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+    <div class="text-xs text-stone-400 mt-2">
+      {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }} · {{ run.market.code }}{% if run.market_id != prompt.market_id %} <span class="text-amber-700">({{ t('run.market_overridden') }})</span>{% endif %}
+    </div>
   </a>
   {% endfor %}
 </div>

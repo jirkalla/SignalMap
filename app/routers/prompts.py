@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.adapters import ADAPTERS
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Prompt, Provider, Run
+from app.models import AIModel, Market, Prompt, Provider, Run
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
@@ -45,11 +45,18 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
     """Show one prompt: its text/market/topic, a run-trigger form, and past runs (FR-7, FR-15)."""
     prompt = _get_prompt_or_404(db, request, prompt_id)
     model_groups = _runnable_model_groups(db)
+    markets = db.scalars(select(Market).order_by(Market.code)).all()
+    market_options = [(m.id, f"{m.code} — {m.label}" if m.label else m.code) for m in markets]
     runs = db.scalars(
         select(Run).where(Run.prompt_id == prompt_id).order_by(Run.started_at.desc())
     ).all()
     return render(
         request,
         "prompts/detail.html",
-        {"prompt": prompt, "model_groups": model_groups, "runs": runs},
+        {
+            "prompt": prompt,
+            "model_groups": model_groups,
+            "markets": market_options,
+            "runs": runs,
+        },
     )

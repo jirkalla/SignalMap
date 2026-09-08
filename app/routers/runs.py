@@ -56,13 +56,18 @@ def trigger_run(
     request: Request,
     prompt_id: int,
     model_id: int = Form(..., description="Which seeded AI model to run this prompt against."),
+    market_id: int = Form(
+        ..., description="Market to run under — defaults to the prompt's own market but can be overridden per run."
+    ),
     db: Session = Depends(get_db),
 ):
-    """Run a prompt against the selected model and store the result (FR-7..FR-16).
+    """Run a prompt against the selected model and market, and store the result (FR-7..FR-16).
 
     Always creates a Run row, whether the provider call succeeds or fails —
     a failed call is recorded with status='error' and a stored error
-    message, never silently dropped.
+    message, never silently dropped. The market used is recorded on the
+    run itself, so overriding it for one run never changes the prompt's
+    own market or any other run's history.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
@@ -73,7 +78,11 @@ def trigger_run(
     if model.provider.code not in ADAPTERS:
         raise AppError("provider_not_supported", t("errors.provider_not_supported"), status_code=400)
 
-    run = Run(prompt_id=prompt.id, model_id=model.id, trigger_type="manual", status="pending")
+    market = db.get(Market, market_id)
+    if market is None:
+        raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
+
+    run = Run(prompt_id=prompt.id, model_id=model.id, market_id=market.id, trigger_type="manual", status="pending")
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -84,7 +93,7 @@ def trigger_run(
         payload = adapter.run(
             prompt_text=prompt.text,
             model_name=model.model_name,
-            system_instruction=_market_system_instruction(prompt.market),
+            system_instruction=_market_system_instruction(market),
         )
     except Exception as exc:  # provider/transport failure — record it, don't raise (FR-16)
         run.status = "error"

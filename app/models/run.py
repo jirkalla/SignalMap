@@ -18,18 +18,27 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 if TYPE_CHECKING:
+    from app.models.market import Market
     from app.models.prompt import Prompt
     from app.models.provider import AIModel
 
 
 class Run(Base):
-    """One execution of a prompt against one AI model."""
+    """One execution of a prompt against one AI model.
+
+    `market_id` defaults to the prompt's own market when a run is
+    triggered, but can be overridden per run (e.g. to see how the same
+    prompt text is framed for a different market) — it is recorded on the
+    run itself rather than inferred from `prompt.market`, so historical
+    runs stay accurate even if that ever diverges.
+    """
 
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[int] = mapped_column(ForeignKey("prompts.id"), nullable=False)
     model_id: Mapped[int] = mapped_column(ForeignKey("ai_models.id"), nullable=False)
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id"), nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual", server_default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -39,6 +48,7 @@ class Run(Base):
 
     prompt: Mapped["Prompt"] = relationship(back_populates="runs")
     model: Mapped["AIModel"] = relationship()
+    market: Mapped["Market"] = relationship()
     raw_response: Mapped["RawResponse | None"] = relationship(
         back_populates="run", uselist=False, cascade="all, delete-orphan"
     )

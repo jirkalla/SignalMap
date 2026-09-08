@@ -24,7 +24,12 @@
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.market_label') }}</dt>
-      <dd>{{ run.prompt.market.code }}</dd>
+      <dd>
+        {{ run.market.code }}
+        {% if run.market_id != run.prompt.market_id %}
+        <span class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 ml-1">{{ t('run.market_overridden') }}</span>
+        {% endif %}
+      </dd>
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.started_label') }}</dt>

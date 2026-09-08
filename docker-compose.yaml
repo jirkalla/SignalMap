@@ -27,7 +27,10 @@ services:
       - "58000:8000"         # host:container
     volumes:
       - .:/code
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload-include is needed because uvicorn's default reload watcher
+    # only tracks .py files - without it, editing app/i18n/*.json requires
+    # a manual restart to be picked up.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-include "*.json"
 
 volumes:
   pgdata:

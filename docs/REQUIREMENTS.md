@@ -90,7 +90,7 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 
-Two deliberate deviations from the scope above, decided when building the
+Deliberate deviations from the scope above, decided when building the
 phase-1 prototype, recorded here rather than left as conversation history:
 
 - **Tailwind CSS is in scope now, not deferred.** §4 below originally
@@ -105,6 +105,19 @@ phase-1 prototype, recorded here rather than left as conversation history:
   locale switch instead — full path-prefix routing touches every route and
   is a bigger architectural change than "exactly Tasks 1–6" calls for. The
   skill's recommended direction is still the target for a later phase.
+- **Market is not purely descriptive metadata as originally written.**
+  Confirmed against the current API docs: Gemini's Google Search grounding
+  has no location/language parameter at all, while Anthropic's `web_search`
+  tool does (`user_location`). So for Gemini, a prompt's market is now also
+  turned into a `system_instruction` locale-framing hint sent with every
+  run (nudges answer language/framing; does not change what the underlying
+  search retrieves) — see app/routers/runs.py. FR-7 is extended
+  accordingly: a run is triggered with a prompt, a model, **and a market**,
+  which defaults to the prompt's own market but can be overridden per run
+  (`runs.market_id`, migration 0002) to compare how the same prompt text
+  is framed for a different one. The market actually used is recorded on
+  the run, not inferred from the prompt, so history stays accurate even
+  when they diverge.
 
 ## 4. Explicitly Out of Scope for Phase 1
 
