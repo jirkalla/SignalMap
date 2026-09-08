@@ -1,7 +1,8 @@
 """PromptSet routes: create under a client, view detail, add prompts to it.
 
-(docs/REQUIREMENTS.md FR-4..FR-6). List + create only — prompt editing is
-deferred, per the project's prompt-versioning design.
+(docs/REQUIREMENTS.md FR-4..FR-6). Prompt editing lives on the prompt
+detail route (app/routers/prompts.py) since editing creates a new version
+rather than changing anything here.
 """
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -14,6 +15,7 @@ from app.errors import AppError
 from app.models import Market, Prompt, PromptSet
 from app.routers.clients import _get_client_or_404
 from app.templating import get_t, render
+from app.utils import market_options
 
 router = APIRouter(tags=["prompt-sets"])
 
@@ -43,17 +45,21 @@ def create_prompt_set(
 
 @router.get("/prompt-sets/{prompt_set_id}")
 def prompt_set_detail(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
-    """Show one prompt set: its prompts (FR-6) and the add-prompt form."""
+    """Show one prompt set: its current-version prompts (FR-6) and the add-prompt form.
+
+    Superseded versions (see app/models/prompt.py) are omitted here — reach
+    them via the "version history" on a current prompt's detail page.
+    """
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
     prompts = db.scalars(
-        select(Prompt).where(Prompt.prompt_set_id == prompt_set_id).order_by(Prompt.created_at.desc())
+        select(Prompt)
+        .where(Prompt.prompt_set_id == prompt_set_id, Prompt.is_current_version.is_(True))
+        .order_by(Prompt.created_at.desc())
     ).all()
-    markets = db.scalars(select(Market).order_by(Market.code)).all()
-    market_options = [(m.id, f"{m.code} — {m.label}" if m.label else m.code) for m in markets]
     return render(
         request,
         "prompt_sets/detail.html",
-        {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options},
+        {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options(db)},
     )
 
 
@@ -68,10 +74,11 @@ def create_prompt(
     db: Session = Depends(get_db),
 ):
     """Add a new prompt to a prompt set (FR-5). Always created at version 1."""
+    t = get_t(request)
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
     market = db.get(Market, market_id)
     if market is None:
-        raise AppError("market_not_found", "Selected market does not exist.", status_code=400)
+        raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
     prompt = Prompt(
         prompt_set_id=prompt_set.id,
         text=text.strip(),

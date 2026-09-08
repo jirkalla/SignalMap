@@ -29,17 +29,29 @@ class PromptSet(Base):
 
 
 class Prompt(Base):
-    """A single question, tied to a market. `version` exists from phase 1 on
+    """A single question, tied to a market, at a specific version.
 
-    (per FR-6 of docs/REQUIREMENTS.md) but there is no edit/version-bump UI
-    yet — every prompt is created at version 1.
+    Editing a prompt never mutates this row (NFR-6) — it creates a new
+    `Prompt` row at `version + 1` and flips this row's `is_current_version`
+    to False. `root_prompt_id` links every version of the same logical
+    prompt together: NULL on the original (version 1), pointing at that
+    original row's id on every later version — so the whole lineage is
+    `WHERE id = root_id OR root_prompt_id = root_id`.
+
+    `is_active` is a separate, user-controlled concern (offer this prompt
+    for new runs or not) — orthogonal to whether it's the current version.
+    A run's `prompt_id` always points at one exact version, so historical
+    runs keep showing the precise text they actually ran against even
+    after later edits.
     """
 
     __tablename__ = "prompts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_set_id: Mapped[int] = mapped_column(ForeignKey("prompt_sets.id", ondelete="CASCADE"), nullable=False)
+    root_prompt_id: Mapped[int | None] = mapped_column(ForeignKey("prompts.id"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    is_current_version: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     text: Mapped[str] = mapped_column(Text, nullable=False)
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id"), nullable=False)
     topic: Mapped[str | None] = mapped_column(String(150))

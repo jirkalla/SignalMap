@@ -7,15 +7,35 @@
   <span class="mx-1">/</span>
   <a href="/prompt-sets/{{ prompt.prompt_set_id }}" class="hover:underline">{{ prompt.prompt_set.name }}</a>
 </div>
-<h1 class="text-xl font-semibold mb-2">{{ t('prompt.detail_title') }}</h1>
+<div class="flex items-center justify-between mb-2">
+  <h1 class="text-xl font-semibold">{{ t('prompt.detail_title') }}</h1>
+  <a href="/prompts/{{ prompt.id }}/edit" class="text-sm text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+</div>
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <p class="text-stone-900 mb-3">{{ prompt.text }}</p>
   <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
     <span>{{ t('run.market_label') }}: {{ prompt.market.code }}</span>
     {% if prompt.topic %}<span>{{ prompt.topic }}</span>{% endif %}
     <span>{{ t('prompt.version_label') }}: {{ prompt.version }}</span>
+    <span>{{ t('common.status') }}: {{ t('common.yes') if prompt.is_active else t('common.no') }}</span>
   </div>
 </div>
+
+{% if versions %}
+<details class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <summary class="text-sm font-semibold text-stone-500 uppercase tracking-wide cursor-pointer">{{ t('prompt.version_history_title') }}</summary>
+  <ul class="mt-3 space-y-2">
+    {% for v in versions %}
+    <li class="text-sm border-t border-stone-100 pt-2 first:border-t-0 first:pt-0">
+      <a href="/prompts/{{ v.id }}" class="{{ 'font-medium text-stone-900' if v.id == prompt.id else 'text-stone-600 hover:underline' }}">
+        {{ t('prompt.version_label') }} {{ v.version }}{% if v.is_current_version %} · {{ t('prompt.version_current') }}{% endif %}
+      </a>
+      <span class="text-stone-400"> — {{ v.text[:80] }}{% if v.text|length > 80 %}…{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}
 
 <form method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3">
   <div class="flex-1 min-w-[200px] mb-0">

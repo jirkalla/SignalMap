@@ -31,6 +31,10 @@ class Run(Base):
     prompt text is framed for a different market) — it is recorded on the
     run itself rather than inferred from `prompt.market`, so historical
     runs stay accurate even if that ever diverges.
+
+    `request_payload` records exactly what was sent to the provider (model,
+    prompt text, system instruction), set before the adapter is called so
+    it's present whether the run succeeds or fails.
     """
 
     __tablename__ = "runs"
@@ -45,6 +49,7 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
+    request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     prompt: Mapped["Prompt"] = relationship(back_populates="runs")
     model: Mapped["AIModel"] = relationship()

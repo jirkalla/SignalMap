@@ -105,6 +105,10 @@
   "prompt.runs_title": "Läufe",
   "prompt.runs_empty": "Noch keine Läufe — starte oben einen.",
   "prompt.version_label": "Version",
+  "prompt.edit_title": "Prompt bearbeiten",
+  "prompt.edit_version_note": "Speichern erstellt Version {version} — die aktuelle Version bleibt unverändert, und jeder vergangene Lauf zeigt weiterhin genau den Text, mit dem er tatsächlich lief.",
+  "prompt.version_history_title": "Versionsverlauf",
+  "prompt.version_current": "aktuell",
 
   "run.detail_title": "Lauf",
   "run.metadata_title": "Metadaten",
@@ -118,6 +122,7 @@
   "run.latency_label": "Latenz",
   "run.error_label": "Fehler",
   "run.rendered_answer_label": "Aufbereitete Antwort",
+  "run.request_sent_label": "Gesendete Anfrage",
   "run.raw_json_label": "Rohantwort (JSON)",
   "run.raw_json_toggle": "Rohes JSON ein-/ausblenden",
   "run.citations_label": "Quellenangaben",

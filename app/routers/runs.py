@@ -82,7 +82,21 @@ def trigger_run(
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
 
-    run = Run(prompt_id=prompt.id, model_id=model.id, market_id=market.id, trigger_type="manual", status="pending")
+    system_instruction = _market_system_instruction(market)
+    request_payload = {
+        "model": model.model_name,
+        "prompt_text": prompt.text,
+        "system_instruction": system_instruction,
+    }
+
+    run = Run(
+        prompt_id=prompt.id,
+        model_id=model.id,
+        market_id=market.id,
+        trigger_type="manual",
+        status="pending",
+        request_payload=request_payload,
+    )
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -93,7 +107,7 @@ def trigger_run(
         payload = adapter.run(
             prompt_text=prompt.text,
             model_name=model.model_name,
-            system_instruction=_market_system_instruction(market),
+            system_instruction=system_instruction,
         )
     except Exception as exc:  # provider/transport failure — record it, don't raise (FR-16)
         run.status = "error"
@@ -146,6 +160,9 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         else []
     )
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
+    request_payload_json = (
+        json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
+    )
     return render(
         request,
         "runs/detail.html",
@@ -154,5 +171,6 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "raw_response": raw_response,
             "citations": citations,
             "raw_payload_json": raw_payload_json,
+            "request_payload_json": request_payload_json,
         },
     )

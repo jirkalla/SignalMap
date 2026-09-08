@@ -5,6 +5,18 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models import Market
+
+
+def market_options(db: Session) -> list[tuple[int, str]]:
+    """(id, display label) pairs for every market, sorted by code.
+
+    Shared by every form that offers a market <select> (prompt creation,
+    prompt editing, run trigger) so the label format stays consistent.
+    """
+    markets = db.scalars(select(Market).order_by(Market.code)).all()
+    return [(m.id, f"{m.code} — {m.label}" if m.label else m.code) for m in markets]
+
 
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")

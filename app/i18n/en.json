@@ -105,6 +105,10 @@
   "prompt.runs_title": "Runs",
   "prompt.runs_empty": "No runs yet — trigger one above.",
   "prompt.version_label": "Version",
+  "prompt.edit_title": "Edit prompt",
+  "prompt.edit_version_note": "Saving creates version {version} — the current version is kept exactly as-is, and every past run keeps showing the text it actually ran against.",
+  "prompt.version_history_title": "Version history",
+  "prompt.version_current": "current",
 
   "run.detail_title": "Run",
   "run.metadata_title": "Metadata",
@@ -118,6 +122,7 @@
   "run.latency_label": "Latency",
   "run.error_label": "Error",
   "run.rendered_answer_label": "Rendered answer",
+  "run.request_sent_label": "Request sent",
   "run.raw_json_label": "Raw response (JSON)",
   "run.raw_json_toggle": "Show / hide raw JSON",
   "run.citations_label": "Citations",

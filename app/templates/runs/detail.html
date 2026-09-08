@@ -46,6 +46,13 @@
   </dl>
 </div>
 
+{% if request_payload_json %}
+<details class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <summary class="text-sm font-semibold text-stone-500 uppercase tracking-wide cursor-pointer">{{ t('run.request_sent_label') }}</summary>
+  <pre class="mt-3 text-xs font-mono bg-stone-50 border border-stone-200 rounded-md p-3 overflow-x-auto">{{ request_payload_json }}</pre>
+</details>
+{% endif %}
+
 {% if run.status == 'error' %}
 <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold uppercase tracking-wide mb-2">{{ t('run.error_label') }}</h2>
