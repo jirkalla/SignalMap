@@ -40,8 +40,19 @@ class RawResponsePayload:
 class ProviderAdapter(Protocol):
     """Interface every provider adapter (app/adapters/<provider>.py) implements."""
 
-    def run(self, prompt_text: str, model_name: str) -> RawResponsePayload:
+    def run(
+        self, prompt_text: str, model_name: str, *, system_instruction: str | None = None
+    ) -> RawResponsePayload:
         """Run one prompt against one model and return the canonical payload.
+
+        `system_instruction`, when given, is a locale-framing hint built
+        from the prompt's market (see app.routers.runs) — an adapter should
+        apply it if the provider's API supports a system/persona layer, but
+        it is not a substitute for real geographic search targeting where a
+        provider's API offers one (e.g. Anthropic's `web_search` tool takes
+        a proper `user_location`; Gemini's Google Search grounding has no
+        such parameter at all, so this hint is the best available signal
+        there).
 
         Raises on transport/API failure — callers are responsible for
         catching that and recording it as a Run with status='error'.

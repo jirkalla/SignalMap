@@ -42,6 +42,8 @@
   "help.prompts.text": "Der genaue Fragetext, unverändert an das Modell gesendet.",
   "help.prompts.market": "Der Sprach-/Länderkontext, zu dem die Frage gehört — dient der Klassifizierung und dem Vergleich von Prompts über Märkte hinweg. Ändert nichts an der Anfrage an das Modell, also den Prompt-Text selbst in der Sprache dieses Marktes schreiben.",
   "help.markets_cta": "Märkte werden auf einer eigenen Seite verwaltet.",
+  "help.prompts.market_gemini_note": "Bei Google Gemini wird daraus heute eine System-Instruktion, die das Modell bittet, in dieser Sprache und diesem regionalen Kontext zu antworten — das lenkt die Antwort, ändert aber nichts an der eigentlichen Google-Suche, da Geminis Google-Search-Grounding keinen API-Parameter für echtes geografisches Targeting hat.",
+  "help.prompts.market_anthropic_note": "Die Claude-API von Anthropic unterstützt echtes geografisches Targeting für ihr Web-Search-Tool (user_location) — sobald der Claude-Adapter existiert, steuert der Markt das direkt für Claude-Läufe.",
   "help.prompts.topic": "Optionales Label zum späteren Gruppieren oder Filtern von Prompts.",
   "help.prompts.active": "Inaktive Prompts bleiben in der Historie, werden aber nicht für neue Läufe angeboten.",
   "help.running.title": "Einen Prompt ausführen",

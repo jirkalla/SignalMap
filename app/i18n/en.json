@@ -42,6 +42,8 @@
   "help.prompts.text": "The exact question text, sent to the model as-is.",
   "help.prompts.market": "The language/country context the question belongs to — used to classify and compare prompts across markets. It does not change the request sent to the model, so write the prompt text itself in that market's language.",
   "help.markets_cta": "Markets are managed on their own page.",
+  "help.prompts.market_gemini_note": "For Google Gemini today, this becomes a system instruction asking the model to answer in that language and regional context — it nudges the answer, but Gemini's Google Search grounding has no API parameter for real geographic targeting, so it doesn't change what the underlying search actually retrieves.",
+  "help.prompts.market_anthropic_note": "Anthropic's Claude API does support real geographic targeting for its web search tool (user_location) — once the Claude adapter is added, market will drive that directly for Claude runs.",
   "help.prompts.topic": "Optional label for grouping or filtering prompts later.",
   "help.prompts.active": "Inactive prompts stay in history but aren't offered for new runs.",
   "help.running.title": "Running a prompt",

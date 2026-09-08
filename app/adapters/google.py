@@ -94,14 +94,25 @@ class GoogleGeminiAdapter:
     def __init__(self) -> None:
         self._client = genai.Client(api_key=get_settings().google_api_key)
 
-    def run(self, prompt_text: str, model_name: str) -> RawResponsePayload:
+    def run(
+        self, prompt_text: str, model_name: str, *, system_instruction: str | None = None
+    ) -> RawResponsePayload:
         """Run `prompt_text` against `model_name` with Google Search grounding enabled.
+
+        `system_instruction`, if given, is applied as-is — Gemini's
+        Google Search grounding tool has no location/language API
+        parameter (confirmed against the current API docs), so this is the
+        only lever available here to nudge answer language and regional
+        framing. It does not change what the underlying search retrieves.
 
         Raises whatever the google-genai SDK raises on transport/API errors
         (timeout, auth failure, rate limit) — the caller records that as a
         Run with status='error'.
         """
-        config = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            system_instruction=system_instruction,
+        )
         response = self._client.models.generate_content(
             model=model_name,
             contents=prompt_text,

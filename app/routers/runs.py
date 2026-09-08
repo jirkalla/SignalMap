@@ -21,11 +21,27 @@ from sqlalchemy.orm import Session
 from app.adapters import ADAPTERS, get_adapter
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Citation, RawResponse, Run
+from app.models import AIModel, Citation, Market, RawResponse, Run
 from app.routers.prompts import _get_prompt_or_404
 from app.templating import get_t, render
 
 router = APIRouter(tags=["runs"])
+
+
+def _market_system_instruction(market: Market) -> str:
+    """Build a locale-framing hint from a prompt's market.
+
+    Text-only hint, not real geographic search bias — see the docstring on
+    ProviderAdapter.run for why (Gemini's grounding tool has no location
+    parameter at all; Anthropic's web_search tool does and should use its
+    real `user_location` instead of this once that adapter exists).
+    """
+    where = market.label or market.code
+    return (
+        f"The person asking this question is located in {where} and writing in "
+        f"{market.language}. Answer in {market.language}, using regional context and "
+        f"examples relevant there where applicable."
+    )
 
 
 def _get_run_or_404(db: Session, request: Request, run_id: int) -> Run:
@@ -65,7 +81,11 @@ def trigger_run(
     started = time.perf_counter()
     try:
         adapter = get_adapter(model.provider.code)
-        payload = adapter.run(prompt_text=prompt.text, model_name=model.model_name)
+        payload = adapter.run(
+            prompt_text=prompt.text,
+            model_name=model.model_name,
+            system_instruction=_market_system_instruction(prompt.market),
+        )
     except Exception as exc:  # provider/transport failure — record it, don't raise (FR-16)
         run.status = "error"
         run.error_message = str(exc)
