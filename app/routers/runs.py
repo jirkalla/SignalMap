@@ -10,6 +10,7 @@ or a recorded error) is always visible in the UI, never silently missing
 """
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -24,6 +25,8 @@ from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
 from app.routers.prompts import _get_prompt_or_404
 from app.templating import get_t, render
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 
@@ -119,6 +122,22 @@ def trigger_run(
     db.commit()
     db.refresh(run)
 
+    logger.info(
+        "Triggering run %s (prompt_id=%s, model=%s, market=%s)",
+        run.id,
+        prompt.id,
+        model.model_name,
+        market.code,
+        extra={
+            "extra_data": {
+                "run_id": run.id,
+                "prompt_id": prompt.id,
+                "model": model.model_name,
+                "market": market.code,
+            }
+        },
+    )
+
     started = time.perf_counter()
     try:
         adapter = get_adapter(model.provider.code)
@@ -133,6 +152,14 @@ def trigger_run(
         run.finished_at = datetime.now(timezone.utc)
         run.latency_ms = int((time.perf_counter() - started) * 1000)
         db.commit()
+        logger.error(
+            "Run %s failed after %sms: %s",
+            run.id,
+            run.latency_ms,
+            exc,
+            exc_info=True,
+            extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
+        )
     else:
         run.status = "success"
         run.finished_at = datetime.now(timezone.utc)
@@ -158,6 +185,12 @@ def trigger_run(
                 )
             )
         db.commit()
+        logger.info(
+            "Run %s succeeded in %sms",
+            run.id,
+            run.latency_ms,
+            extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
+        )
 
     target_url = f"/runs/{run.id}"
     if request.headers.get("HX-Request") == "true":
