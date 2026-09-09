@@ -44,12 +44,14 @@ def _schema():
 
 @pytest.fixture(scope="session", autouse=True)
 def _fake_adapter_registered():
-    """Swap the real Gemini adapter for FakeAdapter for the whole test session.
+    """Swap both real adapters for FakeAdapter for the whole test session.
 
-    Never calls the real Google API — see app/adapters/__init__.py's
-    register_adapter(), the test seam this relies on.
+    Never calls the real Google or Anthropic API — see
+    app/adapters/__init__.py's register_adapter(), the test seam this
+    relies on.
     """
     register_adapter("google_gemini", FakeAdapter)
+    register_adapter("anthropic", FakeAdapter)
 
 
 @pytest.fixture(autouse=True)
@@ -95,10 +97,16 @@ def client(db_session: Session) -> TestClient:
 
 @pytest.fixture
 def seed(db_session: Session) -> dict:
-    """Minimal rows every prompt/run test needs to satisfy FK constraints: one market, provider, model."""
+    """Minimal rows every prompt/run/admin test needs: one market, and both providers with one model each.
+
+    Both providers are seeded (not just google_gemini) so provider/ai-model
+    admin tests, and a run against either provider, all have real FK targets
+    without each test building its own — see P2-T6.
+    """
     market = Market(code="en-US", language="en", country="US", locale_name="English (United States)")
     provider = Provider(code="google_gemini", name="Google Gemini")
-    db_session.add_all([market, provider])
+    anthropic_provider = Provider(code="anthropic", name="Anthropic Claude")
+    db_session.add_all([market, provider, anthropic_provider])
     db_session.flush()
     model = AIModel(
         provider_id=provider.id,
@@ -106,12 +114,26 @@ def seed(db_session: Session) -> dict:
         capability_tier="standard",
         is_active=True,
     )
-    db_session.add(model)
+    anthropic_model = AIModel(
+        provider_id=anthropic_provider.id,
+        model_name="claude-test-model",
+        capability_tier="economy",
+        is_active=True,
+    )
+    db_session.add_all([model, anthropic_model])
     db_session.commit()
     db_session.refresh(market)
     db_session.refresh(provider)
     db_session.refresh(model)
-    return {"market": market, "provider": provider, "model": model}
+    db_session.refresh(anthropic_provider)
+    db_session.refresh(anthropic_model)
+    return {
+        "market": market,
+        "provider": provider,
+        "model": model,
+        "anthropic_provider": anthropic_provider,
+        "anthropic_model": anthropic_model,
+    }
 
 
 @pytest.fixture

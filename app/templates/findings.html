@@ -137,5 +137,88 @@
     <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/api/generate-content" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/api/generate-content</a></p>
   </article>
 
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Request Parameters</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">What we send to Claude today, and what else is available</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Currently sent for every run (<code class="bg-stone-100 px-1 rounded">app/adapters/anthropic.py</code>):
+      <code class="bg-stone-100 px-1 rounded">model</code>,
+      <code class="bg-stone-100 px-1 rounded">max_tokens</code> (hardcoded 4096 — sized for a complete grounded
+      answer, not the model's full 128K capacity),
+      <code class="bg-stone-100 px-1 rounded">messages</code> (the prompt text, verbatim),
+      <code class="bg-stone-100 px-1 rounded">tools=[web_search_20250305]</code> (<code class="bg-stone-100 px-1 rounded">max_uses: 5</code>,
+      <code class="bg-stone-100 px-1 rounded">user_location</code> from the run's market),
+      <code class="bg-stone-100 px-1 rounded">system</code> (the language-only hint from <a href="/settings" class="underline hover:no-underline">Settings</a>, when set).
+    </p>
+    <p class="text-sm text-stone-700 mb-3">Available on the Messages API but not used yet:</p>
+    <ul class="text-sm text-stone-700 list-disc pl-5 mb-3 space-y-1">
+      <li><strong>Effort/thinking control</strong> — <code class="bg-stone-100 px-1 rounded">effort</code> (Claude 4.6+ models default to <code class="bg-stone-100 px-1 rounded">"high"</code>), <code class="bg-stone-100 px-1 rounded">thinking</code> (adaptive/extended reasoning). Not relevant for a single grounded Q&amp;A today — worth revisiting once the analysis-skills phase needs more deliberate reasoning.</li>
+      <li><strong>Prompt caching</strong> (<code class="bg-stone-100 px-1 rounded">cache_control</code>) — cache reads cost 10% of base input price. We re-send the same prompt text across markets with only <code class="bg-stone-100 px-1 rounded">system</code> differing; caching the prompt itself could cut cost noticeably at higher run volume.</li>
+      <li><strong>Newer <code class="bg-stone-100 px-1 rounded">web_search</code> tool versions</strong> — <code class="bg-stone-100 px-1 rounded">web_search_20260209</code> (dynamic filtering, code-execution-backed) and <code class="bg-stone-100 px-1 rounded">web_search_20260318</code> (response-inclusion control) exist; we deliberately use the oldest for a simpler, more predictable response shape.</li>
+      <li><strong>Batch API</strong> — 50% discount on both input/output tokens, for non-time-sensitive bulk runs (relevant if a future scheduled/batch analysis phase runs many prompts at once).</li>
+    </ul>
+    <p class="text-sm text-stone-700 mb-2">
+      <strong>Citation shape differs from Gemini</strong> — Anthropic attaches citations inline per text block
+      (<code class="bg-stone-100 px-1 rounded">block.citations</code>), not one grounding-metadata blob.
+      <code class="bg-stone-100 px-1 rounded">app/adapters/anthropic.py</code> walks all text blocks in order and
+      assigns a running position — worth knowing before any future analysis-skill code assumes Gemini's shape.
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      <strong>Known gap: <code class="bg-stone-100 px-1 rounded">pause_turn</code></strong> — a very long-running
+      search can return <code class="bg-stone-100 px-1 rounded">stop_reason: "pause_turn"</code> instead of
+      finishing; this adapter doesn't resend/continue that. Hasn't happened in testing yet, but
+      <code class="bg-stone-100 px-1 rounded">raw_payload.stop_reason</code> always shows if it does.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      <strong>Real per-run cost isn't fully captured in <a href="/ai-models" class="underline hover:no-underline">/ai-models</a> pricing</strong> —
+      web search itself costs <strong>$10 per 1,000 searches</strong>, on top of token costs. Our
+      <code class="bg-stone-100 px-1 rounded">cost_per_1k_input_usd</code>/<code class="bg-stone-100 px-1 rounded">output_usd</code>
+      fields only capture token price — a run's true cost is token cost + this flat search fee, currently
+      invisible in the UI.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">platform.claude.com/docs/.../pricing</a></p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">Cost &amp; Compliance</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">Anthropic API data isn't used for model training (commercial terms)</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Unlike Gemini's free tier (see above), Anthropic's API — commercial terms, which cover our usage — does
+      <strong>not</strong> train on input/output data at all, on any tier: inputs/outputs are auto-deleted after
+      7 days by default, and retained data is "never used for model training without your express permission."
+      The August 2025 opt-out-based training-data policy change that applies to Claude.ai consumer accounts
+      explicitly does <strong>not</strong> apply to API access.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      Options if this project ever needs different retention: 30-day retention via a Data Processing Addendum,
+      or a Zero Data Retention agreement (qualifying enterprise accounts) where nothing is stored beyond
+      abuse-screening needs.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://privacy.claude.com/en/articles/10023580-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">Anthropic Privacy Center</a>, <a href="https://platform.claude.com/docs/en/manage-claude/api-and-data-retention" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">API and data retention docs</a></p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-orange-100 text-orange-800 rounded-full px-2 py-0.5">Ops / Lifecycle</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">Claude Haiku 4.5 retires no sooner than October 15, 2026 — about 5 weeks out</h2>
+    <p class="text-sm text-stone-700 mb-3">
+      Per Anthropic's own model-lifecycle table, our seeded economy-tier model
+      (<code class="bg-stone-100 px-1 rounded">claude-haiku-4-5-20251001</code>) has a retirement floor of
+      <strong>October 15, 2026</strong> — roughly a month from now. Sonnet 5 and Opus 5 are safe until
+      mid/late 2027. No action needed today, but worth checking <a href="/ai-models" class="underline hover:no-underline">/ai-models</a>
+      again before that date — a retired model's <code class="bg-stone-100 px-1 rounded">model_name</code> would
+      start failing every run with a real API error, not a graceful degradation.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://platform.claude.com/docs/en/about-claude/models/overview" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">platform.claude.com/docs/.../models/overview</a></p>
+  </article>
+
 </div>
 {% endblock %}
