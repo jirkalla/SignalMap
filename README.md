@@ -68,3 +68,13 @@ docker compose down -v
 FastAPI + SQLAlchemy + PostgreSQL, Jinja2 + HTMX (Vue3 islands planned for
 the dashboard phase), Tailwind via CDN, Alembic migrations, Docker Compose
 for local dev and deployment alike.
+
+## Notes
+
+- The app container runs as a non-root user (`appuser`, uid 1000). Because
+  `docker-compose.yaml` bind-mounts the repo over `/code` at runtime, the
+  Dockerfile's `chown` only applies to the built image, not the live
+  bind-mounted view — this hasn't caused any issue so far (the app only
+  reads from `/code`, never writes to it), but worth revisiting if a
+  future VPS deployment adds any runtime write into the mounted source
+  tree.
