@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     database_url: str
     google_api_key: str = ""
+    anthropic_api_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
