@@ -94,10 +94,15 @@
   "client.notes_placeholder": "Free-text notes about this client",
   "client.empty_state": "No clients yet. Create the first one to get started.",
   "client.prompt_sets_title": "Prompt sets",
+  "client.delete_button": "Delete",
+  "client.delete_confirm": "Delete this client? This can't be undone.",
 
   "prompt_set.create_title": "New prompt set",
+  "prompt_set.edit_title": "Edit prompt set",
   "prompt_set.name_label": "Name",
   "prompt_set.empty_state": "No prompt sets yet for this client.",
+  "prompt_set.delete_button": "Delete",
+  "prompt_set.delete_confirm": "Delete this prompt set? This can't be undone.",
 
   "prompt.title": "Prompts",
   "prompt.create_title": "New prompt",
@@ -118,6 +123,8 @@
   "prompt.edit_version_note": "Saving creates version {version} — the current version is kept exactly as-is, and every past run keeps showing the text it actually ran against.",
   "prompt.version_history_title": "Version history",
   "prompt.version_current": "current",
+  "prompt.delete_button": "Delete",
+  "prompt.delete_confirm": "Delete this prompt? This deletes its entire version history and can't be undone.",
 
   "run.detail_title": "Run",
   "run.metadata_title": "Metadata",
@@ -140,8 +147,11 @@
   "run.prompt_label": "Prompt",
 
   "errors.client_not_found": "Client not found.",
+  "errors.client_in_use": "This client has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts or prompt sets first.",
   "errors.prompt_set_not_found": "Prompt set not found.",
+  "errors.prompt_set_in_use": "This prompt set has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts first.",
   "errors.prompt_not_found": "Prompt not found.",
+  "errors.prompt_in_use": "This prompt has {count} run(s) recorded against it and can't be deleted.",
   "errors.run_not_found": "Run not found.",
   "errors.model_not_found": "Model not found.",
   "errors.provider_not_supported": "This provider is not supported yet.",

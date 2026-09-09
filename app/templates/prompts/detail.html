@@ -12,7 +12,7 @@
   <div class="flex items-center gap-3 text-sm shrink-0">
     <a href="/prompts/{{ prompt.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
     <form method="post" action="/prompts/{{ prompt.id }}/delete" class="inline"
-          onsubmit="return confirm('{{ t('prompt.delete_confirm') }}')">
+          data-confirm="{{ t('prompt.delete_confirm') }}">
       <button type="submit" class="text-red-700 hover:underline">{{ t('prompt.delete_button') }}</button>
     </form>
   </div>

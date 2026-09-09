@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
+
+<form method="post" action="{{ action }}" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
+  {{ text_field('name', t('prompt_set.name_label'), prompt_set.name if prompt_set else '', required=True) }}
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

@@ -6,12 +6,12 @@ the skill's "Build sequencing" section.
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.errors import AppError
-from app.models import Client, PromptSet
+from app.models import Client, Prompt, PromptSet, Run
 from app.templating import get_t, render
 from app.utils import unique_slugify
 
@@ -23,6 +23,19 @@ def _get_client_or_404(db: Session, request: Request, client_id: int) -> Client:
     if client is None:
         raise AppError("client_not_found", get_t(request)("errors.client_not_found"), status_code=404)
     return client
+
+
+def _client_run_count(db: Session, client_id: int) -> int:
+    """How many runs exist under any prompt set/prompt of this client — the delete-block check."""
+    return (
+        db.scalar(
+            select(func.count(Run.id))
+            .join(Prompt, Run.prompt_id == Prompt.id)
+            .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+            .where(PromptSet.client_id == client_id)
+        )
+        or 0
+    )
 
 
 @router.get("")
@@ -106,3 +119,34 @@ def update_client(
     client.notes = notes.strip() or None
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/delete")
+def delete_client(request: Request, client_id: int, db: Session = Depends(get_db)):
+    """Delete a client and everything under it, unless any of its runs would be lost.
+
+    Blocked (inline error, not a raw API error) if any prompt set/prompt
+    belonging to this client has a recorded run — deleting evidence is
+    never allowed (NFR-6). Otherwise the database cascade removes the
+    client's (necessarily run-less) prompt sets and prompts along with it.
+    """
+    t = get_t(request)
+    client = _get_client_or_404(db, request, client_id)
+    run_count = _client_run_count(db, client_id)
+    if run_count:
+        prompt_sets = db.scalars(
+            select(PromptSet).where(PromptSet.client_id == client_id).order_by(PromptSet.created_at.desc())
+        ).all()
+        return render(
+            request,
+            "clients/detail.html",
+            {
+                "client": client,
+                "prompt_sets": prompt_sets,
+                "error": t("errors.client_in_use").format(count=run_count),
+            },
+            status_code=409,
+        )
+    db.delete(client)
+    db.commit()
+    return RedirectResponse(url="/clients", status_code=303)
