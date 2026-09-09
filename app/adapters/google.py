@@ -5,23 +5,11 @@ into the project's canonical citation shape, while keeping the complete,
 untouched SDK response for raw_payload (FR-10).
 """
 
-from urllib.parse import urlparse
-
 from google import genai
 from google.genai import types
 
-from app.adapters.base import AdapterCitation, RawResponsePayload
+from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
 from app.config import get_settings
-
-
-def _extract_domain(url: str | None) -> str | None:
-    """Best-effort domain extraction from a citation URL; None if unparsable."""
-    if not url:
-        return None
-    try:
-        return urlparse(url).netloc or None
-    except ValueError:
-        return None
 
 
 def _resolve_source_domain(web: types.Web | None, source_url: str | None) -> str | None:
@@ -41,7 +29,7 @@ def _resolve_source_domain(web: types.Web | None, source_url: str | None) -> str
     title = getattr(web, "title", None) if web else None
     if title:
         return title
-    return _extract_domain(source_url)
+    return extract_domain(source_url)
 
 
 def _map_citations(candidate: types.Candidate | None) -> tuple[list[AdapterCitation], bool]:
@@ -95,7 +83,12 @@ class GoogleGeminiAdapter:
         self._client = genai.Client(api_key=get_settings().google_api_key)
 
     def run(
-        self, prompt_text: str, model_name: str, *, system_instruction: str | None = None
+        self,
+        prompt_text: str,
+        model_name: str,
+        *,
+        system_instruction: str | None = None,
+        market_country: str | None = None,
     ) -> RawResponsePayload:
         """Run `prompt_text` against `model_name` with Google Search grounding enabled.
 
@@ -104,6 +97,9 @@ class GoogleGeminiAdapter:
         parameter (confirmed against the current API docs), so this is the
         only lever available here to nudge answer language and regional
         framing. It does not change what the underlying search retrieves.
+
+        `market_country` is accepted (per the shared ProviderAdapter
+        interface) but unused — there is nowhere to put it in Gemini's API.
 
         Raises whatever the google-genai SDK raises on transport/API errors
         (timeout, auth failure, rate limit) — the caller records that as a

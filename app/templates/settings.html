@@ -11,9 +11,14 @@
 
 {% if rows %}
 <div class="space-y-6 max-w-2xl">
-  {% for provider, template in rows %}
+  {% for provider, template, is_saved in rows %}
   <form method="post" action="/settings/{{ provider.id }}" class="bg-white border border-stone-200 rounded-lg p-4">
-    <h2 class="font-medium text-stone-900 mb-3">{{ provider.name }}</h2>
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="font-medium text-stone-900">{{ provider.name }}</h2>
+      {% if not is_saved %}
+      <span class="text-xs font-medium bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">{{ t('settings.default_badge') }}</span>
+      {% endif %}
+    </div>
     <label for="template-{{ provider.id }}" class="block text-sm font-medium text-stone-700 mb-1">{{ t('settings.template_label') }}</label>
     <textarea id="template-{{ provider.id }}" name="template" rows="4"
               class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">{{ template }}</textarea>

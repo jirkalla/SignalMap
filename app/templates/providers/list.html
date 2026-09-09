@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button %}
+{% block title %}{{ t('provider.list_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ t('provider.list_title') }}</h1>
+
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        <th class="py-3 px-4 font-medium">{{ t('provider.code_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('provider.name_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('provider.model_count_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('provider.updated_at_label') }}</th>
+        <th class="py-3 px-4 font-medium"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for provider, active_model_count in rows %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50">
+        <td class="py-3 px-4 font-mono text-xs text-stone-500">{{ provider.code }}</td>
+        <td class="py-3 px-4" colspan="4">
+          <form method="post" action="/providers/{{ provider.id }}" class="flex flex-wrap items-center gap-3">
+            <input type="text" name="name" value="{{ provider.name }}" required
+                   class="rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+            <span class="text-stone-500">{{ active_model_count }} {{ t('provider.model_count_label').lower() }}</span>
+            <span class="text-xs text-stone-400">{{ provider.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            {{ button(t('common.save'), variant='secondary') }}
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="md:hidden space-y-3">
+  {% for provider, active_model_count in rows %}
+  <div class="border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="font-mono text-xs text-stone-400 mb-2">{{ provider.code }}</div>
+    <form method="post" action="/providers/{{ provider.id }}" class="space-y-2">
+      <input type="text" name="name" value="{{ provider.name }}" required
+             class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+      <div class="flex items-center justify-between text-xs text-stone-500">
+        <span>{{ active_model_count }} {{ t('provider.model_count_label').lower() }}</span>
+        <span>{{ provider.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      </div>
+      {{ button(t('common.save'), variant='secondary') }}
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

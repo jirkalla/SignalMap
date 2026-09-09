@@ -125,12 +125,16 @@ phase-1 prototype, recorded here rather than left as conversation history:
 - Multi-tenancy / row-level access control (client sees only their data).
 - StrategyConfig (guiding principles, reputation attributes).
 - Analysis skills and structured AI-generated analysis results.
-- Any provider other than Google Gemini.
 - Scheduled/recurring runs.
 - Dashboard, source/signal map, intervention hypotheses.
 - Tailwind visual styling / "evidence dossier" design polish.
 - Vue3 interactive components.
 - Filled-in German translation content (mechanism only, not content).
+
+**Amendment (2026-09-09):** "Any provider other than Google Gemini" removed
+from this list — a second provider (Anthropic Claude) shipped in phase 2,
+see `docs/TASKS.md` "Phase 2: Anthropic provider + admin UI" and
+`docs/TASKS_PHASE2.md`.
 
 ## 5. Data Model Reference
 

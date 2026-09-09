@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.adapters import ADAPTERS
+from app.adapters import has_adapter
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
@@ -25,23 +25,28 @@ def _get_prompt_or_404(db: Session, request: Request, prompt_id: int) -> Prompt:
     return prompt
 
 
-def _runnable_model_groups(db: Session) -> list[tuple[str, list[tuple[int, str]]]]:
+def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
     """Active models, grouped by provider, for the run-trigger dropdown.
 
     A provider only contributes a group once it has both a registered
-    adapter (app.adapters.ADAPTERS) and at least one active model — a
+    adapter (app.adapters.has_adapter) and at least one active model — a
     provider row with no adapter yet, or no models yet (e.g. Anthropic
     added ahead of its adapter), simply produces no group rather than a
     broken or dead option.
+
+    Returns full AIModel rows (not just id/label pairs) — prompts/detail.html
+    builds the <option>s itself (not select_grouped_field, which only knows
+    generic (value, text) pairs) so it can also pre-render each model's
+    cost_badge for the live price/free indicator below the dropdown.
     """
     models = db.scalars(
         select(AIModel).join(Provider).where(AIModel.is_active.is_(True)).order_by(Provider.name, AIModel.display_name)
     ).all()
-    groups: dict[str, list[tuple[int, str]]] = {}
+    groups: dict[str, list[AIModel]] = {}
     for model in models:
-        if model.provider.code not in ADAPTERS:
+        if not has_adapter(model.provider.code):
             continue
-        groups.setdefault(model.provider.name, []).append((model.id, model.display_name or model.model_name))
+        groups.setdefault(model.provider.name, []).append(model)
     return list(groups.items())
 
 

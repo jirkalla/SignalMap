@@ -8,6 +8,22 @@ conventions".
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlparse
+
+
+def extract_domain(url: str | None) -> str | None:
+    """Best-effort domain extraction from a citation URL; None if unparsable.
+
+    Shared by every adapter that maps provider citations into
+    AdapterCitation (app/adapters/google.py, app/adapters/anthropic.py) —
+    lives here, not copy-pasted per adapter, since it's not provider-specific.
+    """
+    if not url:
+        return None
+    try:
+        return urlparse(url).netloc or None
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -41,7 +57,12 @@ class ProviderAdapter(Protocol):
     """Interface every provider adapter (app/adapters/<provider>.py) implements."""
 
     def run(
-        self, prompt_text: str, model_name: str, *, system_instruction: str | None = None
+        self,
+        prompt_text: str,
+        model_name: str,
+        *,
+        system_instruction: str | None = None,
+        market_country: str | None = None,
     ) -> RawResponsePayload:
         """Run one prompt against one model and return the canonical payload.
 
@@ -49,10 +70,16 @@ class ProviderAdapter(Protocol):
         from the prompt's market (see app.routers.runs) — an adapter should
         apply it if the provider's API supports a system/persona layer, but
         it is not a substitute for real geographic search targeting where a
-        provider's API offers one (e.g. Anthropic's `web_search` tool takes
-        a proper `user_location`; Gemini's Google Search grounding has no
-        such parameter at all, so this hint is the best available signal
-        there).
+        provider's API offers one.
+
+        `market_country` is the run's market's ISO 3166-1 alpha-2 country
+        code (may be None), passed as a plain string — never a Market ORM
+        object — so adapters stay decoupled from the DB layer. An adapter
+        whose provider API offers real location targeting (e.g. Anthropic's
+        `web_search` tool's `user_location`) should use it directly; one
+        that doesn't (Gemini's Google Search grounding has no location
+        parameter at all) accepts and ignores it, falling back to
+        `system_instruction` as the best available signal instead.
 
         Raises on transport/API failure — callers are responsible for
         catching that and recording it as a Run with status='error'.

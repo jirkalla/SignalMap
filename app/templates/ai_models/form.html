@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
+
+{% if error %}
+<div class="max-w-2xl bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ action }}" class="max-w-2xl bg-white border border-stone-200 rounded-lg p-6">
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ select_field('provider_id', t('ai_model.provider_label'), providers, selected=model.provider_id if model else none, required=True) }}
+    {{ select_field('capability_tier', t('ai_model.capability_tier_label'), [('flagship', t('ai_model.tier_flagship')), ('standard', t('ai_model.tier_standard')), ('economy', t('ai_model.tier_economy'))], selected=model.capability_tier if model else 'standard', required=True) }}
+  </div>
+  {{ text_field('model_name', t('ai_model.model_name_label'), model.model_name if model else '', required=True, placeholder=t('ai_model.model_name_placeholder')) }}
+  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.model_name_hint') }}</p>
+  {{ text_field('display_name', t('ai_model.display_name_label'), model.display_name if model else '') }}
+
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('cost_per_million_input_usd', t('ai_model.cost_input_label'), model.cost_per_million_input_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('cost_per_million_output_usd', t('ai_model.cost_output_label'), model.cost_per_million_output_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+  </div>
+  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.cost_hint') }}</p>
+
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('context_window_tokens', t('ai_model.context_window_label'), model.context_window_tokens if model else '', placeholder=t('ai_model.context_window_placeholder')) }}
+    {{ text_field('max_output_tokens', t('ai_model.max_output_label'), model.max_output_tokens if model else '', placeholder=t('ai_model.max_output_placeholder')) }}
+  </div>
+
+  {{ checkbox_field('is_free', t('ai_model.is_free_label'), checked=(model.is_free if model else False)) }}
+  {{ checkbox_field('supports_web_search', t('ai_model.web_search_label'), checked=(model.supports_web_search if model else False)) }}
+  {{ textarea_field('notes', t('ai_model.notes_label'), model.notes if model else '', rows=2) }}
+
+  {% if model and model.created_at %}
+  <p class="text-xs text-stone-400 mb-4">{{ t('ai_model.created_at_label') }}: {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+  {% endif %}
+
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}
