@@ -15,11 +15,9 @@ shape (nested code-execution blocks) for a benefit (token savings on
 search-heavy agentic loops) SignalMap's single-shot Q&A use case doesn't need.
 """
 
-from urllib.parse import urlparse
-
 import anthropic
 
-from app.adapters.base import AdapterCitation, RawResponsePayload
+from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 # A perception-tracking prompt is exploratory/comparative by nature (docs/
@@ -34,16 +32,6 @@ _MAX_WEB_SEARCHES = 5
 # capacity (128k on Sonnet/Opus) — that would be needlessly expensive for
 # what this app asks for.
 _DEFAULT_MAX_TOKENS = 4096
-
-
-def _extract_domain(url: str | None) -> str | None:
-    """Best-effort domain extraction from a citation URL; None if unparsable."""
-    if not url:
-        return None
-    try:
-        return urlparse(url).netloc or None
-    except ValueError:
-        return None
 
 
 def _map_citations(content: list) -> tuple[list[AdapterCitation], bool]:
@@ -67,7 +55,7 @@ def _map_citations(content: list) -> tuple[list[AdapterCitation], bool]:
                 AdapterCitation(
                     source_url=url,
                     source_title=getattr(citation, "title", None),
-                    source_domain=_extract_domain(url),
+                    source_domain=extract_domain(url),
                     citation_position=len(citations),
                     cited_answer_span=getattr(citation, "cited_text", None),
                 )

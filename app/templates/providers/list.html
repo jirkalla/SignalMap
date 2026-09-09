@@ -23,7 +23,7 @@
       {% for provider, active_model_count in rows %}
       <tr class="border-t border-stone-100 hover:bg-stone-50">
         <td class="py-3 px-4 font-mono text-xs text-stone-500">{{ provider.code }}</td>
-        <td class="py-3 px-4" colspan="3">
+        <td class="py-3 px-4" colspan="4">
           <form method="post" action="/providers/{{ provider.id }}" class="flex flex-wrap items-center gap-3">
             <input type="text" name="name" value="{{ provider.name }}" required
                    class="rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">

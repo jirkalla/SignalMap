@@ -59,7 +59,7 @@
     <div id="model-badge-display" class="mt-2"></div>
     {% for group_label, models in model_groups %}
       {% for model in models %}
-      <div data-model-badge="{{ model.id }}" hidden>{{ cost_badge(model, t('ai_model.cost_free')) }}</div>
+      <div data-model-badge="{{ model.id }}" hidden>{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</div>
       {% endfor %}
     {% endfor %}
   </div>

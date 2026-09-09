@@ -8,6 +8,22 @@ conventions".
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlparse
+
+
+def extract_domain(url: str | None) -> str | None:
+    """Best-effort domain extraction from a citation URL; None if unparsable.
+
+    Shared by every adapter that maps provider citations into
+    AdapterCitation (app/adapters/google.py, app/adapters/anthropic.py) —
+    lives here, not copy-pasted per adapter, since it's not provider-specific.
+    """
+    if not url:
+        return None
+    try:
+        return urlparse(url).netloc or None
+    except ValueError:
+        return None
 
 
 @dataclass

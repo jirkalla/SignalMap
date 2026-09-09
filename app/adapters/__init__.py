@@ -31,3 +31,14 @@ def register_adapter(provider_code: str, adapter: type[ProviderAdapter]) -> None
     during a test run.
     """
     ADAPTERS[provider_code] = adapter
+
+
+def has_adapter(provider_code: str) -> bool:
+    """Whether `provider_code` has a working adapter registered.
+
+    The single place that answers "is this provider runnable" — used by both
+    app/routers/prompts.py (to decide which providers show up in the
+    run-trigger dropdown) and app/routers/runs.py (to reject a run against a
+    provider with no adapter), so the two checks can't drift out of sync.
+    """
+    return provider_code in ADAPTERS

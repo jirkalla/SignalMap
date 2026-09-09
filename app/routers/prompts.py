@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.adapters import ADAPTERS
+from app.adapters import has_adapter
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
@@ -29,7 +29,7 @@ def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
     """Active models, grouped by provider, for the run-trigger dropdown.
 
     A provider only contributes a group once it has both a registered
-    adapter (app.adapters.ADAPTERS) and at least one active model — a
+    adapter (app.adapters.has_adapter) and at least one active model — a
     provider row with no adapter yet, or no models yet (e.g. Anthropic
     added ahead of its adapter), simply produces no group rather than a
     broken or dead option.
@@ -44,7 +44,7 @@ def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
     ).all()
     groups: dict[str, list[AIModel]] = {}
     for model in models:
-        if model.provider.code not in ADAPTERS:
+        if not has_adapter(model.provider.code):
             continue
         groups.setdefault(model.provider.name, []).append(model)
     return list(groups.items())

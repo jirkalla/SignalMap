@@ -56,8 +56,10 @@ def _validate_template(template: str) -> str | None:
     return None
 
 
-def _rows(db: Session) -> list[tuple[Provider, str]]:
-    """Every provider with the template text actually in effect for it right now.
+def _rows(db: Session) -> list[tuple[Provider, str, bool]]:
+    """Every provider with the template text actually in effect for it right now, and
+
+    whether that text is a saved row or just the shown-but-unsaved default.
 
     A provider with no saved row shows DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
     here, not a blank box — that default is what _market_system_instruction
@@ -65,10 +67,15 @@ def _rows(db: Session) -> list[tuple[Provider, str]]:
     this page must never show something different from what a run actually
     sends. A saved row with empty text still shows blank (that's the
     explicit "send nothing" choice, not the unconfigured state).
+
+    The third element (`is_saved`) lets the template mark the default text
+    as "not yet saved" — otherwise an admin who submits the form untouched,
+    believing they're just looking at an already-configured value, silently
+    creates a real row pinned to today's default wording.
     """
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
     templates = {row.provider_id: row.template for row in db.scalars(select(SystemInstructionTemplate)).all()}
-    return [(p, templates.get(p.id, DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE)) for p in providers]
+    return [(p, templates.get(p.id, DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE), p.id in templates) for p in providers]
 
 
 @router.get("")
@@ -99,7 +106,10 @@ def update_template(
 
     error = _validate_template(template)
     if error:
-        rows = [(p, template if p.id == provider_id else existing) for p, existing in _rows(db)]
+        rows = [
+            (p, template if p.id == provider_id else existing, True if p.id == provider_id else was_saved)
+            for p, existing, was_saved in _rows(db)
+        ]
         return render(
             request, "settings.html", {"rows": rows, "error": f"{provider.name}: {error}"}, status_code=400
         )

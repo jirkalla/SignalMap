@@ -7,7 +7,7 @@ Client/Prompt/PromptSet (HD-T4): `runs.model_id` has no ondelete, so a model
 referenced by any Run can only be deactivated, never deleted.
 """
 
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -23,6 +23,11 @@ router = APIRouter(prefix="/ai-models", tags=["ai_models"])
 
 _CAPABILITY_TIERS = ("flagship", "standard", "economy")
 
+# ai_models.cost_per_1k_*_usd is Numeric(10, 5) — 10 total digits, 5 after the
+# decimal point, so the largest representable value is just under 10**5.
+_MAX_PRICE_PER_1K = Decimal(100_000)
+_PRICE_QUANTUM = Decimal("0.00001")
+
 
 def _get_model_or_404(db: Session, request: Request, model_id: int) -> AIModel:
     model = db.get(AIModel, model_id)
@@ -36,6 +41,14 @@ def _model_rows(db: Session) -> list[tuple[AIModel, int]]:
     models = db.scalars(select(AIModel).join(Provider).order_by(Provider.name, AIModel.model_name)).all()
     run_counts = dict(db.execute(select(Run.model_id, func.count(Run.id)).group_by(Run.model_id)).all())
     return [(m, run_counts.get(m.id, 0)) for m in models]
+
+
+def _model_run_count(db: Session, model_id: int) -> int:
+    """How many runs exist against this one model — the delete-block check (same pattern as
+
+    app/routers/clients.py's _client_run_count / app/routers/prompt_sets.py's _prompt_set_run_count).
+    """
+    return db.scalar(select(func.count(Run.id)).where(Run.model_id == model_id)) or 0
 
 
 def _provider_options(db: Session) -> list[tuple[int, str]]:
@@ -72,14 +85,23 @@ def _parse_price(raw: str, t) -> tuple[Decimal | None, str | None]:
     design decision 7). Admins enter the per-million figure since that's how
     every provider publishes pricing; storage stays per-1k for continuity
     with the phase-1 schema (`cost_per_1k_input_usd`/`cost_per_1k_output_usd`).
+
+    Explicitly quantized to the column's actual scale (5 decimal places) and
+    range-checked before it ever reaches the database — otherwise a
+    sub-cent-per-million price (e.g. "0.075") gets silently rounded by
+    Postgres with no warning, and a wildly out-of-range typo raises an
+    uncaught NumericValueOutOfRange during commit instead of a clean 409.
     """
     raw = raw.strip()
     if not raw:
         return None, None
     try:
-        return Decimal(raw) / 1000, None
+        value = Decimal(raw) / 1000
     except InvalidOperation:
         return None, t("errors.ai_model_invalid_price")
+    if value < 0 or value >= _MAX_PRICE_PER_1K:
+        return None, t("errors.ai_model_price_out_of_range")
+    return value.quantize(_PRICE_QUANTUM, rounding=ROUND_HALF_UP), None
 
 
 def _parse_int(raw: str, t) -> tuple[int | None, str | None]:
@@ -90,6 +112,60 @@ def _parse_int(raw: str, t) -> tuple[int | None, str | None]:
         return int(raw), None
     except ValueError:
         return None, t("errors.ai_model_invalid_number")
+
+
+def _validate_and_parse_model_form(
+    db: Session,
+    t,
+    *,
+    provider_id: int,
+    model_name: str,
+    capability_tier: str,
+    cost_per_million_input_usd: str,
+    cost_per_million_output_usd: str,
+    context_window_tokens: str,
+    max_output_tokens: str,
+    exclude_id: int | None = None,
+) -> tuple[dict, str | None]:
+    """Validate + parse one create/edit submission. Shared by create_ai_model and
+
+    update_ai_model so the two routes' validation rules can't drift apart —
+    same shared-validator shape as app/routers/markets.py's
+    _validate_iso_format (used by both create_market and update_market).
+
+    Returns (parsed, error). `parsed` always has keys cost_in/cost_out/
+    context_tokens/max_tokens; they're only meaningful when error is None.
+    `exclude_id` excludes the model being edited from the name-conflict check.
+    """
+    parsed: dict = {"cost_in": None, "cost_out": None, "context_tokens": None, "max_tokens": None}
+
+    if db.get(Provider, provider_id) is None:
+        return parsed, t("errors.provider_not_found")
+    if not model_name:
+        return parsed, t("errors.ai_model_name_required")
+    if capability_tier not in _CAPABILITY_TIERS:
+        return parsed, t("errors.ai_model_invalid_tier")
+
+    parsed["cost_in"], error = _parse_price(cost_per_million_input_usd, t)
+    if error:
+        return parsed, error
+    parsed["cost_out"], error = _parse_price(cost_per_million_output_usd, t)
+    if error:
+        return parsed, error
+    parsed["context_tokens"], error = _parse_int(context_window_tokens, t)
+    if error:
+        return parsed, error
+    parsed["max_tokens"], error = _parse_int(max_output_tokens, t)
+    if error:
+        return parsed, error
+
+    conflict_query = select(AIModel).where(AIModel.provider_id == provider_id, AIModel.model_name == model_name)
+    if exclude_id is not None:
+        conflict_query = conflict_query.where(AIModel.id != exclude_id)
+    if db.scalar(conflict_query) is not None:
+        return parsed, t("errors.ai_model_name_conflict")
+
+    return parsed, None
 
 
 @router.get("")
@@ -154,26 +230,17 @@ def create_ai_model(
         "notes": notes,
     }
 
-    error = None
-    if db.get(Provider, provider_id) is None:
-        error = t("errors.provider_not_found")
-    if error is None and not model_name:
-        error = t("errors.ai_model_name_required")
-    if error is None and capability_tier not in _CAPABILITY_TIERS:
-        error = t("errors.ai_model_invalid_tier")
-    cost_in = cost_out = context_tokens = max_tokens = None
-    if error is None:
-        cost_in, error = _parse_price(cost_per_million_input_usd, t)
-    if error is None:
-        cost_out, error = _parse_price(cost_per_million_output_usd, t)
-    if error is None:
-        context_tokens, error = _parse_int(context_window_tokens, t)
-    if error is None:
-        max_tokens, error = _parse_int(max_output_tokens, t)
-    if error is None and db.scalar(
-        select(AIModel).where(AIModel.provider_id == provider_id, AIModel.model_name == model_name)
-    ) is not None:
-        error = t("errors.ai_model_name_conflict")
+    parsed, error = _validate_and_parse_model_form(
+        db,
+        t,
+        provider_id=provider_id,
+        model_name=model_name,
+        capability_tier=capability_tier,
+        cost_per_million_input_usd=cost_per_million_input_usd,
+        cost_per_million_output_usd=cost_per_million_output_usd,
+        context_window_tokens=context_window_tokens,
+        max_output_tokens=max_output_tokens,
+    )
 
     if error:
         return render(
@@ -195,10 +262,10 @@ def create_ai_model(
         model_name=model_name,
         display_name=display_name or None,
         capability_tier=capability_tier,
-        cost_per_1k_input_usd=cost_in,
-        cost_per_1k_output_usd=cost_out,
-        context_window_tokens=context_tokens,
-        max_output_tokens=max_tokens,
+        cost_per_1k_input_usd=parsed["cost_in"],
+        cost_per_1k_output_usd=parsed["cost_out"],
+        context_window_tokens=parsed["context_tokens"],
+        max_output_tokens=parsed["max_tokens"],
         is_free=is_free,
         supports_web_search=supports_web_search,
         notes=notes or None,
@@ -250,30 +317,18 @@ def update_ai_model(
     display_name = display_name.strip()
     notes = notes.strip()
 
-    error = None
-    if db.get(Provider, provider_id) is None:
-        error = t("errors.provider_not_found")
-    if error is None and not model_name:
-        error = t("errors.ai_model_name_required")
-    if error is None and capability_tier not in _CAPABILITY_TIERS:
-        error = t("errors.ai_model_invalid_tier")
-    cost_in = cost_out = context_tokens = max_tokens = None
-    if error is None:
-        cost_in, error = _parse_price(cost_per_million_input_usd, t)
-    if error is None:
-        cost_out, error = _parse_price(cost_per_million_output_usd, t)
-    if error is None:
-        context_tokens, error = _parse_int(context_window_tokens, t)
-    if error is None:
-        max_tokens, error = _parse_int(max_output_tokens, t)
-    if error is None:
-        conflict = db.scalar(
-            select(AIModel).where(
-                AIModel.provider_id == provider_id, AIModel.model_name == model_name, AIModel.id != model_id
-            )
-        )
-        if conflict is not None:
-            error = t("errors.ai_model_name_conflict")
+    parsed, error = _validate_and_parse_model_form(
+        db,
+        t,
+        provider_id=provider_id,
+        model_name=model_name,
+        capability_tier=capability_tier,
+        cost_per_million_input_usd=cost_per_million_input_usd,
+        cost_per_million_output_usd=cost_per_million_output_usd,
+        context_window_tokens=context_window_tokens,
+        max_output_tokens=max_output_tokens,
+        exclude_id=model_id,
+    )
 
     if error:
         form_state = {
@@ -309,10 +364,10 @@ def update_ai_model(
     model.model_name = model_name
     model.display_name = display_name or None
     model.capability_tier = capability_tier
-    model.cost_per_1k_input_usd = cost_in
-    model.cost_per_1k_output_usd = cost_out
-    model.context_window_tokens = context_tokens
-    model.max_output_tokens = max_tokens
+    model.cost_per_1k_input_usd = parsed["cost_in"]
+    model.cost_per_1k_output_usd = parsed["cost_out"]
+    model.context_window_tokens = parsed["context_tokens"]
+    model.max_output_tokens = parsed["max_tokens"]
     model.is_free = is_free
     model.supports_web_search = supports_web_search
     model.notes = notes or None
@@ -339,7 +394,7 @@ def delete_ai_model(request: Request, model_id: int, db: Session = Depends(get_d
     """
     t = get_t(request)
     model = _get_model_or_404(db, request, model_id)
-    run_count = db.scalar(select(func.count(Run.id)).where(Run.model_id == model_id)) or 0
+    run_count = _model_run_count(db, model_id)
     if run_count:
         return render(
             request,

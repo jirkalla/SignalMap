@@ -5,23 +5,11 @@ into the project's canonical citation shape, while keeping the complete,
 untouched SDK response for raw_payload (FR-10).
 """
 
-from urllib.parse import urlparse
-
 from google import genai
 from google.genai import types
 
-from app.adapters.base import AdapterCitation, RawResponsePayload
+from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
 from app.config import get_settings
-
-
-def _extract_domain(url: str | None) -> str | None:
-    """Best-effort domain extraction from a citation URL; None if unparsable."""
-    if not url:
-        return None
-    try:
-        return urlparse(url).netloc or None
-    except ValueError:
-        return None
 
 
 def _resolve_source_domain(web: types.Web | None, source_url: str | None) -> str | None:
@@ -41,7 +29,7 @@ def _resolve_source_domain(web: types.Web | None, source_url: str | None) -> str
     title = getattr(web, "title", None) if web else None
     if title:
         return title
-    return _extract_domain(source_url)
+    return extract_domain(source_url)
 
 
 def _map_citations(candidate: types.Candidate | None) -> tuple[list[AdapterCitation], bool]:

@@ -14,6 +14,7 @@
   "settings.placeholders_hint": "Verfügbare Platzhalter: {market_code}, {market_language}, {market_country}, {market_locale_name} — werden aus dem Markt des Laufs befüllt. In der Praxis wird hier meist nur {market_language} gebraucht: {market_country} wird separat und automatisch verarbeitet, überall wo die API eines Anbieters echtes geografisches Such-Targeting bietet (z. B. Anthropics web_search user_location) — es muss hier nicht wiederholt werden.",
   "settings.empty_hint": "Leer bedeutet: für diesen Anbieter wird gar keine System-Instruktion gesendet.",
   "settings.no_providers": "Noch keine Anbieter.",
+  "settings.default_badge": "Standard (nicht gespeichert)",
 
   "market.list_title": "Märkte",
   "market.create_title": "Neuer Markt",
@@ -55,6 +56,7 @@
   "ai_model.cost_placeholder": "2.00",
   "ai_model.cost_hint": "Preis pro Million Token, wie vom Anbieter veröffentlicht. Leer lassen, wenn noch nicht bekannt — nie einen Preis raten.",
   "ai_model.cost_free": "Kostenlos",
+  "ai_model.cost_per_million_suffix": "pro 1 Mio.",
   "ai_model.context_window_label": "Kontextfenster (Token)",
   "ai_model.context_window_placeholder": "1000000",
   "ai_model.max_output_label": "Max. Output-Token",
@@ -211,6 +213,7 @@
   "errors.ai_model_name_required": "Modellname darf nicht leer sein.",
   "errors.ai_model_invalid_tier": "Leistungsstufe muss eine von: flagship, standard, economy sein.",
   "errors.ai_model_invalid_price": "Preis muss eine einfache Zahl sein, z. B. \"2.00\".",
+  "errors.ai_model_price_out_of_range": "Preis muss null oder größer sein und in einem speicherbaren Bereich liegen.",
   "errors.ai_model_invalid_number": "Muss eine ganze Zahl sein, z. B. \"128000\".",
   "errors.ai_model_name_conflict": "Dieser Anbieter hat bereits ein Modell mit exakt diesem Modellnamen.",
   "errors.ai_model_in_use": "Für dieses Modell sind {count} Lauf/Läufe erfasst — es kann nicht gelöscht werden. Deaktiviere es stattdessen."

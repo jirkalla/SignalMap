@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import button, delete_button, cost_badge %}
+{% from "partials/macros.html" import button, delete_button, cost_badge, toggle_button %}
 {% block title %}{{ t('ai_model.list_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
@@ -34,17 +34,13 @@
           <div class="font-mono text-xs text-stone-900">{{ model.model_name }}</div>
           {% if model.display_name %}<div class="text-stone-500">{{ model.display_name }}</div>{% endif %}
         </td>
-        <td class="py-3 px-4 whitespace-nowrap">{{ cost_badge(model, t('ai_model.cost_free')) }}</td>
+        <td class="py-3 px-4 whitespace-nowrap">{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</td>
         <td class="py-3 px-4 text-stone-500 whitespace-nowrap">
-          {{ model.context_window_tokens or t('common.none') }} / {{ model.max_output_tokens or t('common.none') }}
+          {{ model.context_window_tokens if model.context_window_tokens is not none else t('common.none') }} / {{ model.max_output_tokens if model.max_output_tokens is not none else t('common.none') }}
         </td>
         <td class="py-3 px-4 text-stone-500">{{ t('common.yes') if model.supports_web_search else t('common.no') }}</td>
         <td class="py-3 px-4">
-          <form method="post" action="/ai-models/{{ model.id }}/toggle-active" class="inline">
-            <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if model.is_active else 'bg-stone-100 text-stone-500' }}">
-              {{ t('ai_model.active_label') if model.is_active else t('ai_model.inactive_label') }}
-            </button>
-          </form>
+          {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
         </td>
         <td class="py-3 px-4 text-xs text-stone-400 whitespace-nowrap">{{ model.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
         <td class="py-3 px-4 text-right whitespace-nowrap">
@@ -62,20 +58,16 @@
   <div class="border border-stone-200 rounded-lg p-4 bg-white">
     <div class="flex items-center justify-between">
       <span class="text-xs text-stone-400">{{ model.provider.name }}</span>
-      {{ cost_badge(model, t('ai_model.cost_free')) }}
+      {{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}
     </div>
     <div class="font-mono text-sm font-medium text-stone-900 mt-1">{{ model.model_name }}</div>
     {% if model.display_name %}<div class="text-sm text-stone-500">{{ model.display_name }}</div>{% endif %}
     <div class="text-xs text-stone-500 mt-2">
-      {{ t('ai_model.context_max_label') }}: {{ model.context_window_tokens or t('common.none') }} / {{ model.max_output_tokens or t('common.none') }}
+      {{ t('ai_model.context_max_label') }}: {{ model.context_window_tokens if model.context_window_tokens is not none else t('common.none') }} / {{ model.max_output_tokens if model.max_output_tokens is not none else t('common.none') }}
       · {{ t('ai_model.web_search_label') }}: {{ t('common.yes') if model.supports_web_search else t('common.no') }}
     </div>
     <div class="flex items-center justify-between mt-3">
-      <form method="post" action="/ai-models/{{ model.id }}/toggle-active">
-        <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if model.is_active else 'bg-stone-100 text-stone-500' }}">
-          {{ t('ai_model.active_label') if model.is_active else t('ai_model.inactive_label') }}
-        </button>
-      </form>
+      {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
       <span class="text-xs text-stone-400">{{ model.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
     </div>
     <div class="flex gap-4 mt-3 text-sm">

@@ -14,6 +14,7 @@
   "settings.placeholders_hint": "Available placeholders: {market_code}, {market_language}, {market_country}, {market_locale_name} — filled in from the run's market. In practice, only {market_language} is usually needed here: {market_country} is handled separately and automatically wherever a provider's API offers real geographic search targeting (e.g. Anthropic's web_search user_location) — it doesn't need to be repeated in this text.",
   "settings.empty_hint": "Empty means no system_instruction is sent at all for this provider.",
   "settings.no_providers": "No providers yet.",
+  "settings.default_badge": "Default (not saved)",
 
   "market.list_title": "Markets",
   "market.create_title": "New market",
@@ -55,6 +56,7 @@
   "ai_model.cost_placeholder": "2.00",
   "ai_model.cost_hint": "Per-million-token price, as published by the provider. Leave empty if not yet known — never guess a price.",
   "ai_model.cost_free": "Free",
+  "ai_model.cost_per_million_suffix": "per 1M",
   "ai_model.context_window_label": "Context window (tokens)",
   "ai_model.context_window_placeholder": "1000000",
   "ai_model.max_output_label": "Max output tokens",
@@ -211,6 +213,7 @@
   "errors.ai_model_name_required": "Model name can't be empty.",
   "errors.ai_model_invalid_tier": "Capability tier must be one of: flagship, standard, economy.",
   "errors.ai_model_invalid_price": "Price must be a plain number, e.g. \"2.00\".",
+  "errors.ai_model_price_out_of_range": "Price must be zero or greater, and within a storable range.",
   "errors.ai_model_invalid_number": "Must be a whole number, e.g. \"128000\".",
   "errors.ai_model_name_conflict": "This provider already has a model with this exact model name.",
   "errors.ai_model_in_use": "This model has {count} run(s) recorded against it and can't be deleted. Deactivate it instead."

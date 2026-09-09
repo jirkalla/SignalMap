@@ -19,7 +19,7 @@ from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.adapters import ADAPTERS, get_adapter
+from app.adapters import get_adapter, has_adapter
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
@@ -98,7 +98,7 @@ def trigger_run(
     model = db.get(AIModel, model_id)
     if model is None:
         raise AppError("model_not_found", t("errors.model_not_found"), status_code=400)
-    if model.provider.code not in ADAPTERS:
+    if not has_adapter(model.provider.code):
         raise AppError("provider_not_supported", t("errors.provider_not_supported"), status_code=400)
 
     market = db.get(Market, market_id)
