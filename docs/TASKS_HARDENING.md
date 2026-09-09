@@ -86,12 +86,12 @@ ověřování.
 
 | ID | Name | Status |
 |----|------|--------|
-| HD-T1 | Strukturované logování + oprava úniku chybových detailů | ⏳ |
-| HD-T2 | Dockerfile: non-root uživatel | ⏳ |
-| HD-T3 | Zamknout verze v requirements.txt | ⏳ |
-| HD-T4 | Delete politika + chybějící CRUD (Client/PromptSet/Prompt) | ⏳ |
-| HD-T6 | Audit columns: `created_at`/`updated_at` na `markets`/`prompt_sets` | ⏳ |
-| HD-T5 | Testovací infrastruktura + základní sada | ⏳ |
+| HD-T1 | Strukturované logování + oprava úniku chybových detailů | ✅ |
+| HD-T2 | Dockerfile: non-root uživatel | ✅ |
+| HD-T3 | Zamknout verze v requirements.txt | ✅ |
+| HD-T4 | Delete politika + chybějící CRUD (Client/PromptSet/Prompt) | ✅ |
+| HD-T6 | Audit columns: `created_at`/`updated_at` na `markets`/`prompt_sets` | ✅ |
+| HD-T5 | Testovací infrastruktura + základní sada | ✅ |
 
 ---
 
@@ -132,7 +132,7 @@ Po dokončení:
 feat(infra): add structured stdout logging, stop leaking exception details to clients
 ```
 
-### DONE
+### DONE — commit 90fb22c
 
 ---
 
@@ -157,7 +157,7 @@ Po dokončení:
 chore(infra): run app container as non-root user
 ```
 
-### DONE
+### DONE — commit 2136fc8
 
 ---
 
@@ -190,7 +190,7 @@ Po dokončení:
 chore(deps): pin all dependency versions for reproducible builds
 ```
 
-### DONE
+### DONE — commit cfa9aba
 
 ---
 
@@ -237,7 +237,7 @@ Po dokončení:
 feat(crud): add delete to clients/prompt-sets/prompts, blocked when evidence exists; add missing prompt-set edit
 ```
 
-### DONE
+### DONE — commits 83bfad3, 35230bc, 7f99456 (confirm() apostrophe bugfix found during manual verification)
 
 ---
 
@@ -278,7 +278,7 @@ Po dokončení:
 feat(schema): add created_at/updated_at audit columns to markets and prompt_sets
 ```
 
-### DONE
+### DONE — commit 65b6c7a
 
 ---
 
@@ -321,20 +321,20 @@ Po dokončení:
 test: add pytest infrastructure and initial test suite (health, clients, markets, runs)
 ```
 
-### DONE
+### DONE — commits 4e51159, b52b16e (httpx2 + pytest 9.1.1 bump, README pytest invocation fix)
 
 ---
 
 ## Completion Checklist
 
-- [ ] Chybové odpovědi klientovi neobsahují syrový text výjimky; server-side log ukazuje
+- [x] Chybové odpovědi klientovi neobsahují syrový text výjimky; server-side log ukazuje
       celý traceback
-- [ ] `docker compose exec app whoami` → `appuser`
-- [ ] `requirements.txt` — všechny závislosti pinnuté, `pip freeze` v kontejneru odpovídá
-- [ ] Client/PromptSet/Prompt mají plné CRUD (create/list/edit/delete), delete zablokovaný,
+- [x] `docker compose exec app whoami` → `appuser`
+- [x] `requirements.txt` — všechny závislosti pinnuté, `pip freeze` v kontejneru odpovídá
+- [x] Client/PromptSet/Prompt mají plné CRUD (create/list/edit/delete), delete zablokovaný,
       kde by zničil evidenci
-- [ ] `prompt_sets/{id}/edit` existuje a funguje
-- [ ] `markets`/`prompt_sets` mají `created_at`/`updated_at`; `updated_at` se mění při edit
-- [ ] `pytest` sada zelená, pokrývá health/clients/markets/runs (úspěch i chybová cesta)
-- [ ] `docs/TASKS.md` — poznámka, že hardening větev existuje a co pokrývá (odkaz na tenhle
+- [x] `prompt_sets/{id}/edit` existuje a funguje
+- [x] `markets`/`prompt_sets` mají `created_at`/`updated_at`; `updated_at` se mění při edit
+- [x] `pytest` sada zelená, pokrývá health/clients/markets/runs (úspěch i chybová cesta)
+- [x] `docs/TASKS.md` — poznámka, že hardening větev existuje a co pokrývá (odkaz na tenhle
       soubor)

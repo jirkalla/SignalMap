@@ -123,7 +123,7 @@ Po dokončení:
 feat(infra): add structured stdout logging, stop leaking exception details to clients
 ```
 
-### DONE
+### DONE — commit 90fb22c
 
 ---
 ---
@@ -151,7 +151,7 @@ Po dokončení:
 chore(infra): run app container as non-root user
 ```
 
-### DONE
+### DONE — commit 2136fc8
 
 ---
 ---
@@ -181,7 +181,7 @@ Po dokončení:
 chore(deps): pin all dependency versions for reproducible builds
 ```
 
-### DONE
+### DONE — commit cfa9aba
 
 ---
 ---
@@ -232,7 +232,7 @@ Po dokončení:
 feat(crud): add delete to clients/prompt-sets/prompts, blocked when evidence exists; add missing prompt-set edit
 ```
 
-### DONE
+### DONE — commits 83bfad3, 35230bc, 7f99456 (confirm() apostrophe bugfix found during manual verification)
 
 ---
 ---
@@ -273,7 +273,7 @@ Po dokončení:
 feat(schema): add created_at/updated_at audit columns to markets and prompt_sets
 ```
 
-### DONE
+### DONE — commit 65b6c7a
 
 ---
 ---
@@ -320,4 +320,4 @@ Po dokončení:
 test: add pytest infrastructure and initial test suite (health, clients, markets, runs)
 ```
 
-### DONE
+### DONE — commits 4e51159, b52b16e (httpx2 + pytest 9.1.1 bump, README pytest invocation fix)
