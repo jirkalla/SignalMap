@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_grouped_field, select_field, button, status_badge, delete_button %}
+{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -45,7 +45,23 @@
 
 <form method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3">
   <div class="flex-1 min-w-[200px] mb-0">
-    {{ select_grouped_field('model_id', t('prompt.select_model'), model_groups, required=True) }}
+    <label for="model_id" class="block text-sm font-medium text-stone-700 mb-1">{{ t('prompt.select_model') }} *</label>
+    <select id="model_id" name="model_id" required {% if not model_groups %}disabled{% endif %}
+            class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500 disabled:bg-stone-100 disabled:text-stone-400">
+      {% for group_label, models in model_groups %}
+      <optgroup label="{{ group_label }}">
+        {% for model in models %}
+        <option value="{{ model.id }}">{{ model.display_name or model.model_name }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+    <div id="model-badge-display" class="mt-2"></div>
+    {% for group_label, models in model_groups %}
+      {% for model in models %}
+      <div data-model-badge="{{ model.id }}" hidden>{{ cost_badge(model, t('ai_model.cost_free')) }}</div>
+      {% endfor %}
+    {% endfor %}
   </div>
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_field('market_id', t('prompt.market_label'), markets, selected=prompt.market_id, required=True) }}
@@ -58,6 +74,23 @@
   <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
   {% endif %}
 </div>
+
+<script>
+  // Live cost_badge under the model dropdown — mirrors the same markup
+  // /ai-models renders (partials/macros.html's cost_badge), just shown/hidden
+  // per selection since a native <option> can't carry HTML/color itself.
+  (function () {
+    var select = document.getElementById('model_id');
+    var display = document.getElementById('model-badge-display');
+    if (!select || !display) return;
+    function updateBadge() {
+      var badge = document.querySelector('[data-model-badge="' + select.value + '"]');
+      display.innerHTML = badge ? badge.innerHTML : '';
+    }
+    select.addEventListener('change', updateBadge);
+    updateBadge();
+  })();
+</script>
 
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.runs_title') }}</h2>
 {% if runs %}
