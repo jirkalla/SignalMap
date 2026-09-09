@@ -63,6 +63,30 @@ again:
 docker compose down -v
 ```
 
+## Running tests
+
+Tests run against a second, real Postgres database on the same compose
+container (`signalmap_test`) — not SQLite, since the app relies on
+JSONB/GIN indexes SQLite can't faithfully emulate. They never call the
+real Gemini API (see `tests/fake_adapter.py`).
+
+1. Create the test database once (inside the running `postgres` container):
+
+   ```bash
+   docker compose exec postgres psql -U signalmap_user -d signalmap -c "CREATE DATABASE signalmap_test;"
+   ```
+
+2. Install the dev dependencies and run the suite (inside the running `app` container):
+
+   ```bash
+   docker compose exec app pip install -r requirements-dev.txt
+   docker compose exec app pytest
+   ```
+
+Each test run creates its own tables via SQLAlchemy metadata (not
+Alembic) and truncates them between tests — the test database is safe to
+throw away and recreate at any time.
+
 ## Stack
 
 FastAPI + SQLAlchemy + PostgreSQL, Jinja2 + HTMX (Vue3 islands planned for
