@@ -47,5 +47,18 @@
   <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6">
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Delegated confirm() guard for every delete form — see the
+    // signalmap-conventions skill's "delete action" rule. Reads the
+    // message from data-confirm (normal HTML-escaped attribute) instead
+    // of interpolating translated text into an inline onsubmit string,
+    // which breaks on any apostrophe in the message (e.g. English "can't").
+    document.addEventListener('submit', function (event) {
+      var message = event.target.getAttribute('data-confirm');
+      if (message && !window.confirm(message)) {
+        event.preventDefault();
+      }
+    });
+  </script>
 </body>
 </html>

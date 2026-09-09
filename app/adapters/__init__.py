@@ -19,3 +19,13 @@ def get_adapter(provider_code: str) -> ProviderAdapter:
     into a structured AppError rather than a raw 500.
     """
     return ADAPTERS[provider_code]()
+
+
+def register_adapter(provider_code: str, adapter: type[ProviderAdapter]) -> None:
+    """Register (or override) the adapter class used for `provider_code`.
+
+    The test seam: tests/conftest.py uses this to swap in a FakeAdapter for
+    'google_gemini' so app/routers/runs.py never makes a real Gemini call
+    during a test run.
+    """
+    ADAPTERS[provider_code] = adapter

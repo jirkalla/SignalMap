@@ -10,7 +10,10 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from app.errors import register_exception_handlers
+from app.logging_config import configure_logging
 from app.routers import clients, findings, help, locale, markets, prompt_sets, prompts, runs, settings
+
+configure_logging()
 
 app = FastAPI(
     title="SignalMap",

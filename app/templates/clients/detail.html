@@ -1,11 +1,17 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import text_field, button %}
+{% from "partials/macros.html" import text_field, button, delete_button %}
 {% block title %}{{ client.name }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-2">
-  <h1 class="text-xl font-semibold">{{ client.name }}</h1>
-  <a href="/clients/{{ client.id }}/edit" class="text-sm text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+<div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
+  <h1 class="text-xl font-semibold break-words">{{ client.name }}</h1>
+  <div class="flex items-center gap-3 text-sm shrink-0">
+    <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+    {{ delete_button('/clients/' ~ client.id ~ '/delete', t('client.delete_confirm'), t('client.delete_button')) }}
+  </div>
 </div>
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
 <div class="text-sm text-stone-500 mb-8 space-y-1">
   <div>{{ t('client.industry_label') }}: {{ client.industry or t('common.none') }}</div>
   {% if client.notes %}<div class="whitespace-pre-line mt-2">{{ client.notes }}</div>{% endif %}

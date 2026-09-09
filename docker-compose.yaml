@@ -27,6 +27,11 @@ services:
       - "58000:8000"         # host:container
     volumes:
       - .:/code
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # --reload-include is needed because uvicorn's default reload watcher
     # only tracks .py files - without it, editing app/i18n/*.json requires
     # a manual restart to be picked up.

@@ -7,12 +7,12 @@ rather than changing anything here.
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.errors import AppError
-from app.models import Market, Prompt, PromptSet
+from app.models import Market, Prompt, PromptSet, Run
 from app.routers.clients import _get_client_or_404
 from app.templating import get_t, render
 from app.utils import market_options
@@ -25,6 +25,25 @@ def _get_prompt_set_or_404(db: Session, request: Request, prompt_set_id: int) ->
     if prompt_set is None:
         raise AppError("prompt_set_not_found", get_t(request)("errors.prompt_set_not_found"), status_code=404)
     return prompt_set
+
+
+def _prompt_set_run_count(db: Session, prompt_set_id: int) -> int:
+    """How many runs exist under any prompt of this prompt set — the delete-block check."""
+    return (
+        db.scalar(
+            select(func.count(Run.id)).join(Prompt, Run.prompt_id == Prompt.id).where(Prompt.prompt_set_id == prompt_set_id)
+        )
+        or 0
+    )
+
+
+def _current_prompts(db: Session, prompt_set_id: int) -> list[Prompt]:
+    """This prompt set's current-version prompts, newest first — shared by the detail and delete-blocked views."""
+    return db.scalars(
+        select(Prompt)
+        .where(Prompt.prompt_set_id == prompt_set_id, Prompt.is_current_version.is_(True))
+        .order_by(Prompt.created_at.desc())
+    ).all()
 
 
 @router.post("/clients/{client_id}/prompt-sets")
@@ -51,16 +70,71 @@ def prompt_set_detail(request: Request, prompt_set_id: int, db: Session = Depend
     them via the "version history" on a current prompt's detail page.
     """
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
-    prompts = db.scalars(
-        select(Prompt)
-        .where(Prompt.prompt_set_id == prompt_set_id, Prompt.is_current_version.is_(True))
-        .order_by(Prompt.created_at.desc())
-    ).all()
+    prompts = _current_prompts(db, prompt_set_id)
     return render(
         request,
         "prompt_sets/detail.html",
         {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options(db)},
     )
+
+
+@router.get("/prompt-sets/{prompt_set_id}/edit")
+def edit_prompt_set_form(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
+    """Render the prompt-set edit form, pre-filled with the current name."""
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    t = get_t(request)
+    return render(
+        request,
+        "prompt_sets/form.html",
+        {
+            "title": t("prompt_set.edit_title"),
+            "action": f"/prompt-sets/{prompt_set_id}/edit",
+            "cancel_url": f"/prompt-sets/{prompt_set_id}",
+            "prompt_set": prompt_set,
+        },
+    )
+
+
+@router.post("/prompt-sets/{prompt_set_id}/edit")
+def update_prompt_set(
+    request: Request,
+    prompt_set_id: int,
+    name: str = Form(..., description="Name for this group of prompts, e.g. 'Q1 2026 brand tracking'."),
+    db: Session = Depends(get_db),
+):
+    """Update a prompt set's name."""
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    prompt_set.name = name.strip()
+    db.commit()
+    return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)
+
+
+@router.post("/prompt-sets/{prompt_set_id}/delete")
+def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
+    """Delete a prompt set and its prompts, unless any of them has a recorded run.
+
+    Blocked (inline error, not a raw API error) the same way client and
+    market delete are — deleting evidence is never allowed (NFR-6).
+    """
+    t = get_t(request)
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    run_count = _prompt_set_run_count(db, prompt_set_id)
+    if run_count:
+        return render(
+            request,
+            "prompt_sets/detail.html",
+            {
+                "prompt_set": prompt_set,
+                "prompts": _current_prompts(db, prompt_set_id),
+                "markets": market_options(db),
+                "error": t("errors.prompt_set_in_use").format(count=run_count),
+            },
+            status_code=409,
+        )
+    client_id = prompt_set.client_id
+    db.delete(prompt_set)
+    db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
 @router.post("/prompt-sets/{prompt_set_id}/prompts")

@@ -23,6 +23,9 @@ class PromptSet(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     client: Mapped["Client"] = relationship(back_populates="prompt_sets")
     prompts: Mapped[list["Prompt"]] = relationship(back_populates="prompt_set", cascade="all, delete-orphan")

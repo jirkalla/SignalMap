@@ -5,7 +5,7 @@ history, and lets it be edited — as a new version, never in place (NFR-6).
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.adapters import ADAPTERS
@@ -53,6 +53,11 @@ def _version_history(db: Session, prompt: Prompt) -> list[Prompt]:
         .where(or_(Prompt.id == root_id, Prompt.root_prompt_id == root_id))
         .order_by(Prompt.version.desc())
     ).all()
+
+
+def _lineage_run_count(db: Session, lineage_ids: list[int]) -> int:
+    """How many runs exist against any version in this prompt's lineage — the delete-block check."""
+    return db.scalar(select(func.count(Run.id)).where(Run.prompt_id.in_(lineage_ids))) or 0
 
 
 @router.get("/{prompt_id}")
@@ -132,3 +137,42 @@ def update_prompt(
     db.commit()
     db.refresh(new_prompt)
     return RedirectResponse(url=f"/prompts/{new_prompt.id}", status_code=303)
+
+
+@router.post("/{prompt_id}/delete")
+def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db)):
+    """Delete this prompt's entire version lineage, unless any version has a recorded run.
+
+    A prompt's edit history (NFR-6) is a single logical entity split across
+    rows by `root_prompt_id` — deleting only the current version and
+    leaving old versions orphaned would be a confusing partial state, so
+    delete always targets the whole lineage (root + every version sharing
+    its root_prompt_id), and blocks if ANY version in it has a run.
+    """
+    t = get_t(request)
+    prompt = _get_prompt_or_404(db, request, prompt_id)
+    versions = _version_history(db, prompt)
+    lineage_ids = [v.id for v in versions]
+    run_count = _lineage_run_count(db, lineage_ids)
+    if run_count:
+        model_groups = _runnable_model_groups(db)
+        runs = db.scalars(select(Run).where(Run.prompt_id == prompt_id).order_by(Run.started_at.desc())).all()
+        return render(
+            request,
+            "prompts/detail.html",
+            {
+                "prompt": prompt,
+                "model_groups": model_groups,
+                "markets": market_options(db),
+                "runs": runs,
+                "versions": versions if len(versions) > 1 else [],
+                "error": t("errors.prompt_in_use").format(count=run_count),
+            },
+            status_code=409,
+        )
+    prompt_set_id = prompt.prompt_set_id
+    # Children (root_prompt_id set) must go before the root row they reference.
+    for v in sorted(versions, key=lambda p: p.root_prompt_id is None):
+        db.delete(v)
+    db.commit()
+    return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)

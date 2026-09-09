@@ -94,10 +94,15 @@
   "client.notes_placeholder": "Freitext-Notizen zu diesem Klienten",
   "client.empty_state": "Noch keine Klienten. Lege den ersten an, um zu starten.",
   "client.prompt_sets_title": "Prompt-Sets",
+  "client.delete_button": "Löschen",
+  "client.delete_confirm": "Diesen Klienten löschen? Das kann nicht rückgängig gemacht werden.",
 
   "prompt_set.create_title": "Neues Prompt-Set",
+  "prompt_set.edit_title": "Prompt-Set bearbeiten",
   "prompt_set.name_label": "Name",
   "prompt_set.empty_state": "Noch keine Prompt-Sets für diesen Klienten.",
+  "prompt_set.delete_button": "Löschen",
+  "prompt_set.delete_confirm": "Dieses Prompt-Set löschen? Das kann nicht rückgängig gemacht werden.",
 
   "prompt.title": "Prompts",
   "prompt.create_title": "Neuer Prompt",
@@ -118,6 +123,8 @@
   "prompt.edit_version_note": "Speichern erstellt Version {version} — die aktuelle Version bleibt unverändert, und jeder vergangene Lauf zeigt weiterhin genau den Text, mit dem er tatsächlich lief.",
   "prompt.version_history_title": "Versionsverlauf",
   "prompt.version_current": "aktuell",
+  "prompt.delete_button": "Löschen",
+  "prompt.delete_confirm": "Diesen Prompt löschen? Das löscht seinen gesamten Versionsverlauf und kann nicht rückgängig gemacht werden.",
 
   "run.detail_title": "Lauf",
   "run.metadata_title": "Metadaten",
@@ -140,8 +147,11 @@
   "run.prompt_label": "Prompt",
 
   "errors.client_not_found": "Klient nicht gefunden.",
+  "errors.client_in_use": "Für diesen Klienten sind {count} Lauf/Läufe unter seinen Prompts erfasst — er kann nicht gelöscht werden. Lösche zuerst diese Prompts oder Prompt-Sets.",
   "errors.prompt_set_not_found": "Prompt-Set nicht gefunden.",
+  "errors.prompt_set_in_use": "Für dieses Prompt-Set sind {count} Lauf/Läufe unter seinen Prompts erfasst — es kann nicht gelöscht werden. Lösche zuerst diese Prompts.",
   "errors.prompt_not_found": "Prompt nicht gefunden.",
+  "errors.prompt_in_use": "Für diesen Prompt sind {count} Lauf/Läufe erfasst — er kann nicht gelöscht werden.",
   "errors.run_not_found": "Lauf nicht gefunden.",
   "errors.model_not_found": "Modell nicht gefunden.",
   "errors.provider_not_supported": "Dieser Anbieter wird noch nicht unterstützt.",

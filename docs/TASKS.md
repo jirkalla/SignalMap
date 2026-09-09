@@ -89,6 +89,18 @@ findings — each verified live, not just written:
 - **Tailwind visual styling** — also originally deferred; done, per the
   amendment in `docs/REQUIREMENTS.md` §3a.
 
+## Production-readiness hardening (separate from phase-1 scope above)
+
+Branch `feature/signalmap-phase1-hardening` (2026-09-09) covers technical
+debt found in a post-phase-1 code review — no new user-facing feature:
+structured logging + no more leaked exception details to clients,
+non-root container, pinned dependency versions, a consistent delete
+policy with the previously-missing Client/PromptSet/Prompt CRUD, audit
+columns (`created_at`/`updated_at`) on `markets`/`prompt_sets`, and a
+first pytest suite (health/clients/markets/runs). Full task list, design
+decisions, and per-task commit hashes: `docs/TASKS_HARDENING.md` and
+`docs/PROMPTS_HARDENING.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Second provider (Anthropic) — proves the adapter pattern generalizes,
   and is the only way to get real geographic targeting (`user_location`)

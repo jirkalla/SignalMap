@@ -1,0 +1,8 @@
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
+# httpx2 (Pydantic's fork/successor of httpx) is what starlette.testclient
+# actually wants — httpx itself stays pinned above since it's also a
+# transitive dependency of google-genai (production code), unrelated to
+# TestClient usage in tests.
+httpx2==2.12.0
