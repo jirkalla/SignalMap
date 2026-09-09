@@ -35,7 +35,7 @@
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
           <form method="post" action="/markets/{{ market.id }}/delete" class="inline"
-                onsubmit="return confirm('{{ t('market.delete_confirm') }}')">
+                data-confirm="{{ t('market.delete_confirm') }}">
             <button type="submit" class="text-red-700 hover:underline ml-3 {% if prompt_count %}opacity-40{% endif %}">{{ t('market.delete_button') }}</button>
           </form>
         </td>
@@ -56,7 +56,7 @@
     <div class="flex gap-4 mt-3 text-sm">
       <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
       <form method="post" action="/markets/{{ market.id }}/delete"
-            onsubmit="return confirm('{{ t('market.delete_confirm') }}')">
+            data-confirm="{{ t('market.delete_confirm') }}">
         <button type="submit" class="text-red-700 hover:underline">{{ t('market.delete_button') }}</button>
       </form>
     </div>
