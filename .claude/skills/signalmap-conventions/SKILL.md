@@ -57,6 +57,7 @@ Use the right tool for each part of the app — don't default to one everywhere:
 - **Vue3 "islands" embedded in a Jinja2 page**: the analyst dashboard — source/signal map, live filtering, charts, anything needing client-side state or re-rendering without a full page reload. Don't build a full SPA shell; mount Vue components into specific `<div>`s inside otherwise server-rendered pages.
 - Visual language follows the existing "evidence dossier" prototypes: IBM Plex Sans/Mono typography, muted/restrained color palette, deliberately *not* a generic SaaS card-and-shadow look. When building any new screen, match this tone rather than defaulting to a generic component-library appearance.
 - **Responsive by default**: every screen must work on mobile, tablet, and desktop — this is a stated product requirement, not a nice-to-have. Test breakpoints roughly at ~640px (mobile), ~1024px (tablet), and above (desktop). Tables that don't fit on mobile should collapse to a card/stacked layout, not force horizontal scrolling as the only option.
+- **Every delete action gets a client-side `confirm()` guard** on the form (`onsubmit="return confirm(t('<entity>.delete_confirm'))"`) — never a bare delete button. Reuse the pattern from `markets/list.html`.
 
 ## Open decisions (flag, don't silently pick)
 

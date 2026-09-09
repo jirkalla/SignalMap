@@ -5,7 +5,19 @@
 <div class="text-sm text-stone-500 mb-1">
   <a href="/clients/{{ prompt_set.client_id }}" class="hover:underline">{{ prompt_set.client.name }}</a>
 </div>
-<h1 class="text-xl font-semibold mb-6">{{ prompt_set.name }}</h1>
+<div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-6">
+  <h1 class="text-xl font-semibold break-words">{{ prompt_set.name }}</h1>
+  <div class="flex items-center gap-3 text-sm shrink-0">
+    <a href="/prompt-sets/{{ prompt_set.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+    <form method="post" action="/prompt-sets/{{ prompt_set.id }}/delete" class="inline"
+          onsubmit="return confirm('{{ t('prompt_set.delete_confirm') }}')">
+      <button type="submit" class="text-red-700 hover:underline">{{ t('prompt_set.delete_button') }}</button>
+    </form>
+  </div>
+</div>
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
 
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.create_title') }}</h2>
 <form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 max-w-2xl">

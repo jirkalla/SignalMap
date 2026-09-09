@@ -7,10 +7,19 @@
   <span class="mx-1">/</span>
   <a href="/prompt-sets/{{ prompt.prompt_set_id }}" class="hover:underline">{{ prompt.prompt_set.name }}</a>
 </div>
-<div class="flex items-center justify-between mb-2">
-  <h1 class="text-xl font-semibold">{{ t('prompt.detail_title') }}</h1>
-  <a href="/prompts/{{ prompt.id }}/edit" class="text-sm text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+<div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
+  <h1 class="text-xl font-semibold break-words">{{ t('prompt.detail_title') }}</h1>
+  <div class="flex items-center gap-3 text-sm shrink-0">
+    <a href="/prompts/{{ prompt.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+    <form method="post" action="/prompts/{{ prompt.id }}/delete" class="inline"
+          onsubmit="return confirm('{{ t('prompt.delete_confirm') }}')">
+      <button type="submit" class="text-red-700 hover:underline">{{ t('prompt.delete_button') }}</button>
+    </form>
+  </div>
 </div>
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <p class="text-stone-900 mb-3">{{ prompt.text }}</p>
   <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
