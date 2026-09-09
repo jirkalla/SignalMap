@@ -4,6 +4,7 @@
   "nav.docs": "API Docs",
   "nav.help": "Guide",
   "nav.markets": "Markets",
+  "nav.providers": "Providers",
   "nav.settings": "Settings",
 
   "settings.title": "Settings",
@@ -28,6 +29,12 @@
   "market.empty_state": "No markets yet. Prompts need at least one market to be created.",
   "market.delete_button": "Delete",
   "market.delete_confirm": "Delete this market? This can't be undone.",
+
+  "provider.list_title": "Providers",
+  "provider.code_label": "Code",
+  "provider.name_label": "Name",
+  "provider.model_count_label": "Active models",
+  "provider.updated_at_label": "Last updated",
 
   "help.title": "How to use SignalMap",
   "help.lede": "A walkthrough of the phase-1 workflow: client, prompt set, prompt, run.",
@@ -161,5 +168,6 @@
   "errors.market_in_use": "This market is used by {count} prompt(s) and can't be deleted. Remove or reassign those prompts first.",
   "errors.market_invalid_language": "Language must be a 2-letter ISO 639-1 code, e.g. \"cs\".",
   "errors.market_invalid_country": "Country must be a 2-letter ISO 3166-1 alpha-2 code, e.g. \"CZ\".",
-  "errors.provider_not_found": "Provider not found."
+  "errors.provider_not_found": "Provider not found.",
+  "errors.provider_name_required": "Name can't be empty."
 }

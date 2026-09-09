@@ -4,6 +4,7 @@
   "nav.docs": "API-Dokumentation",
   "nav.help": "Anleitung",
   "nav.markets": "Märkte",
+  "nav.providers": "Anbieter",
   "nav.settings": "Einstellungen",
 
   "settings.title": "Einstellungen",
@@ -28,6 +29,12 @@
   "market.empty_state": "Noch keine Märkte. Für Prompts wird mindestens ein Markt benötigt.",
   "market.delete_button": "Löschen",
   "market.delete_confirm": "Diesen Markt löschen? Das kann nicht rückgängig gemacht werden.",
+
+  "provider.list_title": "Anbieter",
+  "provider.code_label": "Code",
+  "provider.name_label": "Name",
+  "provider.model_count_label": "Aktive Modelle",
+  "provider.updated_at_label": "Zuletzt aktualisiert",
 
   "help.title": "So funktioniert SignalMap",
   "help.lede": "Ein Rundgang durch den Phase-1-Ablauf: Klient, Prompt-Set, Prompt, Lauf.",
@@ -161,5 +168,6 @@
   "errors.market_in_use": "Dieser Markt wird von {count} Prompt(s) verwendet und kann nicht gelöscht werden. Entferne oder ändere diese Prompts zuerst.",
   "errors.market_invalid_language": "Sprache muss ein 2-buchstabiger ISO-639-1-Code sein, z. B. \"cs\".",
   "errors.market_invalid_country": "Land muss ein 2-buchstabiger ISO-3166-1-alpha-2-Code sein, z. B. \"CZ\".",
-  "errors.provider_not_found": "Anbieter nicht gefunden."
+  "errors.provider_not_found": "Anbieter nicht gefunden.",
+  "errors.provider_name_required": "Name darf nicht leer sein."
 }
