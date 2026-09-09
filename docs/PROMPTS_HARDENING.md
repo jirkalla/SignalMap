@@ -4,8 +4,10 @@
 ##
 ## JAK POUŽÍVAT:
 ## 1. git checkout -b feature/signalmap-phase1-hardening (z aktuálního master)
-## 2. Pět kódových promptů (HD-1 až HD-5), POŘADÍ VYNUCENÉ pro HD-4→HD-5 (HD-5 testuje delete
-##    endpointy z HD-4). HD-1/HD-2/HD-3 jsou vzájemně nezávislé, ale drž se pořadí v souboru.
+## 2. Šest kódových promptů (HD-1 až HD-6), POŘADÍ VYNUCENÉ pro HD-4→HD-6→HD-5 (HD-6 navazuje
+##    migrací na HD-4's 0007 a potřebuje prompt_sets edit z HD-4; HD-5 testuje delete
+##    endpointy z HD-4 i audit sloupce z HD-6). HD-1/HD-2/HD-3 jsou vzájemně nezávislé, ale
+##    drž se pořadí v souboru.
 ## 3. SESSION HEADER vlož jen JEDNOU na začátku nové konverzace pro tuto větev.
 ## 4. Každý prompt musí skončit "appka nastartuje bez chyby" (+ specifická kontrola daného
 ##    promptu) než jdeš na další.
@@ -49,7 +51,13 @@ v TASKS_HARDENING.md) — DB už dnes implicitně blokuje smazání promptu
 s běhy (chybějící `ondelete` na `runs_prompt_id_fkey` = Postgres default
 `NO ACTION`, funkčně stejné jako RESTRICT). Skutečná mezera je v aplikační
 vrstvě (chybějící endpointy), ne v datech. Neobjevuj scope znovu, drž se
-přesně HD-T1 až HD-T5 podle TASKS souboru.
+přesně HD-T1 až HD-T6 podle TASKS souboru.
+
+HD-T6 (audit columns) vznikl jako dodatečný nález (ne z původního code
+review) — `created_at`/`updated_at` na `markets`/`prompt_sets` jen tam,
+kde je entita skutečně editovatelná; `created_by`/`updated_by` se
+nepřidává vůbec (žádný auth v týhle fázi) — viz design decision 7 v
+TASKS_HARDENING.md.
 
 STACK: FastAPI + SQLAlchemy 2.0 + PostgreSQL, Jinja2 + HTMX (žádný
 JavaScript framework), Alembic migrace, Docker Compose. Backend kód
@@ -229,13 +237,55 @@ feat(crud): add delete to clients/prompt-sets/prompts, blocked when evidence exi
 ---
 ---
 
+## PROMPT HD-6 — Audit columns: created_at/updated_at na markets/prompt_sets
+
+```
+Task: Prompt HD-6 — created_at/updated_at audit columns
+
+Přečti docs/TASKS_HARDENING.md úkol HD-T6 CELÝ, hlavně design decision 7
+(proč zrovna markets/prompt_sets, proč ne providers/ai_models, proč se
+nepřidává created_by/updated_by).
+Prerekvizita: HD-4 hotový (migrace navazuje na jeho 0007; prompt_sets
+edit endpoint z HD-4 je to, co updated_at bude reálně měnit).
+
+1. Nová migrace 0008 — ADD COLUMN created_at/updated_at (TIMESTAMPTZ NOT
+   NULL DEFAULT now()) na markets; ADD COLUMN updated_at na prompt_sets
+   (created_at už existuje).
+2. app/models/market.py — Market dostává created_at/updated_at
+   (server_default=func.now(), updated_at navíc onupdate=func.now()),
+   stejný vzor jako app/models/client.py.
+3. app/models/prompt.py — PromptSet dostává updated_at stejným vzorem.
+   Žádná změna routeru — onupdate se uplatní automaticky při stávajícím
+   edit UPDATE.
+4. Žádná UI/šablonová změna teď není potřeba.
+
+Po dokončení:
+1. docker compose exec app alembic upgrade head
+2. V DB ověřit, že existující řádky markets/prompt_sets mají vyplněné
+   nové sloupce
+3. Upravit market přes /markets/{id}/edit → updated_at se změní,
+   created_at zůstane
+4. Implementation summary + navrhni commit message (nespouštěj git)
+```
+
+**Expected commit:**
+```
+feat(schema): add created_at/updated_at audit columns to markets and prompt_sets
+```
+
+### DONE
+
+---
+---
+
 ## PROMPT HD-5 — Testovací infrastruktura + základní sada
 
 ```
 Task: Prompt HD-5 — pytest infrastructure + initial test suite
 
 Přečti docs/TASKS_HARDENING.md úkol HD-T5 CELÝ.
-Prerekvizita: HD-4 hotový (testy pokrývají i nové delete endpointy).
+Prerekvizita: HD-4 a HD-6 hotové (testy pokrývají i nové delete endpointy
+a audit sloupce).
 
 1. Nový requirements-dev.txt: -r requirements.txt + pytest + httpx.
 2. tests/conftest.py:

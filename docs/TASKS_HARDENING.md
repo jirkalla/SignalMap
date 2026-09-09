@@ -65,6 +65,20 @@ ověřování.
    CSRF ochrana (čeká na auth fázi — bez session není co unést), pagination, rate limiting,
    skutečná ISO 3166/639 validace proti reálnému seznamu (zůstává jen formátová kontrola),
    Anthropic/Claude adaptér, admin UI pro providery/modely.
+7. **Audit columns (`created_at`/`updated_at`): přidat jen tam, kde je entita skutečně
+   editovatelná, ne plošně.** Nález mimo původní code review (2026-09-09, diskuze s
+   uživatelem) — napříč tabulkami je to dnes nekonzistentní čistě organickým driftem
+   (`Client` je měl od začátku, protože měl mít plný CRUD; `Market` edit UI přibylo později
+   a audit sloupce dodané nebyly; `PromptSet`/`Prompt`/`Run` jsou navržené kolem immutable
+   historie, takže `updated_at` u nich chybí záměrně). Řešení: `created_at`/`updated_at` na
+   `markets` (má plné CRUD včetně edit) a `updated_at` na `prompt_sets` (edit přibývá v
+   HD-T4). `providers`/`ai_models` audit sloupce nedostávají — nemají v týhle větvi žádnou
+   cestu k editaci (admin UI odložené na fázi 2, viz decision 6), přidávat je teď by bylo
+   mrtvé/neověřitelné schema. `created_by`/`updated_by` (user attribution) se **nepřidává
+   vůbec** — fáze 1 nemá auth ani uživatelské účty (`docs/REQUIREMENTS.md` §4), takový
+   sloupec by musel být buď natvrdo vyplněný, nebo nepoužívaný nullable — obojí horší než
+   sloupec nemít. Patří to do fáze s autentizací (`signalmap-conventions` build-sequencing
+   krok 5), ne sem.
 
 ---
 
@@ -76,6 +90,7 @@ ověřování.
 | HD-T2 | Dockerfile: non-root uživatel | ⏳ |
 | HD-T3 | Zamknout verze v requirements.txt | ⏳ |
 | HD-T4 | Delete politika + chybějící CRUD (Client/PromptSet/Prompt) | ⏳ |
+| HD-T6 | Audit columns: `created_at`/`updated_at` na `markets`/`prompt_sets` | ⏳ |
 | HD-T5 | Testovací infrastruktura + základní sada | ⏳ |
 
 ---
@@ -226,13 +241,54 @@ feat(crud): add delete to clients/prompt-sets/prompts, blocked when evidence exi
 
 ---
 
+## HD-T6 — Audit columns: `created_at`/`updated_at` na `markets`/`prompt_sets`
+
+**Target:** nová migrace `alembic/versions/0008_*.py`, `app/models/market.py`,
+`app/models/prompt.py`
+
+Prerekvizita: HD-T4 hotový (migrace navazuje na jeho `0007`; `prompt_sets.updated_at` dává
+smysl až s edit endpointem, který HD-T4 přidává).
+
+Viz design decision 7 výše — proč zrovna tyhle dvě tabulky a proč se nepřidává
+`created_by`/`updated_by`.
+
+1. Migrace 0008:
+   - `markets` — `ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+     `ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`.
+   - `prompt_sets` — `ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+     (`created_at` už existuje od fáze 1).
+2. `app/models/market.py` — `Market` dostává `created_at: Mapped[datetime]` a
+   `updated_at: Mapped[datetime]` (`server_default=func.now()`, `updated_at` navíc
+   `onupdate=func.now()`), stejný vzor jako `app/models/client.py`.
+3. `app/models/prompt.py` — `PromptSet` dostává `updated_at` stejným vzorem. Žádná změna
+   routeru není potřeba — `onupdate` se uplatní automaticky při stávajícím edit UPDATE
+   (market edit dnes, prompt-set edit po HD-T4).
+4. Žádná UI/šablonová změna není vyžadována — jde o audit data pro budoucí použití
+   (troubleshooting, případně pozdější "last updated" v UI), ne o novou featuru teď.
+
+Po dokončení:
+1. `docker compose exec app alembic upgrade head`
+2. V DB ověřit, že existující řádky `markets`/`prompt_sets` mají vyplněné nové sloupce
+   (default se uplatní i na existující data).
+3. Upravit market přes `/markets/{id}/edit` → `updated_at` se změní; `created_at` zůstane.
+4. Implementation summary + navrhni commit message (nespouštěj git)
+
+**Expected commit:**
+```
+feat(schema): add created_at/updated_at audit columns to markets and prompt_sets
+```
+
+### DONE
+
+---
+
 ## HD-T5 — Testovací infrastruktura + základní sada
 
 **Target:** nový `requirements-dev.txt`, nový `tests/` adresář (`conftest.py`,
 `test_health.py`, `test_clients.py`, `test_markets.py`, `test_runs.py`), drobná úprava
 `app/adapters/__init__.py` (testovací seam pro nahrazení adaptéru), `README.md`
 
-Prerekvizita: HD-T4 hotový (testy pokrývají i nové delete endpointy).
+Prerekvizita: HD-T4 a HD-T6 hotové (testy pokrývají i nové delete endpointy a audit sloupce).
 
 1. `requirements-dev.txt`: `-r requirements.txt` + `pytest` + `httpx` (potřeba pro
    `fastapi.testclient.TestClient`).
@@ -278,6 +334,7 @@ test: add pytest infrastructure and initial test suite (health, clients, markets
 - [ ] Client/PromptSet/Prompt mají plné CRUD (create/list/edit/delete), delete zablokovaný,
       kde by zničil evidenci
 - [ ] `prompt_sets/{id}/edit` existuje a funguje
+- [ ] `markets`/`prompt_sets` mají `created_at`/`updated_at`; `updated_at` se mění při edit
 - [ ] `pytest` sada zelená, pokrývá health/clients/markets/runs (úspěch i chybová cesta)
 - [ ] `docs/TASKS.md` — poznámka, že hardening větev existuje a co pokrývá (odkaz na tenhle
       soubor)
