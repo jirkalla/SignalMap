@@ -73,7 +73,7 @@ def create_market(
     code: str = Form(..., description="Short unique code, e.g. 'de-DE'."),
     language: str = Form(..., description="2-letter ISO 639-1 language code, e.g. 'de'."),
     country: str = Form("", description="Optional 2-letter ISO 3166-1 alpha-2 country code, e.g. 'DE'."),
-    label: str = Form("", description="Optional human-readable label."),
+    locale_name: str = Form("", description="Optional human-readable name of the locale, e.g. 'German (Germany)'."),
     db: Session = Depends(get_db),
 ):
     """Create a new market. Rejects a duplicate code or malformed language/country with an
@@ -86,8 +86,8 @@ def create_market(
     code = code.strip()
     language = language.strip().lower()
     country = country.strip().upper()
-    label = label.strip()
-    form_state = {"code": code, "language": language, "country": country, "label": label}
+    locale_name = locale_name.strip()
+    form_state = {"code": code, "language": language, "country": country, "locale_name": locale_name}
 
     error = _validate_iso_format(language, country, t)
     if error is None and db.scalar(select(Market).where(Market.code == code)) is not None:
@@ -100,7 +100,7 @@ def create_market(
             status_code=409,
         )
 
-    market = Market(code=code, language=language, country=country or None, label=label or None)
+    market = Market(code=code, language=language, country=country or None, locale_name=locale_name or None)
     db.add(market)
     db.commit()
     return RedirectResponse(url="/markets", status_code=303)
@@ -125,17 +125,17 @@ def update_market(
     code: str = Form(..., description="Short unique code, e.g. 'de-DE'."),
     language: str = Form(..., description="2-letter ISO 639-1 language code, e.g. 'de'."),
     country: str = Form("", description="Optional 2-letter ISO 3166-1 alpha-2 country code, e.g. 'DE'."),
-    label: str = Form("", description="Optional human-readable label."),
+    locale_name: str = Form("", description="Optional human-readable name of the locale, e.g. 'German (Germany)'."),
     db: Session = Depends(get_db),
 ):
-    """Update a market. Existing prompts keep referencing it by id, so editing code/label is always safe."""
+    """Update a market. Existing prompts keep referencing it by id, so editing code/locale_name is always safe."""
     t = get_t(request)
     market = _get_market_or_404(db, request, market_id)
     code = code.strip()
     language = language.strip().lower()
     country = country.strip().upper()
-    label = label.strip()
-    form_state = {"code": code, "language": language, "country": country, "label": label}
+    locale_name = locale_name.strip()
+    form_state = {"code": code, "language": language, "country": country, "locale_name": locale_name}
 
     error = _validate_iso_format(language, country, t)
     if error is None:
@@ -159,7 +159,7 @@ def update_market(
     market.code = code
     market.language = language
     market.country = country or None
-    market.label = label or None
+    market.locale_name = locale_name or None
     db.commit()
     return RedirectResponse(url="/markets", status_code=303)
 

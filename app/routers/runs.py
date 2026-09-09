@@ -28,8 +28,8 @@ from app.templating import get_t, render
 router = APIRouter(tags=["runs"])
 
 DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE = (
-    "The person asking this question is located in {label} and writing in "
-    "{language}. Answer in {language}, using regional context and examples "
+    "The person asking this question is located in {market_locale_name} and writing in "
+    "{market_language}. Answer in {market_language}, using regional context and examples "
     "relevant there where applicable."
 )
 
@@ -56,9 +56,9 @@ def _market_system_instruction(db: Session, provider: Provider, market: Market) 
 
     return template.format(
         market_code=market.code,
-        language=market.language,
-        country=market.country or "",
-        label=market.label or market.code,
+        market_language=market.language,
+        market_country=market.country or "",
+        market_locale_name=market.locale_name or market.code,
     )
 
 

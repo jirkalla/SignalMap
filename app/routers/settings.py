@@ -17,7 +17,12 @@ from app.templating import get_t, render
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-_DRY_RUN_VALUES = {"market_code": "cs-CZ", "language": "cs", "country": "CZ", "label": "Czech (Czech Republic)"}
+_DRY_RUN_VALUES = {
+    "market_code": "cs-CZ",
+    "market_language": "cs",
+    "market_country": "CZ",
+    "market_locale_name": "Czech (Czech Republic)",
+}
 
 
 def _validate_template(template: str) -> str | None:

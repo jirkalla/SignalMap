@@ -19,7 +19,7 @@
         <th class="py-3 px-4 font-medium">{{ t('market.code_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('market.language_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('market.country_label') }}</th>
-        <th class="py-3 px-4 font-medium">{{ t('market.label_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('market.locale_name_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('market.prompts_using_label') }}</th>
         <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
       </tr>
@@ -30,7 +30,7 @@
         <td class="py-3 px-4 font-mono text-xs text-stone-900">{{ market.code }}</td>
         <td class="py-3 px-4 text-stone-600">{{ market.language }}</td>
         <td class="py-3 px-4 text-stone-600">{{ market.country or t('common.none') }}</td>
-        <td class="py-3 px-4 text-stone-600">{{ market.label or t('common.none') }}</td>
+        <td class="py-3 px-4 text-stone-600">{{ market.locale_name or t('common.none') }}</td>
         <td class="py-3 px-4 text-stone-600">{{ prompt_count }}</td>
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
@@ -52,7 +52,7 @@
       <span class="font-mono text-sm font-medium text-stone-900">{{ market.code }}</span>
       <span class="text-xs text-stone-400">{{ prompt_count }} {{ t('market.prompts_using_label').lower() }}</span>
     </div>
-    <div class="text-sm text-stone-500 mt-1">{{ market.label or t('common.none') }}</div>
+    <div class="text-sm text-stone-500 mt-1">{{ market.locale_name or t('common.none') }}</div>
     <div class="flex gap-4 mt-3 text-sm">
       <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
       <form method="post" action="/markets/{{ market.id }}/delete"

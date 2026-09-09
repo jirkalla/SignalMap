@@ -15,7 +15,7 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     prompt editing, run trigger) so the label format stays consistent.
     """
     markets = db.scalars(select(Market).order_by(Market.code)).all()
-    return [(m.id, f"{m.code} — {m.label}" if m.label else m.code) for m in markets]
+    return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
 
 
 def _slugify(text: str) -> str:
