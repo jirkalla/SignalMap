@@ -9,9 +9,9 @@
   "nav.settings": "Settings",
 
   "settings.title": "Settings",
-  "settings.lede": "Per-provider system-instruction template — the locale-framing hint sent with every run for providers that have no real geographic/language API targeting (today: Google Gemini).",
+  "settings.lede": "Per-provider system-instruction template — the answer-language/framing hint sent with every run. Every provider needs this for language, since none expose a real \"respond in language X\" API parameter. Providers with real geographic search targeting (Anthropic's web_search user_location) get that part for free — their template here should stay language-only rather than also simulating location.",
   "settings.template_label": "System-instruction template",
-  "settings.placeholders_hint": "Available placeholders: {market_code}, {market_language}, {market_country}, {market_locale_name} — filled in from the run's market.",
+  "settings.placeholders_hint": "Available placeholders: {market_code}, {market_language}, {market_country}, {market_locale_name} — filled in from the run's market. In practice, only {market_language} is usually needed here: {market_country} is handled separately and automatically wherever a provider's API offers real geographic search targeting (e.g. Anthropic's web_search user_location) — it doesn't need to be repeated in this text.",
   "settings.empty_hint": "Empty means no system_instruction is sent at all for this provider.",
   "settings.no_providers": "No providers yet.",
 

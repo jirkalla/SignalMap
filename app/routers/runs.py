@@ -24,30 +24,32 @@ from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
 from app.routers.prompts import _get_prompt_or_404
+from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
 
-DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE = (
-    "The person asking this question is located in {market_locale_name} and writing in "
-    "{market_language}. Answer in {market_language}, using regional context and examples "
-    "relevant there where applicable."
-)
-
 
 def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
     """Build a locale-framing hint from a prompt's market, using `provider`'s
 
     editable template (see /settings and app/models/settings.py). No saved
-    row yet -> the built-in default above. A row with an empty template ->
-    None, meaning no system_instruction is sent for this provider at all.
+    row yet -> the built-in DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE (app.routers.
+    settings). A row with an empty template -> None, meaning no
+    system_instruction is sent for this provider at all.
 
-    Text-only hint, not real geographic search bias — see the docstring on
-    ProviderAdapter.run for why (Gemini's grounding tool has no location
-    parameter at all; Anthropic's web_search tool does and should use its
-    real `user_location` instead of this once that adapter exists).
+    This is a text-only hint for the answer's *language* — every provider
+    gets it, since none expose a real "respond in language X" API
+    parameter. It is not a substitute for real geographic *search* bias
+    where a provider's API offers one: Gemini's grounding tool has no
+    location parameter at all, so its template stays the fuller default
+    (language + location-simulation); Anthropic's web_search tool takes a
+    real `user_location` (app/adapters/anthropic.py, via this function's
+    caller passing `market_country` separately), so its saved template
+    should be trimmed to language-only — see docs/TASKS_PHASE2.md P2-T4
+    follow-up for why keeping both wouldn't be wrong, just redundant.
     """
     row = db.scalar(select(SystemInstructionTemplate).where(SystemInstructionTemplate.provider_id == provider.id))
     if row is None:
@@ -108,6 +110,7 @@ def trigger_run(
         "model": model.model_name,
         "prompt_text": prompt.text,
         "system_instruction": system_instruction,
+        "market_country": market.country,
     }
 
     run = Run(
@@ -145,6 +148,7 @@ def trigger_run(
             prompt_text=prompt.text,
             model_name=model.model_name,
             system_instruction=system_instruction,
+            market_country=market.country,
         )
     except Exception as exc:  # provider/transport failure — record it, don't raise (FR-16)
         run.status = "error"

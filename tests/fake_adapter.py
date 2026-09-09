@@ -15,7 +15,12 @@ class FakeAdapter:
     error_to_raise: Exception | None = None
 
     def run(
-        self, prompt_text: str, model_name: str, *, system_instruction: str | None = None
+        self,
+        prompt_text: str,
+        model_name: str,
+        *,
+        system_instruction: str | None = None,
+        market_country: str | None = None,
     ) -> RawResponsePayload:
         if FakeAdapter.error_to_raise is not None:
             raise FakeAdapter.error_to_raise

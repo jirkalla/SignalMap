@@ -1,8 +1,15 @@
 """Settings: per-provider system_instruction templates (app/models/settings.py).
 
-Only providers without real geographic/language API targeting need this —
-today that's Google Gemini. A template is validated (dry-run formatted)
-before saving, so a typo'd placeholder can't silently break future runs.
+Every provider gets this — it's the only lever any provider's API exposes
+for the answer's *language*. It is not the only lever for search *location*
+though: a provider whose API takes real geographic search targeting (e.g.
+Anthropic's `web_search` user_location, app/routers/runs.py's
+`market_country`) should get a shorter, language-only template here rather
+than the fuller location-simulating default below, since real targeting
+already covers that half. See docs/TASKS_PHASE2.md P2-T4 follow-up
+(2026-09-09) for the design decision behind this split. A template is
+validated (dry-run formatted) before saving, so a typo'd placeholder can't
+silently break future runs.
 """
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -16,6 +23,19 @@ from app.models import Provider, SystemInstructionTemplate
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+# Sensible zero-config default for a provider with no saved row yet (e.g.
+# right after its seed migration, before anyone visits this page) — covers
+# both language and location-simulation, for a provider with no real
+# geographic API targeting of its own. See app/routers/runs.py's
+# _market_system_instruction for where this is actually applied, and
+# _rows() below for why it's shown here rather than hidden behind a blank
+# textarea (the UI must always show what's really being sent).
+DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE = (
+    "The person asking this question is located in {market_locale_name} and writing in "
+    "{market_language}. Answer in {market_language}, using regional context and examples "
+    "relevant there where applicable."
+)
 
 _DRY_RUN_VALUES = {
     "market_code": "cs-CZ",
@@ -37,9 +57,18 @@ def _validate_template(template: str) -> str | None:
 
 
 def _rows(db: Session) -> list[tuple[Provider, str]]:
+    """Every provider with the template text actually in effect for it right now.
+
+    A provider with no saved row shows DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
+    here, not a blank box — that default is what _market_system_instruction
+    (app/routers/runs.py) silently falls back to for such a provider, and
+    this page must never show something different from what a run actually
+    sends. A saved row with empty text still shows blank (that's the
+    explicit "send nothing" choice, not the unconfigured state).
+    """
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
     templates = {row.provider_id: row.template for row in db.scalars(select(SystemInstructionTemplate)).all()}
-    return [(p, templates.get(p.id, "")) for p in providers]
+    return [(p, templates.get(p.id, DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE)) for p in providers]
 
 
 @router.get("")

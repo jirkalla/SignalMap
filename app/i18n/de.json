@@ -9,9 +9,9 @@
   "nav.settings": "Einstellungen",
 
   "settings.title": "Einstellungen",
-  "settings.lede": "System-Instruktions-Vorlage pro Anbieter — der Lokalisierungs-Hinweis, der bei jedem Lauf für Anbieter ohne echtes geografisches/sprachliches API-Targeting mitgeschickt wird (heute: Google Gemini).",
+  "settings.lede": "System-Instruktions-Vorlage pro Anbieter — der Antwortsprache-/Rahmungs-Hinweis, der bei jedem Lauf mitgeschickt wird. Jeder Anbieter braucht das für die Sprache, da keiner einen echten „Antworte in Sprache X“-API-Parameter hat. Anbieter mit echtem geografischem Such-Targeting (Anthropics web_search user_location) bekommen den Standort-Teil bereits real — ihre Vorlage hier sollte nur die Sprache abdecken, nicht zusätzlich den Standort simulieren.",
   "settings.template_label": "System-Instruktions-Vorlage",
-  "settings.placeholders_hint": "Verfügbare Platzhalter: {market_code}, {market_language}, {market_country}, {market_locale_name} — werden aus dem Markt des Laufs befüllt.",
+  "settings.placeholders_hint": "Verfügbare Platzhalter: {market_code}, {market_language}, {market_country}, {market_locale_name} — werden aus dem Markt des Laufs befüllt. In der Praxis wird hier meist nur {market_language} gebraucht: {market_country} wird separat und automatisch verarbeitet, überall wo die API eines Anbieters echtes geografisches Such-Targeting bietet (z. B. Anthropics web_search user_location) — es muss hier nicht wiederholt werden.",
   "settings.empty_hint": "Leer bedeutet: für diesen Anbieter wird gar keine System-Instruktion gesendet.",
   "settings.no_providers": "Noch keine Anbieter.",
 
