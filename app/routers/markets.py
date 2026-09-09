@@ -6,6 +6,8 @@ than cascading — losing which market a historical prompt targeted would
 contradict the project's evidence-retention stance (NFR-6).
 """
 
+import re
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
@@ -17,6 +19,22 @@ from app.models import Market, Prompt
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/markets", tags=["markets"])
+
+_LANGUAGE_RE = re.compile(r"^[a-z]{2}$")
+_COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
+
+
+def _validate_iso_format(language: str, country: str, t) -> str | None:
+    """Format-only check (not a real ISO-code lookup) — catches "Czech" instead of "CZ",
+
+    not "is CZ a real country". Proportionate to a prototype's needs; see
+    the Findings entry on why this matters for a future Claude adapter.
+    """
+    if not _LANGUAGE_RE.match(language):
+        return t("errors.market_invalid_language")
+    if country and not _COUNTRY_RE.match(country):
+        return t("errors.market_invalid_country")
+    return None
 
 
 def _get_market_or_404(db: Session, request: Request, market_id: int) -> Market:
@@ -53,31 +71,36 @@ def new_market_form(request: Request):
 def create_market(
     request: Request,
     code: str = Form(..., description="Short unique code, e.g. 'de-DE'."),
-    language: str = Form(..., description="Language code, e.g. 'de'."),
-    country: str = Form("", description="Optional country code, e.g. 'DE'."),
+    language: str = Form(..., description="2-letter ISO 639-1 language code, e.g. 'de'."),
+    country: str = Form("", description="Optional 2-letter ISO 3166-1 alpha-2 country code, e.g. 'DE'."),
     label: str = Form("", description="Optional human-readable label."),
     db: Session = Depends(get_db),
 ):
-    """Create a new market. Rejects a duplicate code with an inline error, not a raw API error —
+    """Create a new market. Rejects a duplicate code or malformed language/country with an
 
-    picking an existing code is an ordinary form mistake, not an exceptional API failure.
+    inline error, not a raw API error — these are ordinary form mistakes, not exceptional
+    API failures. `language` is normalized to lowercase, `country` to uppercase before
+    validation, so casing mistakes don't need a resubmit.
     """
     t = get_t(request)
     code = code.strip()
-    if db.scalar(select(Market).where(Market.code == code)) is not None:
+    language = language.strip().lower()
+    country = country.strip().upper()
+    label = label.strip()
+    form_state = {"code": code, "language": language, "country": country, "label": label}
+
+    error = _validate_iso_format(language, country, t)
+    if error is None and db.scalar(select(Market).where(Market.code == code)) is not None:
+        error = t("errors.market_code_conflict")
+    if error:
         return render(
             request,
             "markets/form.html",
-            {
-                "title": t("market.create_title"),
-                "action": "/markets",
-                "cancel_url": "/markets",
-                "market": {"code": code, "language": language, "country": country, "label": label},
-                "error": t("errors.market_code_conflict"),
-            },
+            {"title": t("market.create_title"), "action": "/markets", "cancel_url": "/markets", "market": form_state, "error": error},
             status_code=409,
         )
-    market = Market(code=code, language=language.strip(), country=country.strip() or None, label=label.strip() or None)
+
+    market = Market(code=code, language=language, country=country or None, label=label or None)
     db.add(market)
     db.commit()
     return RedirectResponse(url="/markets", status_code=303)
@@ -100,8 +123,8 @@ def update_market(
     request: Request,
     market_id: int,
     code: str = Form(..., description="Short unique code, e.g. 'de-DE'."),
-    language: str = Form(..., description="Language code, e.g. 'de'."),
-    country: str = Form("", description="Optional country code, e.g. 'DE'."),
+    language: str = Form(..., description="2-letter ISO 639-1 language code, e.g. 'de'."),
+    country: str = Form("", description="Optional 2-letter ISO 3166-1 alpha-2 country code, e.g. 'DE'."),
     label: str = Form("", description="Optional human-readable label."),
     db: Session = Depends(get_db),
 ):
@@ -109,8 +132,17 @@ def update_market(
     t = get_t(request)
     market = _get_market_or_404(db, request, market_id)
     code = code.strip()
-    conflict = db.scalar(select(Market).where(Market.code == code, Market.id != market_id))
-    if conflict is not None:
+    language = language.strip().lower()
+    country = country.strip().upper()
+    label = label.strip()
+    form_state = {"code": code, "language": language, "country": country, "label": label}
+
+    error = _validate_iso_format(language, country, t)
+    if error is None:
+        conflict = db.scalar(select(Market).where(Market.code == code, Market.id != market_id))
+        if conflict is not None:
+            error = t("errors.market_code_conflict")
+    if error:
         return render(
             request,
             "markets/form.html",
@@ -118,15 +150,16 @@ def update_market(
                 "title": t("market.edit_title"),
                 "action": f"/markets/{market_id}/edit",
                 "cancel_url": "/markets",
-                "market": {"code": code, "language": language, "country": country, "label": label},
-                "error": t("errors.market_code_conflict"),
+                "market": form_state,
+                "error": error,
             },
             status_code=409,
         )
+
     market.code = code
-    market.language = language.strip()
-    market.country = country.strip() or None
-    market.label = label.strip() or None
+    market.language = language
+    market.country = country or None
+    market.label = label or None
     db.commit()
     return RedirectResponse(url="/markets", status_code=303)
 

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from app.errors import register_exception_handlers
-from app.routers import clients, help, locale, markets, prompt_sets, prompts, runs, settings
+from app.routers import clients, findings, help, locale, markets, prompt_sets, prompts, runs, settings
 
 app = FastAPI(
     title="SignalMap",
@@ -31,6 +31,7 @@ app.include_router(runs.router)
 app.include_router(markets.router)
 app.include_router(settings.router)
 app.include_router(help.router)
+app.include_router(findings.router)
 app.include_router(locale.router)
 
 
