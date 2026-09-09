@@ -80,8 +80,13 @@ real Gemini API (see `tests/fake_adapter.py`).
 
    ```bash
    docker compose exec app pip install -r requirements-dev.txt
-   docker compose exec app pytest
+   docker compose exec app python -m pytest
    ```
+
+   Use `python -m pytest`, not a bare `pytest` — the app container runs as
+   a non-root user (HD-T2), so `pip install` falls back to a user-site
+   install (`~/.local/bin`), which isn't on `$PATH`. `python -m pytest`
+   finds it regardless.
 
 Each test run creates its own tables via SQLAlchemy metadata (not
 Alembic) and truncates them between tests — the test database is safe to
