@@ -101,11 +101,17 @@ first pytest suite (health/clients/markets/runs). Full task list, design
 decisions, and per-task commit hashes: `docs/TASKS_HARDENING.md` and
 `docs/PROMPTS_HARDENING.md`.
 
+## Phase 2: Anthropic provider + admin UI
+
+Branch `feature/signalmap-phase2-anthropic-admin` (2026-09-09) adds the
+second AI provider (Anthropic Claude, with real `web_search` `user_location`
+geo-targeting instead of Gemini's text-hint workaround) and admin UI for
+providers/models (`/providers`, `/ai-models` — activation, pricing, context
+window parameters). Includes a code-review pass (security/DRY focus) with
+its findings fixed before merge. Full task list, design decisions, and
+per-task detail: `docs/TASKS_PHASE2.md` and `docs/PROMPTS_PHASE2.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
-- Second provider (Anthropic) — proves the adapter pattern generalizes,
-  and is the only way to get real geographic targeting (`user_location`)
-  instead of Gemini's text-hint workaround (see `/findings`).
 - First analysis skill.
 - Dashboard, Vue islands for interactivity.
 - Authentication (fastapi-users) and multi-tenant scoping by client_id.
-- Admin UI for providers/models — deferred alongside the Anthropic adapter.
