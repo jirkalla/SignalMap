@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button, delete_button, cost_badge %}
+{% block title %}{{ t('ai_model.list_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">{{ t('ai_model.list_title') }}</h1>
+  <a href="/ai-models/new">{{ button(t('common.new')) }}</a>
+</div>
+
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+{% if rows %}
+<div class="hidden lg:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.provider_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.model_name_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.cost_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.context_max_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.web_search_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('common.status') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('ai_model.updated_at_label') }}</th>
+        <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for model, run_count in rows %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50">
+        <td class="py-3 px-4 text-stone-600">{{ model.provider.name }}</td>
+        <td class="py-3 px-4">
+          <div class="font-mono text-xs text-stone-900">{{ model.model_name }}</div>
+          {% if model.display_name %}<div class="text-stone-500">{{ model.display_name }}</div>{% endif %}
+        </td>
+        <td class="py-3 px-4 whitespace-nowrap">{{ cost_badge(model, t('ai_model.cost_free')) }}</td>
+        <td class="py-3 px-4 text-stone-500 whitespace-nowrap">
+          {{ model.context_window_tokens or t('common.none') }} / {{ model.max_output_tokens or t('common.none') }}
+        </td>
+        <td class="py-3 px-4 text-stone-500">{{ t('common.yes') if model.supports_web_search else t('common.no') }}</td>
+        <td class="py-3 px-4">
+          <form method="post" action="/ai-models/{{ model.id }}/toggle-active" class="inline">
+            <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if model.is_active else 'bg-stone-100 text-stone-500' }}">
+              {{ t('ai_model.active_label') if model.is_active else t('ai_model.inactive_label') }}
+            </button>
+          </form>
+        </td>
+        <td class="py-3 px-4 text-xs text-stone-400 whitespace-nowrap">{{ model.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="py-3 px-4 text-right whitespace-nowrap">
+          <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+          {{ delete_button('/ai-models/' ~ model.id ~ '/delete', t('ai_model.delete_confirm'), t('ai_model.delete_button'), extra_classes='ml-3' ~ (' opacity-40' if run_count else '')) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="lg:hidden space-y-3">
+  {% for model, run_count in rows %}
+  <div class="border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="flex items-center justify-between">
+      <span class="text-xs text-stone-400">{{ model.provider.name }}</span>
+      {{ cost_badge(model, t('ai_model.cost_free')) }}
+    </div>
+    <div class="font-mono text-sm font-medium text-stone-900 mt-1">{{ model.model_name }}</div>
+    {% if model.display_name %}<div class="text-sm text-stone-500">{{ model.display_name }}</div>{% endif %}
+    <div class="text-xs text-stone-500 mt-2">
+      {{ t('ai_model.context_max_label') }}: {{ model.context_window_tokens or t('common.none') }} / {{ model.max_output_tokens or t('common.none') }}
+      · {{ t('ai_model.web_search_label') }}: {{ t('common.yes') if model.supports_web_search else t('common.no') }}
+    </div>
+    <div class="flex items-center justify-between mt-3">
+      <form method="post" action="/ai-models/{{ model.id }}/toggle-active">
+        <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if model.is_active else 'bg-stone-100 text-stone-500' }}">
+          {{ t('ai_model.active_label') if model.is_active else t('ai_model.inactive_label') }}
+        </button>
+      </form>
+      <span class="text-xs text-stone-400">{{ model.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+    </div>
+    <div class="flex gap-4 mt-3 text-sm">
+      <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+      {{ delete_button('/ai-models/' ~ model.id ~ '/delete', t('ai_model.delete_confirm'), t('ai_model.delete_button'), extra_classes=(' opacity-40' if run_count else '')) }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('ai_model.empty_state') }}</p>
+{% endif %}
+{% endblock %}

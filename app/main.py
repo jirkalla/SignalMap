@@ -11,7 +11,19 @@ from fastapi.responses import RedirectResponse
 
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
-from app.routers import clients, findings, help, locale, markets, prompt_sets, prompts, providers, runs, settings
+from app.routers import (
+    ai_models,
+    clients,
+    findings,
+    help,
+    locale,
+    markets,
+    prompt_sets,
+    prompts,
+    providers,
+    runs,
+    settings,
+)
 
 configure_logging()
 
@@ -33,6 +45,7 @@ app.include_router(prompts.router)
 app.include_router(runs.router)
 app.include_router(markets.router)
 app.include_router(providers.router)
+app.include_router(ai_models.router)
 app.include_router(settings.router)
 app.include_router(help.router)
 app.include_router(findings.router)
