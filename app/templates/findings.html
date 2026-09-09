@@ -31,9 +31,61 @@
     <p class="text-sm text-stone-700 mb-3">
       For comparison: Anthropic's Claude <code class="bg-stone-100 px-1 rounded">web_search</code> tool has a real
       <code class="bg-stone-100 px-1 rounded">user_location</code> parameter (city/region/country/timezone) — actual
-      geo-targeting, not just a text hint. Worth prioritizing once market fidelity matters more than it does today.
+      geo-targeting, not just a text hint.
     </p>
-    <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/gemini-api/docs/google-search" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/gemini-api/docs/google-search</a></p>
+    <p class="text-xs text-stone-400 mb-3">Source: <a href="https://ai.google.dev/gemini-api/docs/google-search" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/gemini-api/docs/google-search</a></p>
+
+    <div class="border-t border-stone-100 pt-3 mt-3">
+      <div class="flex items-center gap-3 mb-2">
+        <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+        <span class="text-xs font-medium bg-emerald-100 text-emerald-800 rounded-full px-2 py-0.5">Update</span>
+      </div>
+      <p class="text-sm text-stone-700 mb-2">
+        <code class="bg-stone-100 px-1 rounded">user_location</code> is now live (the Anthropic adapter,
+        <code class="bg-stone-100 px-1 rounded">app/adapters/anthropic.py</code>) — but it does <strong>not</strong>
+        accept every ISO 3166-1 country code. A real run against market <code class="bg-stone-100 px-1 rounded">cs-CZ</code>
+        was rejected outright: <code class="bg-stone-100 px-1 rounded">400 invalid_request_error: "Country code CZ is
+        not supported."</code> The exact supported list isn't published anywhere we found — treat it as
+        trial-and-error per market, and expect a run to legitimately fail with status <code class="bg-stone-100 px-1 rounded">error</code>
+        for some markets, not just on transient API problems.
+      </p>
+      <p class="text-sm text-stone-700">
+        The <code class="bg-stone-100 px-1 rounded">system_instruction</code> template (<a href="/settings" class="underline hover:no-underline">Settings</a>)
+        is now split per provider: Gemini keeps the full location-simulating + language template (it has no real
+        alternative), Anthropic's was trimmed to language-only (<code class="bg-stone-100 px-1 rounded">"Answer in {market_language}."</code>) —
+        repeating the location-simulation sentence there would just duplicate what <code class="bg-stone-100 px-1 rounded">user_location</code>
+        already does for real.
+      </p>
+    </div>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Competitive / Methodology</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">How a dedicated AI-visibility competitor (Peec AI) handles market targeting</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Per Peec AI's own comparison page: <em>"Peec AI uses UI scraping, not API polling, with dedicated
+      infrastructure in every country it supports, ensuring the results it collects exactly mirror what actual
+      users see in their region."</em> They explicitly frame this against competitors that "artificially inject
+      geographic identifiers" into prompts — i.e. text hints like our Gemini fallback above.
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      Concretely: real regional infrastructure (servers/IPs physically in each of 80+ countries) scraping the
+      consumer-facing chat UIs (chatgpt.com, gemini.google.com, ...) rather than calling official APIs with a
+      location parameter. Whatever IP-based geolocation the consumer product itself already does happens
+      naturally — no per-provider API quirk to work around (e.g. the CZ rejection above wouldn't be a Peec AI
+      problem in the same way).
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      Not something to build now — a global proxy/infrastructure network plus UI-scraping (with its own
+      fragility and ToS exposure against the AI vendors' consumer products) is a different order of operational
+      complexity than this project's current vertical-slice scope. Recorded here as context for later: if
+      per-provider API location parameters keep hitting hard limits (unsupported countries, no parameter at
+      all), this is the architecture a real competitor uses instead.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://peec.ai/comparison/peec-vs-profound" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">peec.ai/comparison/peec-vs-profound</a>, <a href="https://docs.peec.ai/setting-up-your-prompts" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">docs.peec.ai/setting-up-your-prompts</a></p>
   </article>
 
   <article class="bg-white border border-stone-200 rounded-lg p-5">
