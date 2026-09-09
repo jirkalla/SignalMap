@@ -61,6 +61,12 @@
 <button type="{{ type }}" {% if disabled %}disabled{% endif %} class="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium {{ variant_classes[variant] }} transition disabled:opacity-40 disabled:cursor-not-allowed">{{ text }}</button>
 {% endmacro %}
 
+{% macro delete_button(action, confirm_text, label, extra_classes='') %}
+<form method="post" action="{{ action }}" class="inline" data-confirm="{{ confirm_text }}">
+  <button type="submit" class="text-red-700 hover:underline{{ ' ' ~ extra_classes if extra_classes }}">{{ label }}</button>
+</form>
+{% endmacro %}
+
 {% macro status_badge(status) %}
 {% set status_classes = {
   'success': 'bg-emerald-100 text-emerald-800',

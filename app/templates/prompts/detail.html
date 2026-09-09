@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_grouped_field, select_field, button, status_badge %}
+{% from "partials/macros.html" import select_grouped_field, select_field, button, status_badge, delete_button %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -11,10 +11,7 @@
   <h1 class="text-xl font-semibold break-words">{{ t('prompt.detail_title') }}</h1>
   <div class="flex items-center gap-3 text-sm shrink-0">
     <a href="/prompts/{{ prompt.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
-    <form method="post" action="/prompts/{{ prompt.id }}/delete" class="inline"
-          data-confirm="{{ t('prompt.delete_confirm') }}">
-      <button type="submit" class="text-red-700 hover:underline">{{ t('prompt.delete_button') }}</button>
-    </form>
+    {{ delete_button('/prompts/' ~ prompt.id ~ '/delete', t('prompt.delete_confirm'), t('prompt.delete_button')) }}
   </div>
 </div>
 {% if error %}
