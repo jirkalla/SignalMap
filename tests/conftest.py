@@ -20,7 +20,7 @@ from app.adapters import register_adapter
 from app.config import get_settings
 from app.database import get_db
 from app.main import app
-from app.models import AIModel, Base, Client, Market, Prompt, Provider, PromptSet
+from app.models import AIModel, AnalysisSkill, Base, Client, Market, Prompt, Provider, PromptSet
 from tests.fake_adapter import FakeAdapter
 
 
@@ -97,16 +97,27 @@ def client(db_session: Session) -> TestClient:
 
 @pytest.fixture
 def seed(db_session: Session) -> dict:
-    """Minimal rows every prompt/run/admin test needs: one market, and both providers with one model each.
+    """Minimal rows every prompt/run/admin test needs: one market, both providers with one model
+    each, and the mention_visibility analysis skill.
 
     Both providers are seeded (not just google_gemini) so provider/ai-model
     admin tests, and a run against either provider, all have real FK targets
-    without each test building its own — see P2-T6.
+    without each test building its own — see P2-T6. The analysis skill is
+    seeded here too (not just by migration 0011) because the test database
+    is built via Base.metadata.create_all, never via Alembic — without this,
+    _run_active_analysis_skills would silently find zero active skills.
     """
     market = Market(code="en-US", language="en", country="US", locale_name="English (United States)")
     provider = Provider(code="google_gemini", name="Google Gemini")
     anthropic_provider = Provider(code="anthropic", name="Anthropic Claude")
-    db_session.add_all([market, provider, anthropic_provider])
+    analysis_skill = AnalysisSkill(
+        key="mention_visibility",
+        name="Mention & Visibility Detection",
+        version=1,
+        execution_type="rule_based",
+        is_active=True,
+    )
+    db_session.add_all([market, provider, anthropic_provider, analysis_skill])
     db_session.flush()
     model = AIModel(
         provider_id=provider.id,
@@ -127,12 +138,14 @@ def seed(db_session: Session) -> dict:
     db_session.refresh(model)
     db_session.refresh(anthropic_provider)
     db_session.refresh(anthropic_model)
+    db_session.refresh(analysis_skill)
     return {
         "market": market,
         "provider": provider,
         "model": model,
         "anthropic_provider": anthropic_provider,
         "anthropic_model": anthropic_model,
+        "analysis_skill": analysis_skill,
     }
 
 

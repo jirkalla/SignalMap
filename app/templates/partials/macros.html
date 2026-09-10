@@ -104,6 +104,27 @@
 </form>
 {% endmacro %}
 
+{% macro pill_badge(is_positive, positive_label, negative_label) %}
+<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if is_positive else 'bg-stone-100 text-stone-600' }}">
+  {{ positive_label if is_positive else negative_label }}
+</span>
+{% endmacro %}
+
+{% macro labeled_list(label, items, empty_label) %}
+<div>
+  <dt class="text-stone-500 text-xs uppercase tracking-wide">{{ label }}</dt>
+  <dd>
+    {% if items %}
+    <ul class="list-disc list-inside text-stone-700">
+      {% for item in items %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+    {% else %}
+    <span class="text-stone-500">{{ empty_label }}</span>
+    {% endif %}
+  </dd>
+</div>
+{% endmacro %}
+
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
 {# Plain <a href> links, never hx-get — a file download needs a real browser
    navigation, not an HTMX-swapped fragment. id_prefix is only needed on a

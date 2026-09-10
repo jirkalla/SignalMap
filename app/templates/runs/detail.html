@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge, export_button_group %}
+{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -66,8 +66,28 @@
 {% if raw_response %}
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.rendered_answer_label') }}</h2>
-  <p class="whitespace-pre-line text-stone-900">{{ raw_response.rendered_text or t('common.none') }}</p>
+  <p class="whitespace-pre-line text-stone-900">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
 </div>
+
+{% if analysis_results %}
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('analysis.section_title') }}</h2>
+  {% for result in analysis_results %}
+  <div class="{{ 'border-t border-stone-100 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0' }}">
+    <div class="text-sm font-medium text-stone-900 mb-2">{{ result.analysis_skill.name }}</div>
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      {{ pill_badge(result.output.text_mentioned, t('analysis.mentioned_yes'), t('analysis.mentioned_no')) }}
+      {{ pill_badge(result.output.cited, t('analysis.cited_yes'), t('analysis.cited_no')) }}
+      <span class="text-xs text-stone-500">{{ t('analysis.mention_count_label') }}: {{ result.output.mention_count }}</span>
+    </div>
+    <dl class="text-sm space-y-2">
+      {{ labeled_list(t('analysis.matched_terms_label'), result.output.matched_terms, t('common.none')) }}
+      {{ labeled_list(t('analysis.cited_domains_label'), result.output.cited_domains, t('common.none')) }}
+    </dl>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}</h2>
