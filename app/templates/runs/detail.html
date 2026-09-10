@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge %}
+{% from "partials/macros.html" import status_badge, export_button_group %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -7,11 +7,7 @@
 </div>
 <div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
   <h1 class="text-xl font-semibold">{{ t('run.detail_title') }} #{{ run.id }}</h1>
-  <div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
-    <a href="/runs/{{ run.id }}/export?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_csv') }}</a>
-    <a href="/runs/{{ run.id }}/export?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_xlsx') }}</a>
-    <a href="/runs/{{ run.id }}/export?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_json') }}</a>
-  </div>
+  {{ export_button_group('/runs/' ~ run.id ~ '/export', t('run.export_csv'), t('run.export_xlsx'), t('run.export_json')) }}
 </div>
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">

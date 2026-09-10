@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -27,6 +28,15 @@ ExportContent = Literal["answer", "raw", "full"]
 
 EXCEL_CELL_CHAR_LIMIT = 32767
 _TRUNCATE_SUFFIX = "... [truncated — use format=json for full payload]"
+
+# A leading =, +, -, @, tab, or CR makes Excel/LibreOffice read a CSV cell as
+# a formula on open (CSV/formula injection, OWASP). rendered_text/prompt_text
+# can contain attacker-influenced text (a provider answer echoing scraped web
+# content), so every string written to CSV is neutralized with a leading
+# quote — same mitigation whether the value came from a client name or an AI
+# provider response, since CSV has no way to mark a field as "definitely not
+# a formula" the way a typed XLSX cell does.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 RUN_COLUMNS: tuple[str, ...] = (
     "id",
@@ -132,15 +142,14 @@ def build_filename(scope: str, identifier: str, content: ExportContent, ext: str
     return f"{'_'.join(parts)}.{ext}"
 
 
-def _run_row(run: Run) -> dict[str, Any]:
-    """Flatten one run (+ its raw response, if any) into the `Runs`/`runs.csv` row shape.
+def _run_base_fields(run: Run) -> dict[str, Any]:
+    """The run/prompt/model metadata every export tier includes, in every format.
 
-    Always includes rendered_text/has_citations/token_usage regardless of
-    `content` — CSV/XLSX only ever render the "answer" tier as tables
-    (docs/TASKS_EXPORT.md design decision 3); `content` instead controls
-    whether the *extra* raw-payload file/sheet gets added alongside them.
+    Shared by `_run_row` (CSV/XLSX) and `build_json` so the run→field mapping
+    lives in exactly one place — previously each duplicated the same ~16
+    attribute lookups independently, risking one being updated and the other
+    forgotten on a schema change.
     """
-    raw = run.raw_response
     return {
         "id": run.id,
         "prompt_id": run.prompt_id,
@@ -158,10 +167,48 @@ def _run_row(run: Run) -> dict[str, Any]:
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "latency_ms": run.latency_ms,
         "error_message": run.error_message,
-        "rendered_text": raw.rendered_text if raw else None,
-        "has_citations": raw.has_citations if raw else False,
-        "token_usage": json.dumps(raw.token_usage) if raw and raw.token_usage else None,
     }
+
+
+def _run_row(run: Run) -> dict[str, Any]:
+    """Flatten one run (+ its raw response, if any) into the `Runs`/`runs.csv` row shape.
+
+    Always includes rendered_text/has_citations/token_usage regardless of
+    `content` — CSV/XLSX only ever render the "answer" tier as tables
+    (docs/TASKS_EXPORT.md design decision 3); `content` instead controls
+    whether the *extra* raw-payload file/sheet gets added alongside them.
+    """
+    raw = run.raw_response
+    row = _run_base_fields(run)
+    row["rendered_text"] = raw.rendered_text if raw else None
+    row["has_citations"] = raw.has_citations if raw else False
+    row["token_usage"] = json.dumps(raw.token_usage) if raw and raw.token_usage else None
+    return row
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutralize CSV/formula injection on one cell value — see `_CSV_FORMULA_PREFIXES`."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def _sanitize_csv_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Apply `_csv_safe` to every value in a row dict before it reaches `csv.DictWriter`."""
+    return {key: _csv_safe(value) for key, value in row.items()}
+
+
+def _xlsx_safe(value: Any) -> Any:
+    """Strip characters Excel's XML format can't hold (ASCII control chars) from a string cell value.
+
+    openpyxl raises `IllegalCharacterError` on write otherwise — provider
+    output, scraped citation text, and exception messages are all realistic
+    sources of a stray control character, so every string cell goes through
+    this before `Worksheet.append()`.
+    """
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
 
 
 def _citation_rows(run: Run) -> list[dict[str, Any]]:
@@ -205,7 +252,7 @@ def build_csv_zip(runs: list[Run], content: ExportContent) -> bytes:
         writer = csv.DictWriter(runs_csv, fieldnames=RUN_COLUMNS)
         writer.writeheader()
         for run in runs:
-            writer.writerow(_run_row(run))
+            writer.writerow(_sanitize_csv_row(_run_row(run)))
         zf.writestr("runs.csv", runs_csv.getvalue())
 
         citations_csv = io.StringIO()
@@ -213,7 +260,7 @@ def build_csv_zip(runs: list[Run], content: ExportContent) -> bytes:
         writer.writeheader()
         for run in runs:
             for row in _citation_rows(run):
-                writer.writerow(row)
+                writer.writerow(_sanitize_csv_row(row))
         zf.writestr("citations.csv", citations_csv.getvalue())
 
         if content in ("raw", "full"):
@@ -241,13 +288,13 @@ def build_xlsx(runs: list[Run], content: ExportContent) -> bytes:
     runs_sheet.append(RUN_COLUMNS)
     for run in runs:
         row = _run_row(run)
-        runs_sheet.append([row[column] for column in RUN_COLUMNS])
+        runs_sheet.append([_xlsx_safe(row[column]) for column in RUN_COLUMNS])
 
     citations_sheet = wb.create_sheet("Citations")
     citations_sheet.append(CITATION_COLUMNS)
     for run in runs:
         for row in _citation_rows(run):
-            citations_sheet.append([row[column] for column in CITATION_COLUMNS])
+            citations_sheet.append([_xlsx_safe(row[column]) for column in CITATION_COLUMNS])
 
     if content in ("raw", "full"):
         raw_sheet = wb.create_sheet("RawPayload")
@@ -256,6 +303,7 @@ def build_xlsx(runs: list[Run], content: ExportContent) -> bytes:
             raw_text = _raw_payload_text(run)
             if raw_text is None:
                 continue
+            raw_text = _xlsx_safe(raw_text)
             if len(raw_text) > EXCEL_CELL_CHAR_LIMIT:
                 raw_text = raw_text[: EXCEL_CELL_CHAR_LIMIT - len(_TRUNCATE_SUFFIX)] + _TRUNCATE_SUFFIX
             raw_sheet.append((run.id, raw_text))
@@ -279,24 +327,7 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
     entries: list[dict[str, Any]] = []
     for run in runs:
         raw = run.raw_response
-        entry: dict[str, Any] = {
-            "id": run.id,
-            "prompt_id": run.prompt_id,
-            "prompt_version": run.prompt.version,
-            "is_current_version": run.prompt.is_current_version,
-            "client_name": run.prompt.prompt_set.client.name,
-            "prompt_set_name": run.prompt.prompt_set.name,
-            "prompt_text": run.prompt.text,
-            "market_code": run.market.code,
-            "provider_code": run.model.provider.code,
-            "model_name": run.model.model_name,
-            "status": run.status,
-            "trigger_type": run.trigger_type,
-            "started_at": run.started_at.isoformat() if run.started_at else None,
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-            "latency_ms": run.latency_ms,
-            "error_message": run.error_message,
-        }
+        entry = _run_base_fields(run)
         if include_answer:
             entry["rendered_text"] = raw.rendered_text if raw else None
             entry["has_citations"] = raw.has_citations if raw else False

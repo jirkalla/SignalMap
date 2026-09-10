@@ -1,15 +1,11 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import text_field, button, delete_button %}
+{% from "partials/macros.html" import text_field, button, delete_button, export_button_group %}
 {% block title %}{{ client.name }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
   <h1 class="text-xl font-semibold break-words">{{ client.name }}</h1>
   <div class="flex items-center gap-3 flex-wrap">
-    <div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
-      <a href="/clients/{{ client.id }}/runs/export?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('client.export_csv') }}</a>
-      <a href="/clients/{{ client.id }}/runs/export?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('client.export_xlsx') }}</a>
-      <a href="/clients/{{ client.id }}/runs/export?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('client.export_json') }}</a>
-    </div>
+    {{ export_button_group('/clients/' ~ client.id ~ '/runs/export', t('client.export_csv'), t('client.export_xlsx'), t('client.export_json')) }}
     <div class="flex items-center gap-3 text-sm shrink-0">
       <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
       {{ delete_button('/clients/' ~ client.id ~ '/delete', t('client.delete_confirm'), t('client.delete_button')) }}

@@ -65,6 +65,37 @@ def _lineage_run_count(db: Session, lineage_ids: list[int]) -> int:
     return db.scalar(select(func.count(Run.id)).where(Run.prompt_id.in_(lineage_ids))) or 0
 
 
+def _delete_prompt_lineage(db: Session, versions: list[Prompt]) -> None:
+    """Delete every given `Prompt` row, children (non-null `root_prompt_id`) before the root(s) they reference.
+
+    `versions` may be one prompt's whole edit history (`delete_prompt`
+    below) or every prompt under a prompt set spanning several unrelated
+    lineages at once (`delete_prompt_set`, app/routers/prompt_sets.py) —
+    either way, deleting all children first is safe per-lineage regardless
+    of how many are mixed together in one call.
+
+    `root_prompt_id` is a plain column, not a mapped `relationship()`, so
+    SQLAlchemy's unit-of-work has no FK dependency info to order deletes by
+    and batches every pending `Prompt` delete into one `executemany`
+    regardless of call order — without a flush between the two groups, that
+    batch still tries to delete a still-referenced root alongside its
+    children and violates `fk_prompts_root_prompt_id_prompts`. One flush
+    after the children (not one per row) is enough: each lineage is flat —
+    every non-root version's `root_prompt_id` points directly at that
+    lineage's root, never at another version (see the `Prompt` docstring)
+    — so a single extra round-trip clears the constraint regardless of how
+    many versions or lineages are being deleted.
+    """
+    children = [v for v in versions if v.root_prompt_id is not None]
+    roots = [v for v in versions if v.root_prompt_id is None]
+    for v in children:
+        db.delete(v)
+    if children:
+        db.flush()
+    for v in roots:
+        db.delete(v)
+
+
 @router.get("/{prompt_id}")
 def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db)):
     """Show one prompt: its text/market/topic, a run-trigger form, past runs, and version history (FR-7, FR-15)."""
@@ -176,15 +207,6 @@ def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db
             status_code=409,
         )
     prompt_set_id = prompt.prompt_set_id
-    # Children (root_prompt_id set) must go before the root row they reference,
-    # and each delete needs its own flush — root_prompt_id is a plain column,
-    # not a mapped relationship(), so SQLAlchemy's unit-of-work has no FK
-    # dependency info to sort by and batches same-table deletes into one
-    # executemany regardless of call order. Without an explicit flush between
-    # them, the batch still tries to delete the still-referenced root row
-    # alongside its child and violates fk_prompts_root_prompt_id_prompts.
-    for v in sorted(versions, key=lambda p: p.root_prompt_id is None):
-        db.delete(v)
-        db.flush()
+    _delete_prompt_lineage(db, versions)
     db.commit()
     return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)

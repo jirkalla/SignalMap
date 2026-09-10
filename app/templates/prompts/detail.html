@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge %}
+{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge, export_button_group %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -101,11 +101,7 @@
       {{ t('prompt.export_all_versions_label') }}
     </label>
     {% endif %}
-    <div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
-      <a id="export-csv" href="/prompts/{{ prompt.id }}/runs/export?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_csv') }}</a>
-      <a id="export-xlsx" href="/prompts/{{ prompt.id }}/runs/export?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_xlsx') }}</a>
-      <a id="export-json" href="/prompts/{{ prompt.id }}/runs/export?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_json') }}</a>
-    </div>
+    {{ export_button_group('/prompts/' ~ prompt.id ~ '/runs/export', t('prompt.export_csv'), t('prompt.export_xlsx'), t('prompt.export_json'), id_prefix='export') }}
   </div>
 </div>
 {% if versions %}

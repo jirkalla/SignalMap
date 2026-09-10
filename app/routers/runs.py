@@ -53,6 +53,37 @@ _EXPORT_MEDIA_TYPES = {
 }
 _EXPORT_EXTENSIONS = {"csv": "zip", "xlsx": "xlsx", "json": "json"}
 
+# Shared across all three export routes below (export_run/export_prompt_runs/
+# export_client_runs) — reusing one Query() instance as a parameter default
+# is the standard FastAPI pattern for identical params on multiple routes;
+# FastAPI reads the parameter's name from the function signature, not from
+# this object, so sharing it doesn't confuse which route/param it belongs to.
+_EXPORT_FORMAT_QUERY = Query(
+    "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
+)
+_EXPORT_CONTENT_QUERY = Query(
+    "answer",
+    description=(
+        "How much of each run to include: answer (rendered text + citations + metadata), "
+        "raw (untouched provider payload only), or full (both)."
+    ),
+)
+
+
+def _export_response(runs: list[Run], scope: str, identifier: str, format: ExportFormat, content: ExportContent) -> Response:
+    """Build the download Response shared by every export route: pick the writer/media type/extension for
+    `format`, serialize `runs`, and set `Content-Disposition` from `build_filename` — the one piece of logic
+    all three scopes (run/prompt/client) need identically, factored out so it isn't hand-copied three times.
+    """
+    ext = _EXPORT_EXTENSIONS[format]
+    body = _EXPORT_BUILDERS[format](runs, content)
+    filename = build_filename(scope, identifier, content, ext)
+    return Response(
+        content=body,
+        media_type=_EXPORT_MEDIA_TYPES[format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
     """Build a locale-framing hint from a prompt's market, using `provider`'s
@@ -257,52 +288,29 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
 def export_run(
     request: Request,
     run_id: int,
-    format: ExportFormat = Query(
-        "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
-    ),
-    content: ExportContent = Query(
-        "answer",
-        description=(
-            "How much of the run to include: answer (rendered text + citations + metadata), "
-            "raw (untouched provider payload only), or full (both)."
-        ),
-    ),
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
     db: Session = Depends(get_db),
 ):
     """Download this run as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T2).
 
     Single-run scope of the runs export feature — see app/services/export.py
     for the shared query/serialization logic reused by the prompt- and
-    client-scope exports (EX-T3/EX-T4).
+    client-scope exports (EX-T3/EX-T4), and `_export_response` above for the
+    Response-building step every export route shares.
     """
     runs = runs_for_run(db, run_id)
     if not runs:
         raise AppError("run_not_found", get_t(request)("errors.run_not_found"), status_code=404)
-
-    ext = _EXPORT_EXTENSIONS[format]
-    body = _EXPORT_BUILDERS[format](runs, content)
-    filename = build_filename("run", str(run_id), content, ext)
-    return Response(
-        content=body,
-        media_type=_EXPORT_MEDIA_TYPES[format],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _export_response(runs, "run", str(run_id), format, content)
 
 
 @router.get("/prompts/{prompt_id}/runs/export")
 def export_prompt_runs(
     request: Request,
     prompt_id: int,
-    format: ExportFormat = Query(
-        "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
-    ),
-    content: ExportContent = Query(
-        "answer",
-        description=(
-            "How much of each run to include: answer (rendered text + citations + metadata), "
-            "raw (untouched provider payload only), or full (both)."
-        ),
-    ),
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
     versions: Literal["current", "all"] = Query(
         "current",
         description=(
@@ -321,31 +329,15 @@ def export_prompt_runs(
     """
     _get_prompt_or_404(db, request, prompt_id)
     runs = runs_for_prompt(db, prompt_id, all_versions=(versions == "all"))
-
-    ext = _EXPORT_EXTENSIONS[format]
-    body = _EXPORT_BUILDERS[format](runs, content)
-    filename = build_filename("prompt", str(prompt_id), content, ext)
-    return Response(
-        content=body,
-        media_type=_EXPORT_MEDIA_TYPES[format],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _export_response(runs, "prompt", str(prompt_id), format, content)
 
 
 @router.get("/clients/{client_id}/runs/export")
 def export_client_runs(
     request: Request,
     client_id: int,
-    format: ExportFormat = Query(
-        "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
-    ),
-    content: ExportContent = Query(
-        "answer",
-        description=(
-            "How much of each run to include: answer (rendered text + citations + metadata), "
-            "raw (untouched provider payload only), or full (both)."
-        ),
-    ),
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
     db: Session = Depends(get_db),
 ):
     """Download every run belonging to one client as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T4).
@@ -358,12 +350,4 @@ def export_client_runs(
     """
     client = _get_client_or_404(db, request, client_id)
     runs = runs_for_client(db, client.id)
-
-    ext = _EXPORT_EXTENSIONS[format]
-    body = _EXPORT_BUILDERS[format](runs, content)
-    filename = build_filename("client", client.slug, content, ext)
-    return Response(
-        content=body,
-        media_type=_EXPORT_MEDIA_TYPES[format],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return _export_response(runs, "client", client.slug, format, content)
