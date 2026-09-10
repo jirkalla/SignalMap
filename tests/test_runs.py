@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterCitation, RawResponsePayload
-from app.models import Citation, Prompt, RawResponse, Run, SearchQuery
+from app.models import AnalysisResult, Citation, Prompt, RawResponse, Run, SearchQuery
 from tests.fake_adapter import FakeAdapter
 
 
@@ -173,3 +173,80 @@ def test_failed_run_against_the_anthropic_model_records_error(client: TestClient
     run = db_session.get(Run, run_id)
     assert run.status == "error"
     assert run.error_message == "Country code XX is not supported."
+
+
+def test_successful_run_stores_a_mention_visibility_analysis_result(
+    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_PHASE3.md design decision 7 — analysis runs automatically after a successful
+
+    run. sample_prompt's client is named "Test Client" (tests/conftest.py), so a rendered
+    answer that literally contains that name gives a predictable, assertable output.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Test Client is known for reliability."},
+        rendered_text="Test Client is known for reliability.",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    results = db_session.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == raw_response.id)).all()
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.analysis_skill_id == seed["analysis_skill"].id
+    assert result.skill_version == 1
+    assert result.output == {
+        "text_mentioned": True,
+        "mention_count": 1,
+        "first_mention_position": 0,
+        "matched_terms": ["Test Client"],
+        "match_spans": [[0, 11]],
+        "cited": False,
+        "cited_domains": [],
+    }
+
+
+def test_analysis_engine_failure_never_fails_the_run(
+    client: TestClient, db_session: Session, seed, sample_prompt: Prompt, monkeypatch
+):
+    """docs/TASKS_PHASE3.md design decision 7 — a broken analysis skill must not roll back or
+
+    invalidate the evidence a run already committed (Run.status, RawResponse).
+    """
+
+    def _boom(skill_key: str):
+        raise RuntimeError("simulated analysis failure")
+
+    monkeypatch.setattr("app.routers.runs.get_runner", _boom)
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Test Client is known for reliability."},
+        rendered_text="Test Client is known for reliability.",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    run = db_session.get(Run, run_id)
+    assert run.status == "success"
+    assert db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id)) is not None
+    assert db_session.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == run.raw_response.id)).all() == []
