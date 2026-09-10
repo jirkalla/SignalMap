@@ -94,6 +94,8 @@ i tehdy, když jsi zprávu sám navrhl v předchozí větě.
 
 ## PROMPT P4-1 — Foundations: performance indexy + sdílený normalize_domain helper
 
+### DONE — commit 2136eb9
+
 ```
 Task: Prompt P4-1 — dashboard foundations (indexes + shared domain helper)
 
