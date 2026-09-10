@@ -50,6 +50,7 @@ class RawResponsePayload:
     rendered_text: str | None
     has_citations: bool
     citations: list[AdapterCitation] = field(default_factory=list)
+    search_queries: list[str] = field(default_factory=list)
     token_usage: dict[str, Any] | None = None
 
 
