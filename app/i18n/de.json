@@ -199,6 +199,8 @@
   "run.raw_json_toggle": "Rohes JSON ein-/ausblenden",
   "run.citations_label": "Quellenangaben",
   "run.citations_empty": "Für diesen Lauf wurden keine Quellenangaben zurückgegeben.",
+  "run.search_queries_label": "Suchanfragen",
+  "run.search_queries_empty": "Der Anbieter hat für diesen Lauf keine Suchanfragen ausgeführt.",
   "run.view": "Ansehen",
   "run.prompt_label": "Prompt",
   "run.export_csv": "CSV exportieren",

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.adapters import get_adapter, has_adapter
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
+from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SearchQuery, SystemInstructionTemplate
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
@@ -241,6 +241,14 @@ def trigger_run(
                     cited_answer_span=c.cited_answer_span,
                 )
             )
+        for position, query_text in enumerate(payload.search_queries):
+            db.add(
+                SearchQuery(
+                    raw_response_id=raw_response.id,
+                    query_text=query_text,
+                    query_position=position,
+                )
+            )
         db.commit()
         logger.info(
             "Run %s succeeded in %sms",
@@ -259,11 +267,18 @@ def trigger_run(
 
 @router.get("/runs/{run_id}")
 def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
-    """Show one run: metadata, rendered answer, raw JSON, and citations (FR-14)."""
+    """Show one run: metadata, rendered answer, raw JSON, citations, and search queries (FR-14)."""
     run = _get_run_or_404(db, request, run_id)
     raw_response = db.scalars(select(RawResponse).where(RawResponse.run_id == run_id)).first()
     citations = (
         db.scalars(select(Citation).where(Citation.raw_response_id == raw_response.id).order_by(Citation.citation_position)).all()
+        if raw_response
+        else []
+    )
+    search_queries = (
+        db.scalars(
+            select(SearchQuery).where(SearchQuery.raw_response_id == raw_response.id).order_by(SearchQuery.query_position)
+        ).all()
         if raw_response
         else []
     )
@@ -278,6 +293,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "run": run,
             "raw_response": raw_response,
             "citations": citations,
+            "search_queries": search_queries,
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
         },
