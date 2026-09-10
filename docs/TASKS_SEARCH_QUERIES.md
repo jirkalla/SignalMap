@@ -1,6 +1,6 @@
 # SignalMap — Tasks: Search Query Capture (from existing raw_payload)
 
-## v1.0 | Září 2026
+## v1.1 | Září 2026
 ## Branch: feature/signalmap-search-queries
 ## Task ID prefix: SQ
 
@@ -13,6 +13,17 @@
 > ("What Peec AI's actual output data reveals..."). Není to jedna z pěti
 > roadmap fází ze skillu `signalmap-conventions` ani rozšíření existující
 > fáze — je to hlubší parsing dat, která adaptery už dostávají.
+>
+> **v1.1 korekce (2026-09-10), po kritickém přezkumu:** dřívější rámování
+> jako "levný quick win, udělat hned" bylo nepřesné ve dvou bodech —
+> rozsah práce je srovnatelný s `EX-T1` (2 modely, 1 migrace, 2 adaptery,
+> router, šablona, i18n, testy), ne triviální dopisek; a **žádná časová
+> tíseň neexistuje**, protože `raw_payload` zůstává netknuté navždy — data
+> jdou zpětně doplnit (backfill) jednorázovým skriptem nad historickými
+> runy kdykoliv později, i po měsících. Návrh tabulky (design decisions
+> níže) po přezkumu obstál beze změny — jde jen o to, kdy tuhle práci
+> zařadit, ne jestli je technicky v pořádku. Viz "Kritický přezkum" sekce
+> pod schema flagem.
 
 ---
 
@@ -22,14 +33,52 @@ Tahle práce potřebuje **novou tabulku nad rámec `schema_phase1.sql`** —
 `search_queries`. Návrh níže je záměrně 1:1 okopírovaný ze stávajícího
 `Citation` modelu (stejný FK/cascade/position vzor, žádné paralelní
 pojmenování) — to je návrh, ne odsouhlasené rozhodnutí. **Nezačínej SQ-T1,
-dokud tenhle návrh někdo výslovně nepotvrdí.**
+dokud tenhle návrh někdo výslovně nepotvrdí** — technický přezkum níže
+potvrzuje, že návrh je bezpečný, ale rozhodnutí *kdy* to zařadit je čistě
+na uživateli, ne něco, co lze odvodit z toho, že design obstál.
 
 Alternativa, kterou jsem zvážil a zamítl: JSON sloupec (`search_queries
-JSONB`) přímo na `raw_responses` místo nové tabulky. Zamítnuto, protože (a)
-rozbíjí ustálený vzor "jeden evidence-řádek na jednotku" použitý u citací,
-a (b) budoucí agregace ("top queries napříč runy", zmíněná ve findings jako
-dashboard-fáze kandidát) by nad JSON polem byla nepohodlnější než nad
-normální tabulkou s řádky.
+JSONB`) přímo na `raw_responses` místo nové tabulky. Zamítnuto — ne kvůli
+horší agregaci (JSONB se dá dotazovat, `jsonb_array_elements_text` atd.,
+to není blokující), ale kvůli **konzistenci vzoru**: projekt už řeší
+přesně tenhle problém (seznam položek patřících k jedné raw response) u
+`Citation`, a `signalmap-conventions` skill explicitně říká nevynalézat
+paralelní pojmenování/vzor pro totéž. Dvě různá řešení stejného problému
+v jedné codebase by byla nekonzistence bez důvodu, ne úspora.
+
+### Kritický přezkum (2026-09-10)
+
+Provedeno na výslovnou žádost, po prvním schválení návrhu — cílem bylo
+nerubberstampovat vlastní dřívější doporučení. Závěry:
+
+1. **Boolean flag (`has_search_queries`) není potřeba — ověřeno, ne jen
+   odhadnuto.** `_map_citations` (`app/adapters/google.py`) vrací
+   `has_citations=False` i když `grounding_metadata` existuje, ale
+   `grounding_chunks` je prázdné — tedy i dnešní citace nerozlišují
+   "metadata chybí" od "metadata přítomná, ale prázdná", obojí sbalí do
+   `False`. Prázdný seznam u `search_queries` nese přesně stejnou
+   informační hodnotu, jakou dnes nese `has_citations` — přidat boolean
+   by bylo přesnější, než co má i vlastní vzor, který kopírujeme, tedy
+   over-engineering nad rámec předlohy.
+2. **Žádná časová tíseň.** `raw_payload` je kompletní, netknutý dump
+   (FR-10) — search queries u každého historického runu tam už leží.
+   Odložení týhle práce o měsíc neztratí žádná data; jde kdykoliv doplnit
+   zpětně jednorázovým skriptem nad existujícím `raw_payload`. Argument
+   "udělejme to teď, než přijdeme o data" neplatí.
+3. **Rozsah práce je podceněný v dřívějším rámování.** Sahá do 2 modelů,
+   1 migrace, 2 adapterů, routeru, šablony, i18n (2 jazyky), testů —
+   srovnatelné s `EX-T1` (největší jednotlivý task exportu), ne "malý
+   quick win". Nemění to, jestli se má práce udělat, jen jak o ní mluvit.
+4. **Reverzibilita zůstává vysoká.** Aditivní schema změna, žádná jiná
+   tabulka na `search_queries` nezávisí — `down` migrace prostě tabulku
+   dropne. Nízké riziko špatného rozhodnutí i kdyby se later ukázalo, že
+   se data nevyužívají.
+
+**Verdikt:** návrh tabulky (design decisions níže) obstál beze změny.
+Otevřená otázka není technická, je to priorita/timing vůči roadmapě
+(`docs/TASKS.md` "After phase 1" — first analysis skill, dashboard) —
+to je produktové rozhodnutí uživatele, ne něco, co tenhle dokument nebo
+agent má rozhodnout sám.
 
 ---
 
@@ -54,10 +103,10 @@ normální tabulkou s řádky.
    ```
    Plus `RawResponse.search_queries` relationship (`cascade="all, delete-orphan"`,
    stejně jako `RawResponse.citations`). Žádný `has_search_queries` boolean
-   flag jako u `has_citations` — u citací ten flag existuje kvůli FR-13
-   (explicitní rozlišení "provider nevrátil grounding metadata" od "vrátil,
-   ale prázdné"); u search queries tenhle rozdíl nemá stejnou evidenční váhu,
-   prázdný seznam stačí.
+   flag jako u `has_citations` — viz "Kritický přezkum" bod 1 výše:
+   `has_citations` samo dnes nerozlišuje "metadata chybí" od "metadata
+   prázdná" (obojí je `False`), takže prázdný seznam u `search_queries`
+   nese stejnou informační hodnotu, ne méně.
 2. **Migrace `0010_search_queries.py`** — `CREATE TABLE search_queries`
    podle modelu výše, `down_revision` navazuje na `0009_anthropic_provider_and_model_columns`
    (aktuální head k datu psaní tohohle dokumentu — ověř `alembic heads`
