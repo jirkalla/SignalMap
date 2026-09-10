@@ -13,7 +13,8 @@
       (t('help.chain.client'), 'Acme Corporation'),
       (t('help.chain.prompt_set'), 'Brand Perception Q3'),
       (t('help.chain.prompt'), t('prompt.market_label') ~ ': cs-CZ'),
-      (t('help.chain.run'), 'Gemini 3.5 Flash')
+      (t('help.chain.run'), 'Gemini 3.5 Flash'),
+      (t('help.chain.analysis'), t('analysis.mentioned_yes'))
     ] %}
     <div class="flex items-center">
       {% if not loop.first %}<span class="px-3 text-stone-300">→</span>{% endif %}
@@ -40,10 +41,12 @@
       <tbody>
         <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.name_label') }}</td><td class="py-2 px-4">{{ t('help.clients.name') }}</td></tr>
         <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.industry_label') }}</td><td class="py-2 px-4">{{ t('help.clients.industry') }}</td></tr>
+        <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.domain_label') }}</td><td class="py-2 px-4">{{ t('help.clients.domain') }}</td></tr>
         <tr class="border-t border-stone-100"><td class="py-2 px-4 font-mono text-xs text-stone-500 whitespace-nowrap">{{ t('client.notes_label') }}</td><td class="py-2 px-4">{{ t('help.clients.notes') }}</td></tr>
       </tbody>
     </table>
   </div>
+  <p class="text-stone-700 mt-3 max-w-2xl">{{ t('help.clients.aliases_note') }}</p>
 </section>
 
 <section class="mb-10">
@@ -118,6 +121,12 @@
 </section>
 
 <section class="mb-10">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.analysis.title') }}</h2>
+  <p class="text-stone-700 mb-3 max-w-2xl">{{ t('help.analysis.body') }}</p>
+  <p class="text-xs text-stone-400 max-w-2xl">{{ t('help.analysis.setup_note') }}</p>
+</section>
+
+<section class="mb-10">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('help.export.title') }}</h2>
   <p class="text-stone-700 mb-3 max-w-2xl">{{ t('help.export.body') }}</p>
   <p class="text-xs text-stone-400 max-w-2xl">{{ t('help.export.advanced') }}</p>
@@ -137,6 +146,7 @@
       (t('help.chain.prompt'), t('help.glossary.prompt')),
       (t('prompt.market_label'), t('help.glossary.market')),
       (t('help.chain.run'), t('help.glossary.run')),
+      (t('help.chain.analysis'), t('help.glossary.analysis')),
       (t('help.chain.citation'), t('help.glossary.citation'))
     ] %}
     <div class="bg-white border border-stone-200 rounded-lg p-3">
