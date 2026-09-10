@@ -209,6 +209,16 @@
   "run.citations_empty": "Für diesen Lauf wurden keine Quellenangaben zurückgegeben.",
   "run.search_queries_label": "Suchanfragen",
   "run.search_queries_empty": "Der Anbieter hat für diesen Lauf keine Suchanfragen ausgeführt.",
+
+  "analysis.section_title": "Analyse",
+  "analysis.mentioned_yes": "Erwähnt",
+  "analysis.mentioned_no": "Nicht erwähnt",
+  "analysis.mention_count_label": "Erwähnungen",
+  "analysis.matched_terms_label": "Erkannt als",
+  "analysis.cited_yes": "Zitiert",
+  "analysis.cited_no": "Nicht zitiert",
+  "analysis.cited_domains_label": "Zitierte Domains",
+
   "run.view": "Ansehen",
   "run.prompt_label": "Prompt",
   "run.export_csv": "CSV",

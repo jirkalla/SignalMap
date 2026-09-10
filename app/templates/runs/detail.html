@@ -66,8 +66,54 @@
 {% if raw_response %}
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.rendered_answer_label') }}</h2>
-  <p class="whitespace-pre-line text-stone-900">{{ raw_response.rendered_text or t('common.none') }}</p>
+  <p class="whitespace-pre-line text-stone-900">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
 </div>
+
+{% if analysis_results %}
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('analysis.section_title') }}</h2>
+  {% for result in analysis_results %}
+  <div class="{{ 'border-t border-stone-100 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0' }}">
+    <div class="text-sm font-medium text-stone-900 mb-2">{{ result.analysis_skill.name }}</div>
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if result.output.text_mentioned else 'bg-stone-100 text-stone-600' }}">
+        {{ t('analysis.mentioned_yes') if result.output.text_mentioned else t('analysis.mentioned_no') }}
+      </span>
+      <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if result.output.cited else 'bg-stone-100 text-stone-600' }}">
+        {{ t('analysis.cited_yes') if result.output.cited else t('analysis.cited_no') }}
+      </span>
+      <span class="text-xs text-stone-500">{{ t('analysis.mention_count_label') }}: {{ result.output.mention_count }}</span>
+    </div>
+    <dl class="text-sm space-y-2">
+      <div>
+        <dt class="text-stone-500 text-xs uppercase tracking-wide">{{ t('analysis.matched_terms_label') }}</dt>
+        <dd>
+          {% if result.output.matched_terms %}
+          <ul class="list-disc list-inside text-stone-700">
+            {% for term in result.output.matched_terms %}<li>{{ term }}</li>{% endfor %}
+          </ul>
+          {% else %}
+          <span class="text-stone-500">{{ t('common.none') }}</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-stone-500 text-xs uppercase tracking-wide">{{ t('analysis.cited_domains_label') }}</dt>
+        <dd>
+          {% if result.output.cited_domains %}
+          <ul class="list-disc list-inside text-stone-700">
+            {% for domain in result.output.cited_domains %}<li>{{ domain }}</li>{% endfor %}
+          </ul>
+          {% else %}
+          <span class="text-stone-500">{{ t('common.none') }}</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}</h2>

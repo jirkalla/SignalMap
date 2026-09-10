@@ -17,13 +17,27 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
+from markupsafe import Markup, escape
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters import get_adapter, has_adapter
+from app.analysis import get_runner, has_runner
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SearchQuery, SystemInstructionTemplate
+from app.models import (
+    AIModel,
+    AnalysisResult,
+    AnalysisSkill,
+    Citation,
+    Client,
+    Market,
+    Provider,
+    RawResponse,
+    Run,
+    SearchQuery,
+    SystemInstructionTemplate,
+)
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
@@ -125,6 +139,50 @@ def _get_run_or_404(db: Session, request: Request, run_id: int) -> Run:
     if run is None:
         raise AppError("run_not_found", get_t(request)("errors.run_not_found"), status_code=404)
     return run
+
+
+def _highlight_matches(text: str, spans: list[list[int]]) -> Markup:
+    """Wrap `spans` (from a stored AnalysisResult.output["match_spans"]) in <mark>, HTML-escaping
+    everything else. Never recomputes matching against the client's current aliases (design
+    decision 12) — spans are exactly what was evidenced at compute time, so highlighting can't
+    silently drift from what the stored AnalysisResult actually says.
+    """
+    if not spans:
+        return escape(text)
+    parts: list[Markup] = []
+    cursor = 0
+    for start, end in spans:
+        parts.append(escape(text[cursor:start]))
+        parts.append(Markup("<mark class=\"bg-amber-200 rounded px-0.5\">") + escape(text[start:end]) + Markup("</mark>"))
+        cursor = end
+    parts.append(escape(text[cursor:]))
+    return Markup("").join(parts)
+
+
+def _run_active_analysis_skills(db: Session, raw_response: RawResponse, client: Client) -> None:
+    """Compute and store every active rule_based analysis skill's result for one raw response.
+
+    llm_prompt skills are skipped here — none exist yet (docs/TASKS_PHASE3.md
+    design decision 1 prepares the column, phase 3 only ships mention_visibility).
+    The caller wraps this in try/except: a failure here must never affect the
+    Run's own status or roll back the evidence already committed (design
+    decision 7) — this is a best-effort derived layer, not part of what "the
+    run succeeded" means.
+    """
+    skills = db.scalars(select(AnalysisSkill).where(AnalysisSkill.is_active.is_(True))).all()
+    for skill in skills:
+        if skill.execution_type != "rule_based" or not has_runner(skill.key):
+            continue
+        output = get_runner(skill.key).run(raw_response.rendered_text, raw_response.citations, client)
+        db.add(
+            AnalysisResult(
+                raw_response_id=raw_response.id,
+                analysis_skill_id=skill.id,
+                skill_version=skill.version,
+                output=output,
+            )
+        )
+    db.commit()
 
 
 @router.post("/prompts/{prompt_id}/runs")
@@ -257,6 +315,17 @@ def trigger_run(
             extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
         )
 
+        try:
+            _run_active_analysis_skills(db, raw_response, prompt.prompt_set.client)
+        except Exception as exc:  # analysis is a best-effort derived layer — never fail the run over it
+            logger.error(
+                "Analysis skills failed for run %s: %s",
+                run.id,
+                exc,
+                exc_info=True,
+                extra={"extra_data": {"run_id": run.id}},
+            )
+
     target_url = f"/runs/{run.id}"
     if request.headers.get("HX-Request") == "true":
         response = Response(status_code=200)
@@ -282,6 +351,18 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         if raw_response
         else []
     )
+    analysis_results = (
+        db.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == raw_response.id)).all()
+        if raw_response
+        else []
+    )
+    rendered_text_html = None
+    if raw_response and raw_response.rendered_text:
+        match_spans = next(
+            (r.output.get("match_spans") for r in analysis_results if r.analysis_skill.key == "mention_visibility"),
+            None,
+        )
+        rendered_text_html = _highlight_matches(raw_response.rendered_text, match_spans or [])
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
@@ -292,8 +373,10 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         {
             "run": run,
             "raw_response": raw_response,
+            "rendered_text_html": rendered_text_html,
             "citations": citations,
             "search_queries": search_queries,
+            "analysis_results": analysis_results,
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
         },
