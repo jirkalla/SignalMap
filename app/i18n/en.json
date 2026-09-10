@@ -171,6 +171,10 @@
   "prompt.version_current": "current",
   "prompt.delete_button": "Delete",
   "prompt.delete_confirm": "Delete this prompt? This deletes its entire version history and can't be undone.",
+  "prompt.export_csv": "Export CSV",
+  "prompt.export_xlsx": "Export XLSX",
+  "prompt.export_json": "Export JSON",
+  "prompt.export_all_versions_label": "Include all versions",
 
   "run.detail_title": "Run",
   "run.metadata_title": "Metadata",

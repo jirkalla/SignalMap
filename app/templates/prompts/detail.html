@@ -92,7 +92,49 @@
   })();
 </script>
 
-<h2 class="text-lg font-semibold mb-3">{{ t('prompt.runs_title') }}</h2>
+<div class="flex items-center justify-between flex-wrap gap-3 mb-3">
+  <h2 class="text-lg font-semibold">{{ t('prompt.runs_title') }}</h2>
+  <div class="flex items-center gap-3 flex-wrap">
+    {% if versions %}
+    <label class="flex items-center gap-1.5 text-sm text-stone-600">
+      <input type="checkbox" id="export-all-versions" class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+      {{ t('prompt.export_all_versions_label') }}
+    </label>
+    {% endif %}
+    <div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
+      <a id="export-csv" href="/prompts/{{ prompt.id }}/runs/export?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_csv') }}</a>
+      <a id="export-xlsx" href="/prompts/{{ prompt.id }}/runs/export?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_xlsx') }}</a>
+      <a id="export-json" href="/prompts/{{ prompt.id }}/runs/export?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('prompt.export_json') }}</a>
+    </div>
+  </div>
+</div>
+{% if versions %}
+<script>
+  // Rewrites the three export links' query string when the "all versions"
+  // checkbox is toggled — same lightweight vanilla-JS pattern as the
+  // model-dropdown cost badge above, no framework.
+  (function () {
+    var checkbox = document.getElementById('export-all-versions');
+    var links = [
+      document.getElementById('export-csv'),
+      document.getElementById('export-xlsx'),
+      document.getElementById('export-json'),
+    ];
+    if (!checkbox) return;
+    checkbox.addEventListener('change', function () {
+      links.forEach(function (link) {
+        var url = new URL(link.href, window.location.origin);
+        if (checkbox.checked) {
+          url.searchParams.set('versions', 'all');
+        } else {
+          url.searchParams.delete('versions');
+        }
+        link.href = url.pathname + url.search;
+      });
+    });
+  })();
+</script>
+{% endif %}
 {% if runs %}
 <div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
   <table class="w-full text-sm text-left">

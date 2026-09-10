@@ -171,6 +171,10 @@
   "prompt.version_current": "aktuell",
   "prompt.delete_button": "Löschen",
   "prompt.delete_confirm": "Diesen Prompt löschen? Das löscht seinen gesamten Versionsverlauf und kann nicht rückgängig gemacht werden.",
+  "prompt.export_csv": "CSV exportieren",
+  "prompt.export_xlsx": "XLSX exportieren",
+  "prompt.export_json": "JSON exportieren",
+  "prompt.export_all_versions_label": "Alle Versionen einschließen",
 
   "run.detail_title": "Lauf",
   "run.metadata_title": "Metadaten",

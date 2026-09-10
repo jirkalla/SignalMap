@@ -26,7 +26,15 @@ from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
-from app.services.export import ExportContent, build_csv_zip, build_filename, build_json, build_xlsx, runs_for_run
+from app.services.export import (
+    ExportContent,
+    build_csv_zip,
+    build_filename,
+    build_json,
+    build_xlsx,
+    runs_for_prompt,
+    runs_for_run,
+)
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -272,6 +280,49 @@ def export_run(
     ext = _EXPORT_EXTENSIONS[format]
     body = _EXPORT_BUILDERS[format](runs, content)
     filename = build_filename("run", str(run_id), content, ext)
+    return Response(
+        content=body,
+        media_type=_EXPORT_MEDIA_TYPES[format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/prompts/{prompt_id}/runs/export")
+def export_prompt_runs(
+    request: Request,
+    prompt_id: int,
+    format: ExportFormat = Query(
+        "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
+    ),
+    content: ExportContent = Query(
+        "answer",
+        description=(
+            "How much of each run to include: answer (rendered text + citations + metadata), "
+            "raw (untouched provider payload only), or full (both)."
+        ),
+    ),
+    versions: Literal["current", "all"] = Query(
+        "current",
+        description=(
+            "Which prompt versions to include: 'current' exports only the exact version named by "
+            "prompt_id (matching what this page shows); 'all' walks the prompt's full edit history."
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """Download every run of one prompt as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T3).
+
+    Defaults to the exact prompt version in the URL — "export what you
+    see" (docs/TASKS_EXPORT.md design decision 5) — rather than the whole
+    version lineage; `versions=all` opts into that wider scope. A prompt
+    with no runs yet still produces a valid, empty export, not an error.
+    """
+    _get_prompt_or_404(db, request, prompt_id)
+    runs = runs_for_prompt(db, prompt_id, all_versions=(versions == "all"))
+
+    ext = _EXPORT_EXTENSIONS[format]
+    body = _EXPORT_BUILDERS[format](runs, content)
+    filename = build_filename("prompt", str(prompt_id), content, ext)
     return Response(
         content=body,
         media_type=_EXPORT_MEDIA_TYPES[format],
