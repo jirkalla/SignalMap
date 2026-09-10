@@ -69,8 +69,15 @@ CITATION_COLUMNS: tuple[str, ...] = (
     "cited_answer_span",
 )
 
+SEARCH_QUERY_COLUMNS: tuple[str, ...] = (
+    "run_id",
+    "query_text",
+    "query_position",
+)
+
 _RUN_EAGER_LOAD = (
     selectinload(Run.raw_response).selectinload(RawResponse.citations),
+    selectinload(Run.raw_response).selectinload(RawResponse.search_queries),
     selectinload(Run.prompt).selectinload(Prompt.prompt_set).selectinload(PromptSet.client),
     selectinload(Run.model).selectinload(AIModel.provider),
     selectinload(Run.market),
@@ -229,6 +236,21 @@ def _citation_rows(run: Run) -> list[dict[str, Any]]:
     ]
 
 
+def _search_query_rows(run: Run) -> list[dict[str, Any]]:
+    """One row per search query on this run's raw response — empty when there is none or it issued none."""
+    raw = run.raw_response
+    if raw is None:
+        return []
+    return [
+        {
+            "run_id": run.id,
+            "query_text": query.query_text,
+            "query_position": query.query_position,
+        }
+        for query in raw.search_queries
+    ]
+
+
 def _raw_payload_text(run: Run) -> str | None:
     """Pretty-printed `raw_payload` for one run, or None when it has no raw response."""
     if run.raw_response is None:
@@ -237,14 +259,14 @@ def _raw_payload_text(run: Run) -> str | None:
 
 
 def build_csv_zip(runs: list[Run], content: ExportContent) -> bytes:
-    """A ZIP with `runs.csv` + `citations.csv`, joined on `run_id`.
+    """A ZIP with `runs.csv` + `citations.csv` + `search_queries.csv`, joined on `run_id`.
 
-    `citations.csv` is always present, header-only if no run has any
-    citation — downstream tooling can rely on the file existing. When
-    `content` is "raw" or "full", one `raw_<run_id>.json` per run (for runs
-    that have a raw response) is added alongside them — safe here because
-    the CSV export is a plain ZIP with no format constraint against loose
-    files, unlike XLSX (see `build_xlsx`).
+    `citations.csv` and `search_queries.csv` are always present, header-only
+    if no run has any rows — downstream tooling can rely on both files
+    existing. When `content` is "raw" or "full", one `raw_<run_id>.json` per
+    run (for runs that have a raw response) is added alongside them — safe
+    here because the CSV export is a plain ZIP with no format constraint
+    against loose files, unlike XLSX (see `build_xlsx`).
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -263,6 +285,14 @@ def build_csv_zip(runs: list[Run], content: ExportContent) -> bytes:
                 writer.writerow(_sanitize_csv_row(row))
         zf.writestr("citations.csv", citations_csv.getvalue())
 
+        search_queries_csv = io.StringIO()
+        writer = csv.DictWriter(search_queries_csv, fieldnames=SEARCH_QUERY_COLUMNS)
+        writer.writeheader()
+        for run in runs:
+            for row in _search_query_rows(run):
+                writer.writerow(_sanitize_csv_row(row))
+        zf.writestr("search_queries.csv", search_queries_csv.getvalue())
+
         if content in ("raw", "full"):
             for run in runs:
                 raw_text = _raw_payload_text(run)
@@ -273,7 +303,7 @@ def build_csv_zip(runs: list[Run], content: ExportContent) -> bytes:
 
 
 def build_xlsx(runs: list[Run], content: ExportContent) -> bytes:
-    """One workbook: `Runs` + `Citations` sheets, plus a `RawPayload` sheet for raw/full content.
+    """One workbook: `Runs` + `Citations` + `SearchQueries` sheets, plus a `RawPayload` sheet for raw/full content.
 
     `raw_payload` never becomes a loose file stuffed into the `.xlsx` zip
     container — a `.xlsx` *is* a zip, but any file outside its OOXML
@@ -296,6 +326,12 @@ def build_xlsx(runs: list[Run], content: ExportContent) -> bytes:
         for row in _citation_rows(run):
             citations_sheet.append([_xlsx_safe(row[column]) for column in CITATION_COLUMNS])
 
+    search_queries_sheet = wb.create_sheet("SearchQueries")
+    search_queries_sheet.append(SEARCH_QUERY_COLUMNS)
+    for run in runs:
+        for row in _search_query_rows(run):
+            search_queries_sheet.append([_xlsx_safe(row[column]) for column in SEARCH_QUERY_COLUMNS])
+
     if content in ("raw", "full"):
         raw_sheet = wb.create_sheet("RawPayload")
         raw_sheet.append(("run_id", "raw_payload_json"))
@@ -317,10 +353,11 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
     """A JSON array of run objects — the full-fidelity export.
 
     Unlike the CSV/XLSX tables (always answer-shaped, with raw data purely
-    additive), JSON keys are gated by tier: `rendered_text`/`citations`
-    only appear for `content in ("answer", "full")`, `raw_payload` only for
-    `content in ("raw", "full")` — a "raw" export stays a minimal evidence
-    dump instead of merging in unrelated answer fields.
+    additive), JSON keys are gated by tier: `rendered_text`/`citations`/
+    `search_queries` only appear for `content in ("answer", "full")`,
+    `raw_payload` only for `content in ("raw", "full")` — a "raw" export
+    stays a minimal evidence dump instead of merging in unrelated answer
+    fields.
     """
     include_answer = content in ("answer", "full")
     include_raw = content in ("raw", "full")
@@ -341,6 +378,13 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
                     "cited_answer_span": citation.cited_answer_span,
                 }
                 for citation in (raw.citations if raw else [])
+            ]
+            entry["search_queries"] = [
+                {
+                    "query_text": query.query_text,
+                    "query_position": query.query_position,
+                }
+                for query in (raw.search_queries if raw else [])
             ]
         if include_raw:
             entry["raw_payload"] = raw.raw_payload if raw else None
