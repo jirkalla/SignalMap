@@ -7,6 +7,8 @@
   "nav.providers": "Anbieter",
   "nav.ai_models": "Modelle",
   "nav.settings": "Einstellungen",
+  "nav.config_menu": "Konfiguration",
+  "nav.help_menu": "Hilfe",
 
   "settings.title": "Einstellungen",
   "settings.lede": "System-Instruktions-Vorlage pro Anbieter — der Antwortsprache-/Rahmungs-Hinweis, der bei jedem Lauf mitgeschickt wird. Jeder Anbieter braucht das für die Sprache, da keiner einen echten „Antworte in Sprache X“-API-Parameter hat. Anbieter mit echtem geografischem Such-Targeting (Anthropics web_search user_location) bekommen den Standort-Teil bereits real — ihre Vorlage hier sollte nur die Sprache abdecken, nicht zusätzlich den Standort simulieren.",
