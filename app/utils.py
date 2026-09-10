@@ -18,6 +18,21 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
 
 
+def normalize_domain(domain: str) -> str:
+    """Lowercase, strip a leading 'www.' — the shared form used to compare domains.
+
+    Shared between the `mention_visibility` analysis skill (app/analysis/
+    mention_visibility.py, matching a client's own domain against citation
+    sources) and the phase 4 dashboard's league table (flagging which cited
+    domain is the client's own) — one normalization rule, not two
+    independently-maintained copies.
+    """
+    domain = domain.strip().lower()
+    if domain.startswith("www."):
+        domain = domain[len("www.") :]
+    return domain
+
+
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "client"

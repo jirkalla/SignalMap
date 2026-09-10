@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from app.models import Citation, Client
+from app.utils import normalize_domain
 
 
 def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[int]], list[str]]:
@@ -45,26 +46,18 @@ def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[i
     return spans, matched_terms
 
 
-def _normalize_domain(domain: str) -> str:
-    """Lowercase, strip a leading 'www.' — the shared form used to compare domains."""
-    domain = domain.strip().lower()
-    if domain.startswith("www."):
-        domain = domain[len("www.") :]
-    return domain
-
-
 def _matching_citation_domains(client_domain: str | None, citations: list[Citation]) -> list[str]:
     """Original (non-normalized) source_domain values that match the client's own domain,
     exactly or as a subdomain (design decision 6).
     """
     if not client_domain:
         return []
-    normalized_client_domain = _normalize_domain(client_domain)
+    normalized_client_domain = normalize_domain(client_domain)
     matched: list[str] = []
     for citation in citations:
         if not citation.source_domain:
             continue
-        normalized_citation_domain = _normalize_domain(citation.source_domain)
+        normalized_citation_domain = normalize_domain(citation.source_domain)
         if normalized_citation_domain == normalized_client_domain or normalized_citation_domain.endswith(
             "." + normalized_client_domain
         ):
