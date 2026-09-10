@@ -1,5 +1,5 @@
 # AI Instructions — SignalMap
-## v1.0 | 2026-09-08
+## v1.1 | 2026-09-09
 
 This file governs how an AI coding agent (Claude Code, or any equivalent)
 must behave when working on the SignalMap repository.
@@ -92,6 +92,11 @@ FRONTEND:
   ~640px / ~1024px breakpoints, not just desktop width.
 - Reuse the macros in `app/templates/partials/macros.html` for form
   fields; extend them before writing new markup from scratch.
+- Every delete action gets a client-side `confirm()` guard on the form
+  (`data-confirm="{{ t('<entity>.delete_confirm') }}"`, handled by the
+  shared delegated listener in `base.html`) — never a bare delete button,
+  and never `onsubmit="return confirm('{{ t(...) }}')"` (breaks on any
+  apostrophe in the translated text, e.g. English "can't").
 
 ======================================================================
 4. WHAT AI MUST NEVER DO
@@ -134,8 +139,29 @@ Error handling:
   raise AppError("client_not_found", t("errors.client_not_found"), status_code=404)
   → caught by the shared handler in app/errors.py → {error_code, message, detail} JSON
 
+Success handling (HTML routes, not a JSON API):
+  Plain form POST  → 303 redirect to the created/updated resource's detail page.
+  HTMX POST        → 200 response with an `HX-Redirect` header to the same
+                      target, so the browser navigates either way
+                      (see app/routers/runs.py trigger_run for the reference
+                      implementation of both paths from one endpoint).
+
 ======================================================================
-6. TASK COMPLETION PROTOCOL
+6. PHASE WORKFLOW
+======================================================================
+
+Follow the active phase defined in `docs/TASKS.md`. Ask which phase/task
+is active before starting feature work if it's unclear from the request
+or the doc.
+
+AI MUST NOT:
+- Implement features from a phase later than the active one (see §4).
+- Mark a task or feature complete without the user confirming it — a
+  browser walkthrough or a passing curl check is verification for your
+  own confidence, not a substitute for the user's own confirmation.
+
+======================================================================
+7. TASK COMPLETION PROTOCOL
 ======================================================================
 
 After completing every task:
@@ -150,7 +176,7 @@ After completing every task:
      without being asked to.
 
 ======================================================================
-7. COMMIT CONVENTIONS
+8. COMMIT CONVENTIONS
 ======================================================================
 
 Format: type(scope): short description
@@ -166,7 +192,30 @@ Examples:
 Rules:
 - Subject in English, imperative mood, max ~72 characters.
 - One logical change per commit — don't mix feat + docs.
+- Never `git commit` without showing the message and getting explicit
+  go-ahead first — not just before push. A local commit is still an
+  action on the user's repo; propose it, wait for confirmation, then run
+  it. This applies every time, not just for the first few.
 - Never `git push` without explicit instruction.
+
+======================================================================
+9. BRANCHING
+======================================================================
+
+Branch naming:
+  feature/signalmap-{phase}-{short-description}
+  e.g. feature/signalmap-phase2-anthropic-adapter
+       feature/signalmap-phase2-first-analysis-skill
+       feature/signalmap-phase1-market-locale-name-rename
+
+Create the branch before writing any code for a feature, refactor, or
+anything beyond a trivial one-line fix or doc correction (those can go
+straight to whatever branch is currently checked out).
+
+Ask before merging a feature branch into main/master. Ask before
+`git push`, including pushing a feature branch for the first time — same
+rule as §4's NEVER list, repeated here because branch work is exactly
+where it's easiest to forget.
 
 ======================================================================
 END OF AI INSTRUCTIONS
