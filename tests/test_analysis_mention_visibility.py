@@ -107,3 +107,16 @@ def test_match_spans_correspond_to_real_positions_and_lengths_in_text():
     assert result["mention_count"] == 2
     assert result["matched_terms"] == ["Acme Corporation", "Acme"]
     assert "Acmematic" not in [text[start:end] for start, end in result["match_spans"]]
+
+
+def test_matched_terms_never_claims_more_than_match_spans_can_show():
+    # Regression: an alias overlapping the client name at a different start
+    # position ("CD EF" starting inside "AB CD") used to survive into
+    # matched_terms even when its span got dropped by overlap resolution,
+    # desyncing matched_terms from match_spans/mention_count.
+    client = _client("AB CD", aliases=["CD EF"])
+    result = runner.run("AB CD EF is great.", [], client)
+
+    assert len(result["matched_terms"]) == len(result["match_spans"])
+    for term, (start, end) in zip(result["matched_terms"], result["match_spans"], strict=True):
+        assert "AB CD EF is great."[start:end] == term

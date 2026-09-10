@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from markupsafe import Markup, escape
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import get_adapter, has_adapter
 from app.analysis import get_runner, has_runner
@@ -159,8 +159,16 @@ def _highlight_matches(text: str, spans: list[list[int]]) -> Markup:
     return Markup("").join(parts)
 
 
-def _run_active_analysis_skills(db: Session, raw_response: RawResponse, client: Client) -> None:
+def _run_active_analysis_skills(
+    db: Session, raw_response_id: int, rendered_text: str | None, citations: list[Citation], client: Client
+) -> None:
     """Compute and store every active rule_based analysis skill's result for one raw response.
+
+    Takes `rendered_text`/`citations` directly rather than a `RawResponse` to
+    read them off of — the caller's own `db.commit()` (default
+    `expire_on_commit=True`) expires whatever it just built, so reading them
+    back off the ORM object here would force two avoidable reload queries for
+    data the caller already had in memory a moment earlier.
 
     llm_prompt skills are skipped here — none exist yet (docs/TASKS_PHASE3.md
     design decision 1 prepares the column, phase 3 only ships mention_visibility).
@@ -173,10 +181,10 @@ def _run_active_analysis_skills(db: Session, raw_response: RawResponse, client: 
     for skill in skills:
         if skill.execution_type != "rule_based" or not has_runner(skill.key):
             continue
-        output = get_runner(skill.key).run(raw_response.rendered_text, raw_response.citations, client)
+        output = get_runner(skill.key).run(rendered_text, citations, client)
         db.add(
             AnalysisResult(
-                raw_response_id=raw_response.id,
+                raw_response_id=raw_response_id,
                 analysis_skill_id=skill.id,
                 skill_version=skill.version,
                 output=output,
@@ -288,25 +296,38 @@ def trigger_run(
         )
         db.add(raw_response)
         db.flush()  # need raw_response.id before creating citations
+        raw_response_id = raw_response.id
+        citations: list[Citation] = []
         for c in payload.citations:
-            db.add(
-                Citation(
-                    raw_response_id=raw_response.id,
-                    source_url=c.source_url,
-                    source_title=c.source_title,
-                    source_domain=c.source_domain,
-                    citation_position=c.citation_position,
-                    cited_answer_span=c.cited_answer_span,
-                )
+            citation = Citation(
+                raw_response_id=raw_response_id,
+                source_url=c.source_url,
+                source_title=c.source_title,
+                source_domain=c.source_domain,
+                citation_position=c.citation_position,
+                cited_answer_span=c.cited_answer_span,
             )
+            db.add(citation)
+            citations.append(citation)
         for position, query_text in enumerate(payload.search_queries):
             db.add(
                 SearchQuery(
-                    raw_response_id=raw_response.id,
+                    raw_response_id=raw_response_id,
                     query_text=query_text,
                     query_position=position,
                 )
             )
+        # _run_active_analysis_skills needs this data right after the commit
+        # below. Default expire_on_commit=True would otherwise force a fresh
+        # reload query for every one of these on next access — for
+        # analysis_client/rendered_text that's avoided by resolving them into
+        # locals now, but the `citations` list above holds ORM objects whose
+        # *attributes* (not just their existence) would still be wiped by an
+        # expiring commit; disabling it for the rest of this request's
+        # session is what keeps those already-in-memory values intact too.
+        analysis_client = prompt.prompt_set.client
+        rendered_text = payload.rendered_text
+        db.expire_on_commit = False
         db.commit()
         logger.info(
             "Run %s succeeded in %sms",
@@ -316,7 +337,7 @@ def trigger_run(
         )
 
         try:
-            _run_active_analysis_skills(db, raw_response, prompt.prompt_set.client)
+            _run_active_analysis_skills(db, raw_response_id, rendered_text, citations, analysis_client)
         except Exception as exc:  # analysis is a best-effort derived layer — never fail the run over it
             logger.error(
                 "Analysis skills failed for run %s: %s",
@@ -352,7 +373,11 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         else []
     )
     analysis_results = (
-        db.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == raw_response.id)).all()
+        db.scalars(
+            select(AnalysisResult)
+            .where(AnalysisResult.raw_response_id == raw_response.id)
+            .options(joinedload(AnalysisResult.analysis_skill))
+        ).all()
         if raw_response
         else []
     )

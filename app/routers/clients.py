@@ -7,6 +7,7 @@ the skill's "Build sequencing" section.
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -184,22 +185,28 @@ def delete_client(request: Request, client_id: int, db: Session = Depends(get_db
 def create_client_alias(
     request: Request,
     client_id: int,
-    alias: str = Form(..., description="Alternate name/spelling to match against, e.g. 'Acme Corp'."),
+    alias: str = Form(
+        ..., max_length=200, description="Alternate name/spelling to match against, e.g. 'Acme Corp'."
+    ),
     db: Session = Depends(get_db),
 ):
     """Add an alternate name/spelling for a client, used by the mention_visibility analysis skill
     alongside the client's own name when matching a run's rendered text.
+
+    Duplicate detection is case-insensitive (the matching engine itself is
+    case-insensitive, so 'Acme' and 'acme' are the same alias for its
+    purposes) and enforced at both layers: a pre-check here for a fast,
+    specific 409 in the common case, and a DB-level functional unique index
+    on (client_id, lower(alias)) (migration 0013) as the actual source of
+    truth — a concurrent duplicate submission that races past the pre-check
+    still hits that constraint, caught below and turned into the same 409
+    instead of an unhandled IntegrityError.
     """
     t = get_t(request)
     client = _get_client_or_404(db, request, client_id)
     alias = alias.strip()
-    # Case-insensitive on purpose: the matching engine itself is case-insensitive
-    # (re.IGNORECASE), so 'Acme' and 'acme' are the same alias for its purposes —
-    # storing both would just clutter matched_terms without changing any result.
-    existing = db.scalar(
-        select(ClientAlias).where(ClientAlias.client_id == client_id, func.lower(ClientAlias.alias) == alias.lower())
-    )
-    if existing is not None:
+
+    def _duplicate_response():
         return render(
             request,
             "clients/detail.html",
@@ -210,8 +217,18 @@ def create_client_alias(
             },
             status_code=409,
         )
+
+    existing = db.scalar(
+        select(ClientAlias).where(ClientAlias.client_id == client_id, func.lower(ClientAlias.alias) == alias.lower())
+    )
+    if existing is not None:
+        return _duplicate_response()
     db.add(ClientAlias(client_id=client_id, alias=alias))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _duplicate_response()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 

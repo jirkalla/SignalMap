@@ -16,33 +16,32 @@ from app.models import Citation, Client
 def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[int]], list[str]]:
     """Non-overlapping [start, end) spans across all candidates, plus which candidates matched.
 
-    Spans are deduped by start position across candidates (design decision 5)
-    so an alias that overlaps the client's own name doesn't double-count the
-    same occurrence — the longer match wins when two candidates share a
-    start. A second pass drops any span whose start still falls inside the
-    previous kept span (design decision 12) — near-impossible with
-    word-boundary-anchored matches, but cheap insurance for highlighting.
+    One combined regex (candidates alternated, longest first, each escaped)
+    instead of one independent re.finditer per candidate — re.finditer never
+    returns overlapping matches for a single pattern (it scans left to right
+    and resumes after each match's end), so overlap-freedom is a property of
+    the search itself, not a separate post-hoc filter. Ordering candidates
+    longest-first makes the regex engine prefer the longer/more specific
+    alternative whenever two candidates could start at the same position
+    (design decision 5). Earlier revisions matched each candidate
+    independently and filtered overlaps afterwards, which could drop a
+    span for a candidate while still listing it in matched_terms — matched_terms
+    is now derived from the surviving spans themselves, so the two can't
+    desync.
     """
-    ends_by_start: dict[int, int] = {}
-    matched_terms: list[str] = []
-    for candidate in candidates:
-        pattern = r"(?<!\w)" + re.escape(candidate) + r"(?!\w)"
-        found = False
-        for m in re.finditer(pattern, rendered_text, re.IGNORECASE):
-            found = True
-            if m.start() not in ends_by_start or m.end() > ends_by_start[m.start()]:
-                ends_by_start[m.start()] = m.end()
-        if found:
-            matched_terms.append(candidate)
+    if not candidates:
+        return [], []
+    ordered = sorted(set(candidates), key=len, reverse=True)
+    alternation = "|".join(f"(?P<c{i}>{re.escape(c)})" for i, c in enumerate(ordered))
+    pattern = r"(?<!\w)(?:" + alternation + r")(?!\w)"
 
     spans: list[list[int]] = []
-    last_end = -1
-    for start in sorted(ends_by_start):
-        if start < last_end:
-            continue
-        end = ends_by_start[start]
-        spans.append([start, end])
-        last_end = end
+    matched: set[str] = set()
+    for m in re.finditer(pattern, rendered_text, re.IGNORECASE):
+        spans.append([m.start(), m.end()])
+        matched.add(ordered[int(m.lastgroup[1:])])
+
+    matched_terms = list(dict.fromkeys(c for c in candidates if c in matched))
     return spans, matched_terms
 
 
