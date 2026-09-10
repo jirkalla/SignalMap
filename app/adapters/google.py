@@ -76,6 +76,19 @@ def _map_citations(candidate: types.Candidate | None) -> tuple[list[AdapterCitat
     return citations, True
 
 
+def _map_search_queries(candidate: types.Candidate | None) -> list[str]:
+    """Turn one candidate's grounding metadata into the search queries the model issued.
+
+    Verified 2026-09-10 against the installed google-genai==2.22.0 SDK:
+    GroundingMetadata.web_search_queries is `list[str] | None`, populated on
+    the same grounding_metadata object _map_citations already reads
+    grounding_chunks/grounding_supports from. Empty list, not an error, when
+    grounding metadata is absent or the model didn't search.
+    """
+    metadata = getattr(candidate, "grounding_metadata", None) if candidate else None
+    return list(getattr(metadata, "web_search_queries", None) or [])
+
+
 class GoogleGeminiAdapter:
     """Adapter for the Google Gemini API (google-genai SDK)."""
 
@@ -117,6 +130,7 @@ class GoogleGeminiAdapter:
 
         candidate = response.candidates[0] if response.candidates else None
         citations, has_citations = _map_citations(candidate)
+        search_queries = _map_search_queries(candidate)
 
         token_usage = None
         if response.usage_metadata is not None:
@@ -127,5 +141,6 @@ class GoogleGeminiAdapter:
             rendered_text=response.text,
             has_citations=has_citations,
             citations=citations,
+            search_queries=search_queries,
             token_usage=token_usage,
         )

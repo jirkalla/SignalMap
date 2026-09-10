@@ -63,6 +63,29 @@ def _map_citations(content: list) -> tuple[list[AdapterCitation], bool]:
     return citations, bool(citations)
 
 
+def _map_search_queries(content: list) -> list[str]:
+    """Extract the queries from every `server_tool_use` web_search block, in order.
+
+    Verified 2026-09-10 against anthropic==1.4.0 (ServerToolUseBlock:
+    type/name/input, input untyped as Dict[str, object]) and the official
+    web-search-tool docs, which show the exact shape: {"type":
+    "server_tool_use", "name": "web_search", "input": {"query": "..."}}.
+    `.get("query")`, not `["query"]`, since `input` isn't typed further by
+    the SDK. A run can issue multiple searches (up to `_MAX_WEB_SEARCHES`),
+    each its own block — this walks all of them, not just the first.
+    """
+    queries: list[str] = []
+    for block in content:
+        if getattr(block, "type", None) != "server_tool_use":
+            continue
+        if getattr(block, "name", None) != "web_search":
+            continue
+        query = (getattr(block, "input", None) or {}).get("query")
+        if query:
+            queries.append(query)
+    return queries
+
+
 class AnthropicAdapter:
     """Adapter for the Anthropic Claude API (anthropic SDK)."""
 
@@ -119,6 +142,7 @@ class AnthropicAdapter:
             block.text for block in response.content if getattr(block, "type", None) == "text"
         ) or None
         citations, has_citations = _map_citations(response.content)
+        search_queries = _map_search_queries(response.content)
 
         token_usage = response.usage.model_dump(mode="json") if response.usage is not None else None
 
@@ -127,5 +151,6 @@ class AnthropicAdapter:
             rendered_text=rendered_text,
             has_citations=has_citations,
             citations=citations,
+            search_queries=search_queries,
             token_usage=token_usage,
         )

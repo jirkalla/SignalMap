@@ -40,6 +40,7 @@ def _trigger_run(client: TestClient, prompt_id: int, seed: dict, *, payload: Raw
                 source_url="https://example.com/x", source_title="X", source_domain="example.com", citation_position=0
             )
         ],
+        search_queries=["test search query"],
         token_usage={"input_tokens": 3, "output_tokens": 2},
     )
     response = client.post(
@@ -70,16 +71,18 @@ def test_run_export_matrix(client: TestClient, seed: dict, sample_prompt: Prompt
         names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
         assert "runs.csv" in names
         assert "citations.csv" in names
+        assert "search_queries.csv" in names
         assert (f"raw_{run_id}.json" in names) == (content in ("raw", "full"))
     elif format == "xlsx":
         sheets = set(load_workbook(io.BytesIO(response.content)).sheetnames)
-        assert {"Runs", "Citations"} <= sheets
+        assert {"Runs", "Citations", "SearchQueries"} <= sheets
         assert ("RawPayload" in sheets) == (content in ("raw", "full"))
     else:
         data = json.loads(response.content)
         assert len(data) == 1
         assert ("raw_payload" in data[0]) == (content in ("raw", "full"))
         assert ("rendered_text" in data[0]) == (content in ("answer", "full"))
+        assert ("search_queries" in data[0]) == (content in ("answer", "full"))
 
 
 def test_run_export_404_for_missing_run(client: TestClient):
@@ -192,7 +195,7 @@ def test_prompt_export_with_no_runs_is_valid_and_empty(client: TestClient, db_se
     csv_response = client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "csv"})
     assert csv_response.status_code == 200
     names = zipfile.ZipFile(io.BytesIO(csv_response.content)).namelist()
-    assert names == ["runs.csv", "citations.csv"]
+    assert names == ["runs.csv", "citations.csv", "search_queries.csv"]
 
     json_response = client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "json"})
     assert json.loads(json_response.content) == []

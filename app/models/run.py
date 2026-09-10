@@ -79,6 +79,9 @@ class RawResponse(Base):
 
     run: Mapped["Run"] = relationship(back_populates="raw_response")
     citations: Mapped[list["Citation"]] = relationship(back_populates="raw_response", cascade="all, delete-orphan")
+    search_queries: Mapped[list["SearchQuery"]] = relationship(
+        back_populates="raw_response", cascade="all, delete-orphan"
+    )
 
 
 class Citation(Base):
@@ -95,3 +98,16 @@ class Citation(Base):
     cited_answer_span: Mapped[str | None] = mapped_column(Text)
 
     raw_response: Mapped["RawResponse"] = relationship(back_populates="citations")
+
+
+class SearchQuery(Base):
+    """One search query the provider issued while grounding a raw response."""
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    raw_response_id: Mapped[int] = mapped_column(ForeignKey("raw_responses.id", ondelete="CASCADE"), nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    query_position: Mapped[int | None] = mapped_column(Integer)
+
+    raw_response: Mapped["RawResponse"] = relationship(back_populates="search_queries")
