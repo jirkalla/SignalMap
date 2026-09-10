@@ -12,6 +12,75 @@
 
   <article class="bg-white border border-stone-200 rounded-lg p-5">
     <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-10</span>
+      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Competitive / Methodology</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">What Peec AI's actual output data reveals, compared to SignalMap today</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Reviewed real Peec.ai export data (Oman green-hydrogen prompt set, German market, 2026-09-01–09-08): domain/URL
+      citation leaderboards with time series, aggregated search-query fan-outs, prompt-level
+      visibility/share-of-voice/sentiment, and brand-attribute scoring ("brand shape").
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      Biggest actionable finding: Peec's most valuable output — the actual search queries a model issues while
+      grounding — isn't unique to them. Gemini's <code class="bg-stone-100 px-1 rounded">grounding_metadata</code>
+      and Anthropic's <code class="bg-stone-100 px-1 rounded">web_search</code> tool-use blocks both carry this, and
+      since <code class="bg-stone-100 px-1 rounded">raw_payload</code> stores the provider's complete, untouched
+      response, SignalMap already has this data — <code class="bg-stone-100 px-1 rounded">app/adapters/google.py</code>
+      just doesn't parse it out yet. Domain/URL citation-rate leaderboards and time series are equally cheap: pure
+      aggregation over the existing <code class="bg-stone-100 px-1 rounded">citations</code> table, no LLM cost, no
+      new provider capability needed.
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      The harder parts (visibility, share-of-voice, position, sentiment) need real analysis work — competitor-entity
+      tracking plus LLM classification, not just parsing. Peec's brand-attribute tagging is the one part
+      <strong>not</strong> worth copying as-is: the sample data scored generic attributes like "Gebirge" (mountains)
+      against unrelated entities (Microsoft, a telecom carrier) — evidence of a templated methodology applied
+      without regard to topic, not one worth inheriting.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      Priority if/when picked up: (1) parse the search-query data already sitting in
+      <code class="bg-stone-100 px-1 rounded">raw_payload</code> — schema addition, flag first; (2) domain/URL
+      aggregation views — dashboard phase; (3) visibility/share-of-voice — first analysis-skill phase; (4)
+      brand-attribute tagging last, and only with a taxonomy built per client/industry, not a generic template.
+    </p>
+    <p class="text-xs text-stone-400">Source: Peec.ai export data (Oman green-hydrogen prompt set, DE market) — provided directly by the user, not a public URL.</p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-10</span>
+      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Competitive / Methodology</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">Peec AI's stated rationale for UI scraping over APIs doesn't fully hold up</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Per Peec's own intro docs, they justify UI scraping (not API polling) on two claims: API responses differ
+      from what real users see, and scraping is "resilient to API changes." The first claim is genuine — session
+      state, personalization, and consumer-UI system prompts do differ from a clean API call. The second is
+      weaker: consumer chat UIs change weekly (design/A-B tests), while providers' APIs are versioned and change
+      far less often — the framing inverts which side is actually more fragile.
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      Bigger issue the docs don't mention: scraping consumer UIs (chatgpt.com, gemini.google.com, perplexity.ai)
+      runs against those products' own Terms of Service — a risk Peec absorbs as their core business model. It
+      also trades one arbitrary methodology (API parameters) for another (whichever fake session/locale/device a
+      scraper presents) rather than reaching some neutral ground truth, and UI answers are noisier
+      (personalization, caching, A/B variance) than an evidence-dossier product wants for reproducible per-row
+      claims.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      Net comparison: API access means lower legal exposure, versioned/stable behavior, and reproducible evidence,
+      at the cost of not perfectly matching what a logged-in consumer sees. UI scraping means closer fidelity to
+      the real consumer experience, at the cost of ToS exposure, infrastructure fragility (proxies, CAPTCHAs,
+      session churn), and noisier, harder-to-reproduce results. Occasionally buying a small batch of
+      scraped/UI-observed data points and diffing them against our own API output would be a cheap way to
+      periodically gauge the size of that gap, without taking on scraping infrastructure or its risk ourselves.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://docs.peec.ai/intro-to-peec-ai" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">docs.peec.ai/intro-to-peec-ai</a></p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
       <span class="text-xs font-mono text-stone-400">2026-09-09</span>
       <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Google API</span>
     </div>
@@ -86,55 +155,6 @@
       all), this is the architecture a real competitor uses instead.
     </p>
     <p class="text-xs text-stone-400">Source: <a href="https://peec.ai/comparison/peec-vs-profound" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">peec.ai/comparison/peec-vs-profound</a>, <a href="https://docs.peec.ai/setting-up-your-prompts" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">docs.peec.ai/setting-up-your-prompts</a></p>
-  </article>
-
-  <article class="bg-white border border-stone-200 rounded-lg p-5">
-    <div class="flex items-center gap-3 mb-2">
-      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
-      <span class="text-xs font-medium bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">Cost &amp; Compliance</span>
-    </div>
-    <h2 class="font-semibold text-stone-900 mb-2">Free-tier Gemini API usage is used to improve Google's products</h2>
-    <p class="text-sm text-stone-700 mb-2">
-      Per Google's own terms: on the <strong>free/unpaid tier</strong>, "Google uses the content you submit to the
-      Services and any generated responses to provide, improve, and develop Google products and services," and
-      "human reviewers may read, annotate, and process your API input and output."
-    </p>
-    <p class="text-sm text-stone-700 mb-2">
-      On the <strong>paid tier</strong>, this is explicitly excluded: "Google doesn't use your prompts... or responses
-      to improve our products" — paid-tier data is used only for abuse detection and required legal disclosures.
-    </p>
-    <p class="text-sm text-stone-700 mb-3">
-      Regional exception that applies to us directly: users in the <strong>EEA, UK, or Switzerland</strong> get the
-      paid-tier data protections even on the free tier. The Czech Republic is in the EEA, so this likely already
-      covers our current testing — but real client-sensitive prompts should still move to the paid tier before
-      any production use, since the free-tier terms remain the default everywhere else.
-    </p>
-    <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/gemini-api/terms</a></p>
-  </article>
-
-  <article class="bg-white border border-stone-200 rounded-lg p-5">
-    <div class="flex items-center gap-3 mb-2">
-      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
-      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Request Parameters</span>
-    </div>
-    <h2 class="font-semibold text-stone-900 mb-2">What we send to Gemini today, and what else is available</h2>
-    <p class="text-sm text-stone-700 mb-2">
-      Currently sent for every run (<code class="bg-stone-100 px-1 rounded">app/adapters/google.py</code>):
-      <code class="bg-stone-100 px-1 rounded">model</code>,
-      <code class="bg-stone-100 px-1 rounded">contents</code> (the prompt text, verbatim),
-      <code class="bg-stone-100 px-1 rounded">tools=[GoogleSearch()]</code> (grounding),
-      <code class="bg-stone-100 px-1 rounded">system_instruction</code> (the market-derived hint above). That's the
-      minimum needed for a grounded, market-framed answer — nothing more, nothing configurable per run yet
-      beyond model and market.
-    </p>
-    <p class="text-sm text-stone-700 mb-3">Available on <code class="bg-stone-100 px-1 rounded">GenerateContentConfig</code> but not used yet:</p>
-    <ul class="text-sm text-stone-700 list-disc pl-5 mb-3 space-y-1">
-      <li><strong>Generation control</strong> — <code class="bg-stone-100 px-1 rounded">temperature</code>, <code class="bg-stone-100 px-1 rounded">topP</code>/<code class="bg-stone-100 px-1 rounded">topK</code>, <code class="bg-stone-100 px-1 rounded">maxOutputTokens</code>, <code class="bg-stone-100 px-1 rounded">stopSequences</code>, <code class="bg-stone-100 px-1 rounded">seed</code> (reproducibility)</li>
-      <li><strong>Structured output</strong> — <code class="bg-stone-100 px-1 rounded">responseMimeType</code> + <code class="bg-stone-100 px-1 rounded">responseSchema</code> (forces JSON matching a schema — directly relevant once the analysis-skills phase needs structured results)</li>
-      <li><strong>Safety</strong> — <code class="bg-stone-100 px-1 rounded">safetySettings</code> (per-category content filtering thresholds)</li>
-      <li><strong>Other</strong> — <code class="bg-stone-100 px-1 rounded">candidateCount</code>, <code class="bg-stone-100 px-1 rounded">cachedContent</code>, additional tools (function calling, code execution)</li>
-    </ul>
-    <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/api/generate-content" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/api/generate-content</a></p>
   </article>
 
   <article class="bg-white border border-stone-200 rounded-lg p-5">
@@ -218,6 +238,55 @@
       start failing every run with a real API error, not a graceful degradation.
     </p>
     <p class="text-xs text-stone-400">Source: <a href="https://platform.claude.com/docs/en/about-claude/models/overview" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">platform.claude.com/docs/.../models/overview</a></p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">Cost &amp; Compliance</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">Free-tier Gemini API usage is used to improve Google's products</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Per Google's own terms: on the <strong>free/unpaid tier</strong>, "Google uses the content you submit to the
+      Services and any generated responses to provide, improve, and develop Google products and services," and
+      "human reviewers may read, annotate, and process your API input and output."
+    </p>
+    <p class="text-sm text-stone-700 mb-2">
+      On the <strong>paid tier</strong>, this is explicitly excluded: "Google doesn't use your prompts... or responses
+      to improve our products" — paid-tier data is used only for abuse detection and required legal disclosures.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">
+      Regional exception that applies to us directly: users in the <strong>EEA, UK, or Switzerland</strong> get the
+      paid-tier data protections even on the free tier. The Czech Republic is in the EEA, so this likely already
+      covers our current testing — but real client-sensitive prompts should still move to the paid tier before
+      any production use, since the free-tier terms remain the default everywhere else.
+    </p>
+    <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/gemini-api/terms</a></p>
+  </article>
+
+  <article class="bg-white border border-stone-200 rounded-lg p-5">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="text-xs font-mono text-stone-400">2026-09-09</span>
+      <span class="text-xs font-medium bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">Request Parameters</span>
+    </div>
+    <h2 class="font-semibold text-stone-900 mb-2">What we send to Gemini today, and what else is available</h2>
+    <p class="text-sm text-stone-700 mb-2">
+      Currently sent for every run (<code class="bg-stone-100 px-1 rounded">app/adapters/google.py</code>):
+      <code class="bg-stone-100 px-1 rounded">model</code>,
+      <code class="bg-stone-100 px-1 rounded">contents</code> (the prompt text, verbatim),
+      <code class="bg-stone-100 px-1 rounded">tools=[GoogleSearch()]</code> (grounding),
+      <code class="bg-stone-100 px-1 rounded">system_instruction</code> (the market-derived hint above). That's the
+      minimum needed for a grounded, market-framed answer — nothing more, nothing configurable per run yet
+      beyond model and market.
+    </p>
+    <p class="text-sm text-stone-700 mb-3">Available on <code class="bg-stone-100 px-1 rounded">GenerateContentConfig</code> but not used yet:</p>
+    <ul class="text-sm text-stone-700 list-disc pl-5 mb-3 space-y-1">
+      <li><strong>Generation control</strong> — <code class="bg-stone-100 px-1 rounded">temperature</code>, <code class="bg-stone-100 px-1 rounded">topP</code>/<code class="bg-stone-100 px-1 rounded">topK</code>, <code class="bg-stone-100 px-1 rounded">maxOutputTokens</code>, <code class="bg-stone-100 px-1 rounded">stopSequences</code>, <code class="bg-stone-100 px-1 rounded">seed</code> (reproducibility)</li>
+      <li><strong>Structured output</strong> — <code class="bg-stone-100 px-1 rounded">responseMimeType</code> + <code class="bg-stone-100 px-1 rounded">responseSchema</code> (forces JSON matching a schema — directly relevant once the analysis-skills phase needs structured results)</li>
+      <li><strong>Safety</strong> — <code class="bg-stone-100 px-1 rounded">safetySettings</code> (per-category content filtering thresholds)</li>
+      <li><strong>Other</strong> — <code class="bg-stone-100 px-1 rounded">candidateCount</code>, <code class="bg-stone-100 px-1 rounded">cachedContent</code>, additional tools (function calling, code execution)</li>
+    </ul>
+    <p class="text-xs text-stone-400">Source: <a href="https://ai.google.dev/api/generate-content" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">ai.google.dev/api/generate-content</a></p>
   </article>
 
 </div>
