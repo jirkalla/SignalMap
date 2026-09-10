@@ -13,8 +13,9 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,11 +26,22 @@ from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
+from app.services.export import ExportContent, build_csv_zip, build_filename, build_json, build_xlsx, runs_for_run
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
+
+ExportFormat = Literal["csv", "xlsx", "json"]
+
+_EXPORT_BUILDERS = {"csv": build_csv_zip, "xlsx": build_xlsx, "json": build_json}
+_EXPORT_MEDIA_TYPES = {
+    "csv": "application/zip",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+}
+_EXPORT_EXTENSIONS = {"csv": "zip", "xlsx": "xlsx", "json": "json"}
 
 
 def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
@@ -228,4 +240,40 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
         },
+    )
+
+
+@router.get("/runs/{run_id}/export")
+def export_run(
+    request: Request,
+    run_id: int,
+    format: ExportFormat = Query(
+        "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
+    ),
+    content: ExportContent = Query(
+        "answer",
+        description=(
+            "How much of the run to include: answer (rendered text + citations + metadata), "
+            "raw (untouched provider payload only), or full (both)."
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """Download this run as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T2).
+
+    Single-run scope of the runs export feature — see app/services/export.py
+    for the shared query/serialization logic reused by the prompt- and
+    client-scope exports (EX-T3/EX-T4).
+    """
+    runs = runs_for_run(db, run_id)
+    if not runs:
+        raise AppError("run_not_found", get_t(request)("errors.run_not_found"), status_code=404)
+
+    ext = _EXPORT_EXTENSIONS[format]
+    body = _EXPORT_BUILDERS[format](runs, content)
+    filename = build_filename("run", str(run_id), content, ext)
+    return Response(
+        content=body,
+        media_type=_EXPORT_MEDIA_TYPES[format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

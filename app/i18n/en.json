@@ -191,6 +191,9 @@
   "run.citations_empty": "No citations were returned for this run.",
   "run.view": "View",
   "run.prompt_label": "Prompt",
+  "run.export_csv": "Export CSV",
+  "run.export_xlsx": "Export XLSX",
+  "run.export_json": "Export JSON",
 
   "errors.client_not_found": "Client not found.",
   "errors.client_in_use": "This client has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts or prompt sets first.",

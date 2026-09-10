@@ -191,6 +191,9 @@
   "run.citations_empty": "Für diesen Lauf wurden keine Quellenangaben zurückgegeben.",
   "run.view": "Ansehen",
   "run.prompt_label": "Prompt",
+  "run.export_csv": "CSV exportieren",
+  "run.export_xlsx": "XLSX exportieren",
+  "run.export_json": "JSON exportieren",
 
   "errors.client_not_found": "Klient nicht gefunden.",
   "errors.client_in_use": "Für diesen Klienten sind {count} Lauf/Läufe unter seinen Prompts erfasst — er kann nicht gelöscht werden. Lösche zuerst diese Prompts oder Prompt-Sets.",

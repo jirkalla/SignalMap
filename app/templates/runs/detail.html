@@ -5,7 +5,14 @@
 <div class="text-sm text-stone-500 mb-1">
   <a href="/prompts/{{ run.prompt_id }}" class="hover:underline">{{ t('run.prompt_label') }}</a>
 </div>
-<h1 class="text-xl font-semibold mb-6">{{ t('run.detail_title') }} #{{ run.id }}</h1>
+<div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
+  <h1 class="text-xl font-semibold">{{ t('run.detail_title') }} #{{ run.id }}</h1>
+  <div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
+    <a href="/runs/{{ run.id }}/export?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_csv') }}</a>
+    <a href="/runs/{{ run.id }}/export?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_xlsx') }}</a>
+    <a href="/runs/{{ run.id }}/export?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ t('run.export_json') }}</a>
+  </div>
+</div>
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.metadata_title') }}</h2>
