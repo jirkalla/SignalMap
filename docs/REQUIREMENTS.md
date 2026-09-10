@@ -124,7 +124,6 @@ phase-1 prototype, recorded here rather than left as conversation history:
 - Authentication and user accounts (single shared local access for now).
 - Multi-tenancy / row-level access control (client sees only their data).
 - StrategyConfig (guiding principles, reputation attributes).
-- Analysis skills and structured AI-generated analysis results.
 - Scheduled/recurring runs.
 - Dashboard, source/signal map, intervention hypotheses.
 - Tailwind visual styling / "evidence dossier" design polish.
@@ -135,6 +134,11 @@ phase-1 prototype, recorded here rather than left as conversation history:
 from this list — a second provider (Anthropic Claude) shipped in phase 2,
 see `docs/TASKS.md` "Phase 2: Anthropic provider + admin UI" and
 `docs/TASKS_PHASE2.md`.
+
+**Amendment (2026-09-10):** "Analysis skills and structured AI-generated
+analysis results" removed from this list — the first analysis skill
+(deterministic mention/visibility detection) shipped in phase 3, see
+`docs/TASKS.md` "Phase 3: First analysis skill" and `docs/TASKS_PHASE3.md`.
 
 ## 5. Data Model Reference
 

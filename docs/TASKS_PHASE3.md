@@ -125,12 +125,12 @@
 
 | ID | Name | Status |
 |----|------|--------|
-| P3-T1 | Schema: `analysis_skills`/`analysis_results`/`client_aliases` + `clients.domain`, seed skillu | ⏳ |
-| P3-T2 | Client aliasy + doména v UI (form pole, detail sekce, add/delete) | ⏳ |
-| P3-T3 | Analysis engine + `mention_visibility` rule-based skill | ⏳ |
+| P3-T1 | Schema: `analysis_skills`/`analysis_results`/`client_aliases` + `clients.domain`, seed skillu | ✅ |
+| P3-T2 | Client aliasy + doména v UI (form pole, detail sekce, add/delete) | ✅ |
+| P3-T3 | Analysis engine + `mention_visibility` rule-based skill | ✅ |
 | P3-T4 | Zapojení do `trigger_run` + zobrazení výsledku na run detailu | ✅ |
 | P3-T5 | Zvýraznění zmínek v textu odpovědi (`match_spans`, `<mark>`) | ✅ |
-| P3-T6 | Testy: alias CRUD, matching logika (vč. `match_spans`), end-to-end přes `FakeAdapter` | ⏳ |
+| P3-T6 | Testy: alias CRUD, matching logika (vč. `match_spans`), end-to-end přes `FakeAdapter` | ✅ |
 
 Pořadí je vynucené: P3-T2/P3-T3/P3-T4 potřebují sloupce a tabulky z P3-T1; P3-T2 dává
 smysl před P3-T4, protože ruční ověření P3-T4 potřebuje mít aspoň jednoho klienta s
@@ -427,22 +427,21 @@ test: cover client aliases, mention/visibility matching, and analysis wiring
 
 ## Completion Checklist
 
-- [ ] `clients.domain` + `client_aliases` existují a jdou editovat přes UI
-- [ ] `analysis_skills`/`analysis_results` existují, `mention_visibility` seedovaný
+- [x] `clients.domain` + `client_aliases` existují a jdou editovat přes UI
+- [x] `analysis_skills`/`analysis_results` existují, `mention_visibility` seedovaný
       jako `rule_based`, `is_active=true`
-- [ ] Analysis engine registry (`app/analysis/`) funguje stejným vzorem jako
+- [x] Analysis engine registry (`app/analysis/`) funguje stejným vzorem jako
       `app/adapters/` — nový skill = nový soubor + jeden řádek v registry
-- [ ] Mention/visibility se počítá automaticky po každém úspěšném runu a je vidět
+- [x] Mention/visibility se počítá automaticky po každém úspěšném runu a je vidět
       na run detailu bez ruční DB inspekce
-- [ ] Selhání analysis enginu nikdy nezpůsobí ztrátu/chybu evidence (`Run`,
+- [x] Selhání analysis enginu nikdy nezpůsobí ztrátu/chybu evidence (`Run`,
       `RawResponse`, `Citation`)
-- [ ] Matchnuté výrazy jsou vizuálně zvýrazněné v "Rendered answer" na run
+- [x] Matchnuté výrazy jsou vizuálně zvýrazněné v "Rendered answer" na run
       detailu, opřené o uložené `match_spans`, ne o přepočet za běhu
-- [ ] `pytest` sada zelená, pokrývá alias CRUD, matching logiku (vč.
+- [x] `pytest` sada zelená, pokrývá alias CRUD, matching logiku (vč.
       `match_spans`) i wiring do runu
-- [ ] `docs/TASKS.md` — poznámka, že fáze 3 větev existuje a co pokrývá (odkaz na
-      tenhle soubor) — **hotovo v rámci přípravy tohoto dokumentu**, ověřit že
-      zůstává aktuální po mergi
-- [ ] `docs/REQUIREMENTS.md` §4 "Explicitly Out of Scope" — odstranit/upravit
-      "Analysis skills and structured AI-generated analysis results" řádek, jakmile
-      je větev smergnutá (stejný vzor jako amandment pro fázi 2)
+- [x] `docs/TASKS.md` — poznámka, že fáze 3 větev existuje a co pokrývá (odkaz na
+      tenhle soubor) — hotovo (2026-09-10, v rámci přípravy `docs/TASKS_PHASE4.md`)
+- [x] `docs/REQUIREMENTS.md` §4 "Explicitly Out of Scope" — odstraněno
+      "Analysis skills and structured AI-generated analysis results" řádek (stejný
+      vzor jako amandment pro fázi 2), 2026-09-10
