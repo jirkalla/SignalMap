@@ -134,7 +134,26 @@ Full task breakdown, design decisions, and the code-review findings:
 `docs/TASKS_EXPORT.md` and `docs/PROMPTS_EXPORT.md`. Visual design + UI
 mockups: [Export Design artifact](https://claude.ai/code/artifact/c6e05821-fbb5-4ad7-8440-613db84ba022).
 
+## Phase 3: First analysis skill — mention/visibility detection
+
+Branch `feature/signalmap-phase3-mention-detection` (planned 2026-09-10, not yet
+started). Adds the first entry in `analysis_skills`/`analysis_results` (excluded from
+`schema_phase1.sql` by design — see its header comment) — a deterministic, non-LLM
+mention/visibility check: does the client's name (or a known alias) appear in a run's
+`rendered_text`, and is the client's own domain among its `citations`. Deliberately the
+simplest defensible metric to start the analysis layer with — no sentiment, no
+brand-attribute extraction, no LLM classification call. Those carry materially higher
+risk of arbitrary/unreliable output and are explicitly deferred to a later skill.
+
+Also adds `clients.domain` and a new `client_aliases` table (name variants to match
+against, e.g. "Acme" / "Acme Corp" / "Acme GmbH"), and a general `execution_type`
+(`rule_based` | `llm_prompt`) on `analysis_skills` so a future LLM-based skill (e.g.
+sentiment) doesn't require another schema rework — this skill is the first `rule_based`
+entry, not the only kind the framework supports.
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE3.md` and
+`docs/PROMPTS_PHASE3.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
-- First analysis skill.
 - Dashboard, Vue islands for interactivity.
 - Authentication (fastapi-users) and multi-tenant scoping by client_id.
