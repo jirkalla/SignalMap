@@ -176,8 +176,15 @@ def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db
             status_code=409,
         )
     prompt_set_id = prompt.prompt_set_id
-    # Children (root_prompt_id set) must go before the root row they reference.
+    # Children (root_prompt_id set) must go before the root row they reference,
+    # and each delete needs its own flush — root_prompt_id is a plain column,
+    # not a mapped relationship(), so SQLAlchemy's unit-of-work has no FK
+    # dependency info to sort by and batches same-table deletes into one
+    # executemany regardless of call order. Without an explicit flush between
+    # them, the batch still tries to delete the still-referenced root row
+    # alongside its child and violates fk_prompts_root_prompt_id_prompts.
     for v in sorted(versions, key=lambda p: p.root_prompt_id is None):
         db.delete(v)
+        db.flush()
     db.commit()
     return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)

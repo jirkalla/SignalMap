@@ -115,6 +115,18 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
 
     Blocked (inline error, not a raw API error) the same way client and
     market delete are — deleting evidence is never allowed (NFR-6).
+
+    Prompts are deleted one by one — children (a non-null `root_prompt_id`)
+    before the root version they point at, each with its own `db.flush()`
+    — rather than left to a bare `db.delete(prompt_set)` cascade.
+    `root_prompt_id` is a plain column, not a mapped `relationship()`, so
+    SQLAlchemy's unit-of-work has no FK dependency info to sort by and
+    batches every pending `Prompt` delete into one `executemany`
+    regardless of call order; without a flush between them, that batch
+    still tries to delete a still-referenced root alongside its child and
+    violates `fk_prompts_root_prompt_id_prompts`. Same fix as
+    `delete_prompt` (app/routers/prompts.py) uses for one prompt's own
+    version lineage.
     """
     t = get_t(request)
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
@@ -132,6 +144,10 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
             status_code=409,
         )
     client_id = prompt_set.client_id
+    prompts = db.scalars(select(Prompt).where(Prompt.prompt_set_id == prompt_set_id)).all()
+    for prompt in sorted(prompts, key=lambda p: p.root_prompt_id is None):
+        db.delete(prompt)
+        db.flush()
     db.delete(prompt_set)
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
