@@ -111,6 +111,29 @@ window parameters). Includes a code-review pass (security/DRY focus) with
 its findings fixed before merge. Full task list, design decisions, and
 per-task detail: `docs/TASKS_PHASE2.md` and `docs/PROMPTS_PHASE2.md`.
 
+## Runs export (CSV / XLSX / JSON)
+
+Branch `feature/signalmap-runs-export`, merged 2026-09-10
+([PR #3](https://github.com/jirkalla/SignalMap/pull/3)). Extends Task 6
+(run list & detail) with downloadable exports at three scopes — one run,
+all runs for a prompt (current version by default, `?versions=all` for the
+full edit history), all runs for a client — each as CSV (zip of
+`runs.csv` + `citations.csv`), XLSX (workbook), or JSON, with a
+`?content=answer|raw|full` switch for how much of the raw provider payload
+to include. Not one of the five roadmap phases in the signalmap-conventions
+skill; doesn't touch auth/analysis/dashboard.
+
+Includes a code-review pass (security/stability/DRY) before merge: fixed
+CSV formula-injection and an XLSX crash on control characters in provider
+text, deduplicated the export routes/templates/delete-lineage logic. Also
+fixed an unrelated pre-existing bug found along the way — deleting a
+run-less multi-version prompt (or a prompt set containing one) 500'd on a
+self-referential FK violation (`Prompt.root_prompt_id`).
+
+Full task breakdown, design decisions, and the code-review findings:
+`docs/TASKS_EXPORT.md` and `docs/PROMPTS_EXPORT.md`. Visual design + UI
+mockups: [Export Design artifact](https://claude.ai/code/artifact/c6e05821-fbb5-4ad7-8440-613db84ba022).
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - First analysis skill.
 - Dashboard, Vue islands for interactivity.

@@ -347,5 +347,5 @@ to add unprompted.
 - [x] Ověřeno v prohlížeči na ~640px/~1024px/desktop na všech třech stránkách
 - [x] Code review (EX-6): CSV/XLSX bezpečnostní opravy, DRY refaktoring, regresní testy pro
       delete fix — viz sekce výše
-- [ ] `docs/TASKS.md` — "Runs export" sekce přepnout ze "planned, not started" na hotovo s
-      odkazem na tuhle větev, jakmile je smergnutá
+- [x] `docs/TASKS.md` — "Runs export" sekce přepnuta z "planned, not started" na hotovo,
+      s odkazem na [PR #3](https://github.com/jirkalla/SignalMap/pull/3) (smergnuto 2026-09-10)
