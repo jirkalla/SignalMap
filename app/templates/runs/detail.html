@@ -1,11 +1,14 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge %}
+{% from "partials/macros.html" import status_badge, export_button_group %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
   <a href="/prompts/{{ run.prompt_id }}" class="hover:underline">{{ t('run.prompt_label') }}</a>
 </div>
-<h1 class="text-xl font-semibold mb-6">{{ t('run.detail_title') }} #{{ run.id }}</h1>
+<div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
+  <h1 class="text-xl font-semibold">{{ t('run.detail_title') }} #{{ run.id }}</h1>
+  {{ export_button_group('/runs/' ~ run.id ~ '/export', t('run.export_csv'), t('run.export_xlsx'), t('run.export_json')) }}
+</div>
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.metadata_title') }}</h2>

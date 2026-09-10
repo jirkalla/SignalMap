@@ -13,8 +13,9 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,13 +24,65 @@ from app.adapters import get_adapter, has_adapter
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Citation, Market, Provider, RawResponse, Run, SystemInstructionTemplate
+from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
+from app.services.export import (
+    ExportContent,
+    build_csv_zip,
+    build_filename,
+    build_json,
+    build_xlsx,
+    runs_for_client,
+    runs_for_prompt,
+    runs_for_run,
+)
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
+
+ExportFormat = Literal["csv", "xlsx", "json"]
+
+_EXPORT_BUILDERS = {"csv": build_csv_zip, "xlsx": build_xlsx, "json": build_json}
+_EXPORT_MEDIA_TYPES = {
+    "csv": "application/zip",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+}
+_EXPORT_EXTENSIONS = {"csv": "zip", "xlsx": "xlsx", "json": "json"}
+
+# Shared across all three export routes below (export_run/export_prompt_runs/
+# export_client_runs) — reusing one Query() instance as a parameter default
+# is the standard FastAPI pattern for identical params on multiple routes;
+# FastAPI reads the parameter's name from the function signature, not from
+# this object, so sharing it doesn't confuse which route/param it belongs to.
+_EXPORT_FORMAT_QUERY = Query(
+    "json", description="Export file format: csv (zip of runs.csv + citations.csv), xlsx (workbook), or json."
+)
+_EXPORT_CONTENT_QUERY = Query(
+    "answer",
+    description=(
+        "How much of each run to include: answer (rendered text + citations + metadata), "
+        "raw (untouched provider payload only), or full (both)."
+    ),
+)
+
+
+def _export_response(runs: list[Run], scope: str, identifier: str, format: ExportFormat, content: ExportContent) -> Response:
+    """Build the download Response shared by every export route: pick the writer/media type/extension for
+    `format`, serialize `runs`, and set `Content-Disposition` from `build_filename` — the one piece of logic
+    all three scopes (run/prompt/client) need identically, factored out so it isn't hand-copied three times.
+    """
+    ext = _EXPORT_EXTENSIONS[format]
+    body = _EXPORT_BUILDERS[format](runs, content)
+    filename = build_filename(scope, identifier, content, ext)
+    return Response(
+        content=body,
+        media_type=_EXPORT_MEDIA_TYPES[format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
@@ -229,3 +282,72 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "request_payload_json": request_payload_json,
         },
     )
+
+
+@router.get("/runs/{run_id}/export")
+def export_run(
+    request: Request,
+    run_id: int,
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
+    db: Session = Depends(get_db),
+):
+    """Download this run as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T2).
+
+    Single-run scope of the runs export feature — see app/services/export.py
+    for the shared query/serialization logic reused by the prompt- and
+    client-scope exports (EX-T3/EX-T4), and `_export_response` above for the
+    Response-building step every export route shares.
+    """
+    runs = runs_for_run(db, run_id)
+    if not runs:
+        raise AppError("run_not_found", get_t(request)("errors.run_not_found"), status_code=404)
+    return _export_response(runs, "run", str(run_id), format, content)
+
+
+@router.get("/prompts/{prompt_id}/runs/export")
+def export_prompt_runs(
+    request: Request,
+    prompt_id: int,
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
+    versions: Literal["current", "all"] = Query(
+        "current",
+        description=(
+            "Which prompt versions to include: 'current' exports only the exact version named by "
+            "prompt_id (matching what this page shows); 'all' walks the prompt's full edit history."
+        ),
+    ),
+    db: Session = Depends(get_db),
+):
+    """Download every run of one prompt as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T3).
+
+    Defaults to the exact prompt version in the URL — "export what you
+    see" (docs/TASKS_EXPORT.md design decision 5) — rather than the whole
+    version lineage; `versions=all` opts into that wider scope. A prompt
+    with no runs yet still produces a valid, empty export, not an error.
+    """
+    _get_prompt_or_404(db, request, prompt_id)
+    runs = runs_for_prompt(db, prompt_id, all_versions=(versions == "all"))
+    return _export_response(runs, "prompt", str(prompt_id), format, content)
+
+
+@router.get("/clients/{client_id}/runs/export")
+def export_client_runs(
+    request: Request,
+    client_id: int,
+    format: ExportFormat = _EXPORT_FORMAT_QUERY,
+    content: ExportContent = _EXPORT_CONTENT_QUERY,
+    db: Session = Depends(get_db),
+):
+    """Download every run belonging to one client as CSV, XLSX, or JSON (docs/TASKS_EXPORT.md EX-T4).
+
+    The widest export scope — every run across every prompt set, prompt,
+    and prompt version under this client, regardless of provider. Unlike
+    the prompt-scope export there is no version filter to choose: a client
+    export already spans every version of every prompt it owns. A client
+    with no runs yet still produces a valid, empty export, not an error.
+    """
+    client = _get_client_or_404(db, request, client_id)
+    runs = runs_for_client(db, client.id)
+    return _export_response(runs, "client", client.slug, format, content)

@@ -1,12 +1,15 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import text_field, button, delete_button %}
+{% from "partials/macros.html" import text_field, button, delete_button, export_button_group %}
 {% block title %}{{ client.name }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
   <h1 class="text-xl font-semibold break-words">{{ client.name }}</h1>
-  <div class="flex items-center gap-3 text-sm shrink-0">
-    <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
-    {{ delete_button('/clients/' ~ client.id ~ '/delete', t('client.delete_confirm'), t('client.delete_button')) }}
+  <div class="flex items-center gap-3 flex-wrap">
+    {{ export_button_group('/clients/' ~ client.id ~ '/runs/export', t('client.export_csv'), t('client.export_xlsx'), t('client.export_json')) }}
+    <div class="flex items-center gap-3 text-sm shrink-0">
+      <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+      {{ delete_button('/clients/' ~ client.id ~ '/delete', t('client.delete_confirm'), t('client.delete_button')) }}
+    </div>
   </div>
 </div>
 {% if error %}

@@ -103,3 +103,15 @@
   </button>
 </form>
 {% endmacro %}
+
+{% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
+{# Plain <a href> links, never hx-get — a file download needs a real browser
+   navigation, not an HTMX-swapped fragment. id_prefix is only needed on a
+   page (like the prompt detail screen) that has JS rewriting these links'
+   query string; leave it unset elsewhere. #}
+<div class="flex border border-stone-300 rounded-md divide-x divide-stone-300 overflow-hidden">
+  <a {% if id_prefix %}id="{{ id_prefix }}-csv" {% endif %}href="{{ base_url }}?format=csv" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ label_csv }}</a>
+  <a {% if id_prefix %}id="{{ id_prefix }}-xlsx" {% endif %}href="{{ base_url }}?format=xlsx" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ label_xlsx }}</a>
+  <a {% if id_prefix %}id="{{ id_prefix }}-json" {% endif %}href="{{ base_url }}?format=json" class="px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50">{{ label_json }}</a>
+</div>
+{% endmacro %}
