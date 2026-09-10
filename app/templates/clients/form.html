@@ -11,6 +11,7 @@
 <form method="post" action="{{ action }}" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
   {{ text_field('name', t('client.name_label'), client.name if client else '', required=True) }}
   {{ text_field('industry', t('client.industry_label'), client.industry if client else '') }}
+  {{ text_field('domain', t('client.domain_label'), client.domain if client else '', placeholder=t('client.domain_placeholder')) }}
   {{ textarea_field('notes', t('client.notes_label'), client.notes if client else '', rows=4) }}
   <div class="flex items-center gap-3 mt-2">
     {{ button(t('common.save')) }}

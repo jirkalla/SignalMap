@@ -150,6 +150,12 @@
   "client.export_csv": "CSV",
   "client.export_xlsx": "XLSX",
   "client.export_json": "JSON",
+  "client.domain_label": "Domain",
+  "client.domain_placeholder": "e.g. acme.com",
+  "client.aliases_title": "Aliases",
+  "client.aliases_empty_state": "No aliases yet. Add alternate names/spellings the client might appear under.",
+  "client.alias_add_placeholder": "Add alias",
+  "client.alias_delete_confirm": "Delete this alias?",
 
   "prompt_set.create_title": "New prompt set",
   "prompt_set.edit_title": "Edit prompt set",
@@ -211,6 +217,8 @@
 
   "errors.client_not_found": "Client not found.",
   "errors.client_in_use": "This client has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts or prompt sets first.",
+  "errors.client_alias_duplicate": "This alias is already registered for this client.",
+  "errors.client_alias_not_found": "Alias not found.",
   "errors.prompt_set_not_found": "Prompt set not found.",
   "errors.prompt_set_in_use": "This prompt set has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts first.",
   "errors.prompt_not_found": "Prompt not found.",

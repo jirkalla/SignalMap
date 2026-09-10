@@ -150,6 +150,12 @@
   "client.export_csv": "CSV",
   "client.export_xlsx": "XLSX",
   "client.export_json": "JSON",
+  "client.domain_label": "Domain",
+  "client.domain_placeholder": "z.B. acme.com",
+  "client.aliases_title": "Aliasnamen",
+  "client.aliases_empty_state": "Noch keine Aliasnamen. Füge alternative Namen/Schreibweisen hinzu, unter denen der Klient auftauchen könnte.",
+  "client.alias_add_placeholder": "Alias hinzufügen",
+  "client.alias_delete_confirm": "Diesen Alias löschen?",
 
   "prompt_set.create_title": "Neues Prompt-Set",
   "prompt_set.edit_title": "Prompt-Set bearbeiten",
@@ -211,6 +217,8 @@
 
   "errors.client_not_found": "Klient nicht gefunden.",
   "errors.client_in_use": "Für diesen Klienten sind {count} Lauf/Läufe unter seinen Prompts erfasst — er kann nicht gelöscht werden. Lösche zuerst diese Prompts oder Prompt-Sets.",
+  "errors.client_alias_duplicate": "Dieser Alias ist für diesen Klienten bereits registriert.",
+  "errors.client_alias_not_found": "Alias nicht gefunden.",
   "errors.prompt_set_not_found": "Prompt-Set nicht gefunden.",
   "errors.prompt_set_in_use": "Für dieses Prompt-Set sind {count} Lauf/Läufe unter seinen Prompts erfasst — es kann nicht gelöscht werden. Lösche zuerst diese Prompts.",
   "errors.prompt_not_found": "Prompt nicht gefunden.",
