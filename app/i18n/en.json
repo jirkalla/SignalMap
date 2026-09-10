@@ -142,6 +142,9 @@
   "client.prompt_sets_title": "Prompt sets",
   "client.delete_button": "Delete",
   "client.delete_confirm": "Delete this client? This can't be undone.",
+  "client.export_csv": "Export CSV",
+  "client.export_xlsx": "Export XLSX",
+  "client.export_json": "Export JSON",
 
   "prompt_set.create_title": "New prompt set",
   "prompt_set.edit_title": "Edit prompt set",

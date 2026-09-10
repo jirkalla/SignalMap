@@ -142,6 +142,9 @@
   "client.prompt_sets_title": "Prompt-Sets",
   "client.delete_button": "Löschen",
   "client.delete_confirm": "Diesen Klienten löschen? Das kann nicht rückgängig gemacht werden.",
+  "client.export_csv": "CSV exportieren",
+  "client.export_xlsx": "XLSX exportieren",
+  "client.export_json": "JSON exportieren",
 
   "prompt_set.create_title": "Neues Prompt-Set",
   "prompt_set.edit_title": "Prompt-Set bearbeiten",
