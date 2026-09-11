@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from app.models import Citation, Client
-from app.utils import normalize_domain
+from app.utils import is_own_domain
 
 
 def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[int]], list[str]]:
@@ -48,21 +48,12 @@ def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[i
 
 def _matching_citation_domains(client_domain: str | None, citations: list[Citation]) -> list[str]:
     """Original (non-normalized) source_domain values that match the client's own domain,
-    exactly or as a subdomain (design decision 6).
+    exactly or as a subdomain (design decision 6) — see app.utils.is_own_domain for the shared
+    comparison rule.
     """
     if not client_domain:
         return []
-    normalized_client_domain = normalize_domain(client_domain)
-    matched: list[str] = []
-    for citation in citations:
-        if not citation.source_domain:
-            continue
-        normalized_citation_domain = normalize_domain(citation.source_domain)
-        if normalized_citation_domain == normalized_client_domain or normalized_citation_domain.endswith(
-            "." + normalized_client_domain
-        ):
-            matched.append(citation.source_domain)
-    return matched
+    return [c.source_domain for c in citations if is_own_domain(c.source_domain, client_domain)]
 
 
 class MentionVisibilityRunner:

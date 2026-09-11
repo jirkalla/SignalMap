@@ -14,6 +14,13 @@ from app.i18n import LOCALE_COOKIE_NAME, get_translator, resolve_locale
 
 templates = Jinja2Templates(directory="app/templates")
 
+# The two Unicode line-terminator characters a JSON string may legally contain but a raw JS
+# string literal may not — see _tojson_filter's docstring. Built via chr() rather than typed as
+# literal characters in source: both render as an indistinguishable blank in most editors/diffs,
+# so a literal one risks silently being "cleaned up" to an ordinary space by a future edit.
+_LINE_SEPARATOR = chr(0x2028)
+_PARAGRAPH_SEPARATOR = chr(0x2029)
+
 
 def _tojson_filter(value: object) -> Markup:
     """Serialize a Python value as JSON safe to embed inside a <script> tag.
@@ -22,10 +29,21 @@ def _tojson_filter(value: object) -> Markup:
     `tojson` (that's a Flask-only addition) — registered here so any
     template can do `{{ value | tojson }}` the same way. Escapes '<', '>',
     '&' as \\uXXXX so a string value containing e.g. "</script>" can't break
-    out of the tag, and returns Markup so Jinja's autoescaping doesn't
-    re-escape the quotes around the result.
+    out of the tag, plus U+2028/U+2029 (legal in a JSON string, but illegal
+    unescaped in a raw JS string literal) so this stays safe even if a future
+    template interpolates the result directly into JS source rather than
+    into a `type="application/json"` island parsed via JSON.parse. Returns
+    Markup so Jinja's autoescaping doesn't re-escape the quotes around it.
     """
-    return Markup(json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+    escaped = (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace(_LINE_SEPARATOR, "\\u2028")
+        .replace(_PARAGRAPH_SEPARATOR, "\\u2029")
+    )
+    return Markup(escaped)
 
 
 templates.env.filters["tojson"] = _tojson_filter
