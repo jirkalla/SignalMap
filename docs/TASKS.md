@@ -185,9 +185,10 @@ was opened.
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE4.md` and
 `docs/PROMPTS_PHASE4.md`.
 
-## Phase 5: Competitive visibility — generation 2 analysis skills ✅ Done (branch not yet merged)
+## Phase 5: Competitive visibility — generation 2 analysis skills ✅ Done
 
-Branch `feature/signalmap-phase5-competitive-visibility`. Bundles three pieces of work into
+Branch `feature/signalmap-phase5-competitive-visibility`, merged 2026-09-11
+([PR #7](https://github.com/jirkalla/SignalMap/pull/7)). Bundles three pieces of work into
 one branch — solo development, no second reviewer, so the fine-grained one-branch-per-task
 split earlier phases used wasn't needed here (see `docs/TASKS_PHASE5.md` intro for the
 reasoning):
@@ -210,6 +211,14 @@ sourced from `Client.name`/`ClientAlias` alone) and `domain_classifications` (ma
 typing of cited domains — Institutional/Editorial/Corporate/Reference/UGC/Other, deliberately
 without a "competitor" category, since that's derivable from `tracked_entities.domain`). Both
 schema designs were explicitly confirmed before implementation, per AI_INSTRUCTIONS.md §4.
+
+Includes a code-review pass (security/DRY focus) before merge — 10 findings (wrong
+`run_coverage_pct` denominator and a duplicated join in `entity_league_rows`, an
+Analysis-section guard/loop mismatch, `is_own_client`-fragile own-entity lookup,
+`DOMAIN_TYPES`/migration sync documentation, a trend-delta boundary double-count, an
+ambiguous shared `position_label` i18n key, duplicated tracked-entity conflict-response
+closures, a duplicated client-detail card pattern, and a reimplemented citation-matching
+helper) all fixed and re-verified before the PR was opened.
 
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE5.md` and
 `docs/PROMPTS_PHASE5.md`.
