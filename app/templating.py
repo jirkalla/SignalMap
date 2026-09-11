@@ -6,11 +6,17 @@ never have to wire that up individually.
 
 import json
 
+import jwt as pyjwt
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
+from fastapi_users.jwt import decode_jwt
 from markupsafe import Markup
 
+from app.auth import JWT_AUDIENCE, SESSION_COOKIE_NAME
+from app.config import get_settings
+from app.database import SessionLocal
 from app.i18n import LOCALE_COOKIE_NAME, get_translator, resolve_locale
+from app.models import User
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -49,6 +55,29 @@ def _tojson_filter(value: object) -> Markup:
 templates.env.filters["tojson"] = _tojson_filter
 
 
+def _current_user_from_cookie(request: Request) -> User | None:
+    """Best-effort lookup of the logged-in user, for display only (name + logout link in the
+    header) — never for authorization, which always goes through `app.auth.current_active_user`/
+    `require_role` as a real FastAPI dependency. Decodes the session cookie synchronously via
+    fastapi-users' own `decode_jwt` helper (a plain function, not the async `JWTStrategy.
+    read_token`), so `render()` — a plain sync function called directly from route bodies, not
+    dependency-injected — doesn't need to bridge into an async call for something this low-stakes.
+    Returns None on any missing/invalid/expired token, same as an anonymous request.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        payload = decode_jwt(token, get_settings().secret_key, JWT_AUDIENCE)
+    except pyjwt.PyJWTError:
+        return None
+    user_id = payload.get("sub")
+    if user_id is None:
+        return None
+    with SessionLocal() as db:
+        return db.get(User, int(user_id))
+
+
 def get_t(request: Request):
     """Return the t() translator for the request's active locale.
 
@@ -59,9 +88,14 @@ def get_t(request: Request):
 
 
 def render(request: Request, template_name: str, context: dict | None = None, status_code: int = 200):
-    """Render a Jinja2 template with `request`, `locale`, and `t()` already in context."""
+    """Render a Jinja2 template with `request`, `locale`, `t()`, and `current_user` already in context."""
     locale = resolve_locale(request.cookies.get(LOCALE_COOKIE_NAME))
-    ctx: dict = {"request": request, "t": get_translator(locale), "locale": locale}
+    ctx: dict = {
+        "request": request,
+        "t": get_translator(locale),
+        "locale": locale,
+        "current_user": _current_user_from_cookie(request),
+    }
     if context:
         ctx.update(context)
     return templates.TemplateResponse(request, template_name, ctx, status_code=status_code)

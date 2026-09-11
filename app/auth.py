@@ -24,6 +24,13 @@ from app.models import User
 
 _SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 14  # 14 days
 
+# Shared with app/templating.py, which decodes the same cookie synchronously (via fastapi_users'
+# own decode_jwt helper) just to look up a display name for the header — not for authorization,
+# which always goes through current_active_user/require_role below. Named here, not just a
+# string literal repeated in two files.
+SESSION_COOKIE_NAME = "signalmap_session"
+JWT_AUDIENCE = ["fastapi-users:auth"]
+
 
 async def get_user_db(session: AsyncSession = Depends(get_async_db)) -> AsyncGenerator[SQLAlchemyUserDatabase, None]:
     """fastapi-users' storage adapter — needs the async session (app/database.py), not the
@@ -49,14 +56,18 @@ async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db
 
 
 cookie_transport = CookieTransport(
-    cookie_name="signalmap_session",
+    cookie_name=SESSION_COOKIE_NAME,
     cookie_max_age=_SESSION_LIFETIME_SECONDS,
     cookie_secure=get_settings().cookie_secure,
 )
 
 
 def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(secret=get_settings().secret_key, lifetime_seconds=_SESSION_LIFETIME_SECONDS)
+    return JWTStrategy(
+        secret=get_settings().secret_key,
+        lifetime_seconds=_SESSION_LIFETIME_SECONDS,
+        token_audience=JWT_AUDIENCE,
+    )
 
 
 auth_backend = AuthenticationBackend(name="cookie", transport=cookie_transport, get_strategy=get_jwt_strategy)

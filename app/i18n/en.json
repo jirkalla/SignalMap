@@ -11,6 +11,13 @@
   "nav.config_menu": "Configuration",
   "nav.help_menu": "Help",
 
+  "auth.login_title": "Log in",
+  "auth.email_label": "Email",
+  "auth.password_label": "Password",
+  "auth.login_button": "Log in",
+  "auth.invalid_credentials": "Incorrect email or password.",
+  "auth.logout_button": "Log out",
+
   "settings.title": "Settings",
   "settings.lede": "Per-provider system-instruction template — the answer-language/framing hint sent with every run. Every provider needs this for language, since none expose a real \"respond in language X\" API parameter. Providers with real geographic search targeting (Anthropic's web_search user_location) get that part for free — their template here should stay language-only rather than also simulating location.",
   "settings.template_label": "System-instruction template",

@@ -6,10 +6,10 @@ docs/TASKS.md for the full scope, and the signalmap-conventions skill for
 project-wide conventions.
 """
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from app.auth import auth_backend, fastapi_users
+from app.auth import auth_backend, current_active_user, fastapi_users
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
 from app.routers import (
@@ -26,6 +26,7 @@ from app.routers import (
     runs,
     settings,
 )
+from app.templating import render
 
 configure_logging()
 
@@ -58,17 +59,23 @@ async def handle_http_exception(request: Request, exc: HTTPException) -> JSONRes
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
 
-app.include_router(clients.router)
-app.include_router(prompt_sets.router)
-app.include_router(prompts.router)
-app.include_router(runs.router)
-app.include_router(markets.router)
-app.include_router(providers.router)
-app.include_router(ai_models.router)
-app.include_router(dashboard.router)
-app.include_router(settings.router)
-app.include_router(help.router)
-app.include_router(findings.router)
+# Every router below requires a logged-in session (any role) except `locale` — the language
+# switch must keep working even on the login page itself, before anyone is authenticated.
+# Which specific actions need which role (admin/editor/viewer) is a separate, finer-grained
+# layer (docs/TASKS_PHASE6.md P6-T6), applied per-route inside each router — this is only the
+# outermost "are you logged in at all" gate.
+_login_required = [Depends(current_active_user)]
+app.include_router(clients.router, dependencies=_login_required)
+app.include_router(prompt_sets.router, dependencies=_login_required)
+app.include_router(prompts.router, dependencies=_login_required)
+app.include_router(runs.router, dependencies=_login_required)
+app.include_router(markets.router, dependencies=_login_required)
+app.include_router(providers.router, dependencies=_login_required)
+app.include_router(ai_models.router, dependencies=_login_required)
+app.include_router(dashboard.router, dependencies=_login_required)
+app.include_router(settings.router, dependencies=_login_required)
+app.include_router(help.router, dependencies=_login_required)
+app.include_router(findings.router, dependencies=_login_required)
 app.include_router(locale.router)
 
 
@@ -76,6 +83,14 @@ app.include_router(locale.router)
 def health():
     """Liveness check for Docker/orchestration. No database access, returns immediately."""
     return {"status": "ok"}
+
+
+@app.get("/login", include_in_schema=False)
+def login_page(request: Request):
+    """Render the login form. Public — no `current_active_user` dependency here, or an
+    unauthenticated visit would redirect to itself forever.
+    """
+    return render(request, "auth/login.html")
 
 
 @app.get("/", include_in_schema=False)

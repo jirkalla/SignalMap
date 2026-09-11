@@ -11,6 +11,13 @@
   "nav.config_menu": "Konfiguration",
   "nav.help_menu": "Hilfe",
 
+  "auth.login_title": "Anmelden",
+  "auth.email_label": "E-Mail",
+  "auth.password_label": "Passwort",
+  "auth.login_button": "Anmelden",
+  "auth.invalid_credentials": "E-Mail oder Passwort ist falsch.",
+  "auth.logout_button": "Abmelden",
+
   "settings.title": "Einstellungen",
   "settings.lede": "System-Instruktions-Vorlage pro Anbieter — der Antwortsprache-/Rahmungs-Hinweis, der bei jedem Lauf mitgeschickt wird. Jeder Anbieter braucht das für die Sprache, da keiner einen echten „Antworte in Sprache X“-API-Parameter hat. Anbieter mit echtem geografischem Such-Targeting (Anthropics web_search user_location) bekommen den Standort-Teil bereits real — ihre Vorlage hier sollte nur die Sprache abdecken, nicht zusätzlich den Standort simulieren.",
   "settings.template_label": "System-Instruktions-Vorlage",

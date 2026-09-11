@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, button %}
+{% block title %}{{ t('auth.login_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="max-w-sm mx-auto mt-12">
+  <h1 class="text-xl font-semibold mb-6">{{ t('auth.login_title') }}</h1>
+  <div id="login-error" class="hidden bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4"></div>
+  <form id="login-form" class="bg-white border border-stone-200 rounded-lg p-6">
+    {{ text_field('username', t('auth.email_label'), '', type='email', required=True) }}
+    {{ text_field('password', t('auth.password_label'), '', type='password', required=True) }}
+    {{ button(t('auth.login_button')) }}
+  </form>
+</div>
+<script>
+  document.getElementById('login-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var form = event.target;
+    var errorBox = document.getElementById('login-error');
+    errorBox.classList.add('hidden');
+    fetch('/auth/login', {
+      method: 'POST',
+      body: new URLSearchParams(new FormData(form)),
+    }).then(function (response) {
+      if (response.ok) {
+        window.location.href = '/';
+      } else {
+        errorBox.textContent = {{ t('auth.invalid_credentials') | tojson }};
+        errorBox.classList.remove('hidden');
+      }
+    });
+  });
+</script>
+{% endblock %}
