@@ -6,9 +6,10 @@ docs/TASKS.md for the full scope, and the signalmap-conventions skill for
 project-wide conventions.
 """
 
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.auth import auth_backend, fastapi_users
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
 from app.routers import (
@@ -39,6 +40,23 @@ app = FastAPI(
 )
 
 register_exception_handlers(app)
+
+
+@app.exception_handler(HTTPException)
+async def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse | RedirectResponse:
+    """Turn fastapi-users' HTTPException(401) into a redirect to /login for full-page
+    navigations, so an unauthenticated request to any HTML route shows a login form instead of
+    a raw JSON blob — verified against fastapi_users.authentication.authenticator, which raises
+    plain HTTPException(401), not this project's own AppError (docs/TASKS_PHASE6.md design
+    decision 6). The dashboard's own /api/* endpoints are fetched via JS, not navigated to
+    directly, so they keep the plain JSON 401 a fetch() call can actually branch on.
+    """
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED and "/api/" not in request.url.path:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
 
 app.include_router(clients.router)
 app.include_router(prompt_sets.router)
