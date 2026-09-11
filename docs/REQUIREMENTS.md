@@ -145,6 +145,13 @@ the first Vue3 island in the app) shipped in phase 4, see `docs/TASKS.md`
 "Phase 4: Dashboard v0" and `docs/TASKS_PHASE4.md`. Source/signal map and
 intervention hypotheses remain out of scope — later phases.
 
+**Amendment (2026-09-11):** Competitor tracking and share-of-voice/position
+figures shipped in phase 5, see `docs/TASKS.md` "Phase 5: Competitive
+visibility" and `docs/TASKS_PHASE5.md`. Not previously named anywhere in
+this list, in either direction — phase 1 predates the concept, so this
+doesn't remove anything from §4 above; recorded here for the same
+discoverability reason phases 2–4 each got an entry.
+
 ## 5. Data Model Reference
 
 See `schema_phase1.sql` for the authoritative phase 1 schema: `clients`,

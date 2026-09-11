@@ -7,53 +7,10 @@ LLM call) — see design decisions 5 and 6 for the exact algorithm; this
 module implements them as written, not a reinvented variant.
 """
 
-import re
 from typing import Any
 
+from app.analysis.matching import match_spans, matching_citation_domains
 from app.models import Citation, Client
-from app.utils import is_own_domain
-
-
-def _match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[int]], list[str]]:
-    """Non-overlapping [start, end) spans across all candidates, plus which candidates matched.
-
-    One combined regex (candidates alternated, longest first, each escaped)
-    instead of one independent re.finditer per candidate — re.finditer never
-    returns overlapping matches for a single pattern (it scans left to right
-    and resumes after each match's end), so overlap-freedom is a property of
-    the search itself, not a separate post-hoc filter. Ordering candidates
-    longest-first makes the regex engine prefer the longer/more specific
-    alternative whenever two candidates could start at the same position
-    (design decision 5). Earlier revisions matched each candidate
-    independently and filtered overlaps afterwards, which could drop a
-    span for a candidate while still listing it in matched_terms — matched_terms
-    is now derived from the surviving spans themselves, so the two can't
-    desync.
-    """
-    if not candidates:
-        return [], []
-    ordered = sorted(set(candidates), key=len, reverse=True)
-    alternation = "|".join(f"(?P<c{i}>{re.escape(c)})" for i, c in enumerate(ordered))
-    pattern = r"(?<!\w)(?:" + alternation + r")(?!\w)"
-
-    spans: list[list[int]] = []
-    matched: set[str] = set()
-    for m in re.finditer(pattern, rendered_text, re.IGNORECASE):
-        spans.append([m.start(), m.end()])
-        matched.add(ordered[int(m.lastgroup[1:])])
-
-    matched_terms = list(dict.fromkeys(c for c in candidates if c in matched))
-    return spans, matched_terms
-
-
-def _matching_citation_domains(client_domain: str | None, citations: list[Citation]) -> list[str]:
-    """Original (non-normalized) source_domain values that match the client's own domain,
-    exactly or as a subdomain (design decision 6) — see app.utils.is_own_domain for the shared
-    comparison rule.
-    """
-    if not client_domain:
-        return []
-    return [c.source_domain for c in citations if is_own_domain(c.source_domain, client_domain)]
 
 
 class MentionVisibilityRunner:
@@ -63,11 +20,11 @@ class MentionVisibilityRunner:
         candidates = [c for c in [client.name] + [alias.alias for alias in client.aliases] if c]
 
         if rendered_text:
-            spans, matched_terms = _match_spans(rendered_text, candidates)
+            spans, matched_terms = match_spans(rendered_text, candidates)
         else:
             spans, matched_terms = [], []
 
-        cited_domains = _matching_citation_domains(client.domain, citations)
+        cited_domains = matching_citation_domains(client.domain, citations)
 
         return {
             "text_mentioned": len(spans) > 0,

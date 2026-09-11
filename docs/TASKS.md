@@ -185,6 +185,35 @@ was opened.
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE4.md` and
 `docs/PROMPTS_PHASE4.md`.
 
+## Phase 5: Competitive visibility — generation 2 analysis skills ✅ Done (branch not yet merged)
+
+Branch `feature/signalmap-phase5-competitive-visibility`. Bundles three pieces of work into
+one branch — solo development, no second reviewer, so the fine-grained one-branch-per-task
+split earlier phases used wasn't needed here (see `docs/TASKS_PHASE5.md` intro for the
+reasoning):
+
+- **Trend deltas and manual domain type classification** on the dashboard (P5-T1/P5-T2) —
+  independent of the rest, no new analysis skill.
+- **Competitive visibility** (P5-T3–T7) — a second analysis skill, `competitive_visibility`,
+  extending phase 3's single-entity mention/citation detection to a configurable list of
+  tracked competitors per client. Produces share-of-voice and position figures alongside the
+  existing `mention_visibility` output, computed automatically after every run and surfaced on
+  both the run detail page and a new "Competitive visibility" dashboard section. Shares its
+  word-boundary matching logic with `mention_visibility` via a new `app/analysis/matching.py`
+  module, moved out rather than duplicated.
+- **Dashboard-to-client link** (P5-T9) and a **`/help` section documenting every current
+  dashboard metric** (P5-T10), including how each one is computed and where it's read from.
+
+New schema: `tracked_entities`/`tracked_entity_aliases` (competitors tracked per client,
+mirrors `client_aliases`' shape — the client itself never gets a row, so its identity stays
+sourced from `Client.name`/`ClientAlias` alone) and `domain_classifications` (manual editorial
+typing of cited domains — Institutional/Editorial/Corporate/Reference/UGC/Other, deliberately
+without a "competitor" category, since that's derivable from `tracked_entities.domain`). Both
+schema designs were explicitly confirmed before implementation, per AI_INSTRUCTIONS.md §4.
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE5.md` and
+`docs/PROMPTS_PHASE5.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Authentication (fastapi-users) and multi-tenant scoping by client_id.

@@ -69,10 +69,10 @@
   <p class="whitespace-pre-line text-stone-900">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
 </div>
 
-{% if analysis_results %}
+{% if single_entity_analysis_results %}
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('analysis.section_title') }}</h2>
-  {% for result in analysis_results %}
+  {% for result in single_entity_analysis_results %}
   <div class="{{ 'border-t border-stone-100 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0' }}">
     <div class="text-sm font-medium text-stone-900 mb-2">{{ result.analysis_skill.name }}</div>
     <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -86,6 +86,54 @@
     </dl>
   </div>
   {% endfor %}
+</div>
+{% endif %}
+
+{% if competitive_result %}
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('analysis.competitive_section_title') }}</h2>
+  {% if not tracked_entities_configured %}
+  <p class="text-sm text-stone-500">{{ t('analysis.no_tracked_entities') }}</p>
+  {% else %}
+  <div class="flex flex-wrap items-center gap-6 mb-4">
+    <div>
+      <div class="text-xs text-stone-500 uppercase tracking-wide">{{ t('analysis.share_of_voice_label') }}</div>
+      <div class="text-lg font-semibold font-mono">
+        {% if competitive_result.output.share_of_voice is not none %}{{ (competitive_result.output.share_of_voice * 100) | round(1) }}%{% else %}{{ t('common.none') }}{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="text-xs text-stone-500 uppercase tracking-wide">{{ t('analysis.position_label') }}</div>
+      <div class="text-lg font-semibold font-mono">
+        {{ competitive_result.output.position if competitive_result.output.position is not none else t('common.none') }}
+      </div>
+    </div>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-2 px-3 font-medium">{{ t('common.name') }}</th>
+          <th class="py-2 px-3 font-medium"></th>
+          <th class="py-2 px-3 font-medium">{{ t('analysis.mentioned_yes') }}</th>
+          <th class="py-2 px-3 font-medium text-right">{{ t('analysis.mention_count_label') }}</th>
+          <th class="py-2 px-3 font-medium text-right">{{ t('analysis.first_position_label') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in competitive_result.output.entities %}
+        <tr class="border-t border-stone-100">
+          <td class="py-2 px-3 font-medium">{{ e.name }}</td>
+          <td class="py-2 px-3">{{ pill_badge(e.is_own_client, t('analysis.own_client_badge'), t('analysis.competitor_badge')) }}</td>
+          <td class="py-2 px-3">{{ pill_badge(e.mentioned, t('analysis.mentioned_yes'), t('analysis.mentioned_no')) }}</td>
+          <td class="py-2 px-3 text-right font-mono">{{ e.mention_count }}</td>
+          <td class="py-2 px-3 text-right font-mono text-stone-500">{{ e.first_position if e.first_position is not none else t('common.none') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -123,7 +171,13 @@
 </div>
 
 <details class="bg-white border border-stone-200 rounded-lg p-4">
-  <summary class="text-sm font-semibold text-stone-500 uppercase tracking-wide cursor-pointer">{{ t('run.raw_json_label') }}</summary>
+  <summary class="text-sm font-semibold text-stone-500 uppercase tracking-wide cursor-pointer flex items-center justify-between gap-2">
+    <span>{{ t('run.raw_json_label') }}</span>
+    {# stopPropagation so the download doesn't also toggle the <details> open/closed — a
+       click on a nested interactive element still bubbles to the summary's own toggle
+       handler otherwise. #}
+    <a href="/runs/{{ run.id }}/export?content=raw&format=json" onclick="event.stopPropagation()" class="text-xs font-normal normal-case text-stone-500 hover:underline shrink-0">{{ t('run.export_raw_json') }}</a>
+  </summary>
   <pre class="mt-3 text-xs font-mono bg-stone-50 border border-stone-200 rounded-md p-3 overflow-x-auto">{{ raw_payload_json }}</pre>
 </details>
 {% endif %}

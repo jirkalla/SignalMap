@@ -9,6 +9,7 @@ exercise the league table, the own-domain matching, and the timeseries gap-filli
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AnalysisResult, Citation, Client, Market, Prompt, PromptSet, RawResponse, Run
@@ -78,6 +79,25 @@ def _make_run(
 
     db_session.commit()
     return run
+
+
+def _add_competitive_result(
+    db_session: Session, run: Run, skill_id: int, entities: list[dict], share_of_voice: float | None, position: int | None
+) -> None:
+    """A competitive_visibility AnalysisResult for an already-created successful `run` — separate
+    from `_make_run`'s `analysis_skill_id`/`cited` params, which build a mention_visibility-shaped
+    output, not this skill's entities/share_of_voice/position shape.
+    """
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run.id))
+    db_session.add(
+        AnalysisResult(
+            raw_response_id=raw_response.id,
+            analysis_skill_id=skill_id,
+            skill_version=1,
+            output={"entities": entities, "share_of_voice": share_of_voice, "position": position},
+        )
+    )
+    db_session.commit()
 
 
 def test_summary_counts_match_fixture(client: TestClient, db_session: Session, seed: dict):
@@ -270,3 +290,144 @@ def test_dashboard_never_leaks_another_clients_data(client: TestClient, db_sessi
     globex_weeks = client.get(f"/dashboard/api/timeseries?client_id={globex.id}&range=all&metric=citations").json()["weeks"]
     assert [w["value"] for w in acme_weeks] == [2]
     assert [w["value"] for w in globex_weeks] == [4]
+
+
+# --- P5-T1: trend deltas --------------------------------------------------------------------
+
+
+def test_summary_trend_deltas_match_manual_calculation(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    skill_id = seed["analysis_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+    now = datetime.now(timezone.utc)
+
+    # Current 30d window: 2 runs, 1 cited (50%).
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=now - timedelta(days=5),
+              citation_domains=("acme.com",), analysis_skill_id=skill_id, cited=True)
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=now - timedelta(days=2),
+              citation_domains=("wikipedia.org",), analysis_skill_id=skill_id, cited=False)
+    # Previous 30d window (30-60 days ago): 1 run, 0 cited (0%).
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=now - timedelta(days=45),
+              citation_domains=("wikipedia.org",), analysis_skill_id=skill_id, cited=False)
+
+    resp = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=30d").json()
+    assert resp["runs_count"] == 2
+    assert resp["runs_count_delta_pct"] == 100.0  # 2 vs. 1 previous
+    assert resp["own_domain_rate"] == 50.0
+    assert resp["own_domain_rate_delta_pct"] == 50.0  # 50% - 0% = +50 points, not a relative %
+
+
+def test_summary_trend_delta_is_none_without_prior_period_data(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    now = datetime.now(timezone.utc)
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=now - timedelta(days=5))
+
+    resp = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=30d").json()
+    assert resp["runs_count_delta_pct"] is None
+    assert resp["citations_count_delta_pct"] is None
+    assert resp["own_domain_rate_delta_pct"] is None
+
+
+def test_summary_trend_delta_is_none_for_range_all(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=WEEK_1)
+
+    resp = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all").json()
+    assert resp["runs_count_delta_pct"] is None  # "all" has no natural prior period to compare against
+
+
+# --- P5-T2: domain classification ------------------------------------------------------------
+
+
+def test_domain_classification_is_returned_and_persists(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=WEEK_1,
+              citation_domains=("wikipedia.org",))
+
+    before = client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+    assert before[0]["domain_type"] is None
+
+    classify_resp = client.post("/dashboard/api/domains/wikipedia.org/classify", data={"domain_type": "reference"})
+    assert classify_resp.status_code == 200
+    assert classify_resp.json() == {"domain": "wikipedia.org", "domain_type": "reference"}
+
+    after = client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+    assert after[0]["domain_type"] == "reference"
+
+
+def test_invalid_domain_type_is_a_structured_400(client: TestClient):
+    resp = client.post("/dashboard/api/domains/example.com/classify", data={"domain_type": "bogus"})
+    assert resp.status_code == 400
+    assert resp.json()["error_code"] == "invalid_domain_type"
+
+
+# --- P5-T7: competitive league table + share-of-voice/position timeseries --------------------
+
+
+def test_entity_league_table_ranking_and_coverage(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    cv_skill_id = seed["competitive_visibility_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    run1 = _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1)
+    _add_competitive_result(
+        db_session, run1, cv_skill_id,
+        entities=[
+            {"name": "Acme Corp", "is_own_client": True, "mentioned": True, "mention_count": 3,
+             "first_position": 0, "cited": False, "cited_domains": []},
+            {"name": "Globex", "is_own_client": False, "mentioned": True, "mention_count": 1,
+             "first_position": 50, "cited": False, "cited_domains": []},
+        ],
+        share_of_voice=0.75, position=1,
+    )
+
+    run2 = _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_3)
+    _add_competitive_result(
+        db_session, run2, cv_skill_id,
+        entities=[
+            {"name": "Acme Corp", "is_own_client": True, "mentioned": False, "mention_count": 0,
+             "first_position": None, "cited": False, "cited_domains": []},
+            {"name": "Globex", "is_own_client": False, "mentioned": True, "mention_count": 2,
+             "first_position": 10, "cited": False, "cited_domains": []},
+        ],
+        share_of_voice=0.0, position=None,
+    )
+
+    rows = client.get(f"/dashboard/api/entities?client_id={acme.id}&range=all").json()
+    by_name = {row["name"]: row for row in rows}
+
+    assert by_name["Globex"]["avg_mention_count"] == 1.5  # (1 + 2) / 2
+    assert by_name["Globex"]["run_coverage_pct"] == 100.0  # mentioned in both runs
+    assert by_name["Globex"]["avg_first_position"] == 30.0  # (50 + 10) / 2
+    assert by_name["Globex"]["is_own_client"] is False
+
+    assert by_name["Acme Corp"]["avg_mention_count"] == 1.5  # (3 + 0) / 2
+    assert by_name["Acme Corp"]["run_coverage_pct"] == 50.0  # mentioned in only 1 of 2 runs
+    assert by_name["Acme Corp"]["avg_first_position"] == 0.0  # averaged over the one mentioning run only
+    assert by_name["Acme Corp"]["is_own_client"] is True
+
+
+def test_entity_league_table_is_empty_without_analyzed_runs(client: TestClient, db_session: Session, seed: dict):
+    acme, _prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+
+    rows = client.get(f"/dashboard/api/entities?client_id={acme.id}&range=all").json()
+    assert rows == []
+
+
+def test_share_of_voice_and_position_timeseries_fill_gap_weeks_with_zero(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    cv_skill_id = seed["competitive_visibility_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    run1 = _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1)
+    _add_competitive_result(db_session, run1, cv_skill_id, entities=[], share_of_voice=0.5, position=2)
+
+    run3 = _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_3)
+    _add_competitive_result(db_session, run3, cv_skill_id, entities=[], share_of_voice=1.0, position=1)
+
+    sov_weeks = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=share_of_voice").json()["weeks"]
+    pos_weeks = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=position").json()["weeks"]
+
+    assert [w["week_start"] for w in sov_weeks] == ["2026-01-05", "2026-01-12", "2026-01-19"]
+    assert [w["value"] for w in sov_weeks] == [50.0, 0.0, 100.0]  # gap week is 0, not missing
+    assert [w["value"] for w in pos_weeks] == [2.0, 0.0, 1.0]

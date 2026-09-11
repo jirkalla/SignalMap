@@ -11,6 +11,7 @@ from app.models.base import Base
 if TYPE_CHECKING:
     from app.models.client_alias import ClientAlias
     from app.models.prompt import PromptSet
+    from app.models.tracked_entity import TrackedEntity
 
 
 class Client(Base):
@@ -43,3 +44,6 @@ class Client(Base):
         back_populates="client", cascade="all, delete-orphan"
     )
     aliases: Mapped[list["ClientAlias"]] = relationship(back_populates="client", cascade="all, delete-orphan")
+    tracked_entities: Mapped[list["TrackedEntity"]] = relationship(
+        back_populates="client", cascade="all, delete-orphan"
+    )
