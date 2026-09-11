@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.errors import AppError
-from app.models import Client, ClientAlias, Prompt, PromptSet, Run
+from app.models import Client, ClientAlias, Prompt, PromptSet, Run, TrackedEntity, TrackedEntityAlias
 from app.templating import get_t, render
 from app.utils import unique_slugify
 
@@ -32,6 +32,36 @@ def _get_client_alias_or_404(db: Session, request: Request, client_id: int, alia
     )
     if alias is None:
         raise AppError("client_alias_not_found", get_t(request)("errors.client_alias_not_found"), status_code=404)
+    return alias
+
+
+def _get_tracked_entity_or_404(db: Session, request: Request, client_id: int, entity_id: int) -> TrackedEntity:
+    entity = db.scalar(
+        select(TrackedEntity).where(TrackedEntity.id == entity_id, TrackedEntity.client_id == client_id)
+    )
+    if entity is None:
+        raise AppError(
+            "tracked_entity_not_found", get_t(request)("errors.tracked_entity_not_found"), status_code=404
+        )
+    return entity
+
+
+def _get_tracked_entity_alias_or_404(
+    db: Session, request: Request, client_id: int, entity_id: int, alias_id: int
+) -> TrackedEntityAlias:
+    alias = db.scalar(
+        select(TrackedEntityAlias)
+        .join(TrackedEntity, TrackedEntityAlias.tracked_entity_id == TrackedEntity.id)
+        .where(
+            TrackedEntityAlias.id == alias_id,
+            TrackedEntityAlias.tracked_entity_id == entity_id,
+            TrackedEntity.client_id == client_id,
+        )
+    )
+    if alias is None:
+        raise AppError(
+            "tracked_entity_not_found", get_t(request)("errors.tracked_entity_not_found"), status_code=404
+        )
     return alias
 
 
@@ -236,6 +266,123 @@ def create_client_alias(
 def delete_client_alias(request: Request, client_id: int, alias_id: int, db: Session = Depends(get_db)):
     """Delete an alias. Aliases are configuration, not evidence — no in-use check, always allowed."""
     alias = _get_client_alias_or_404(db, request, client_id, alias_id)
+    db.delete(alias)
+    db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/tracked-entities")
+def create_tracked_entity(
+    request: Request,
+    client_id: int,
+    name: str = Form(..., max_length=200, description="Competitor's display name, e.g. 'Volkswagen'."),
+    domain: str = Form(
+        "",
+        description="Competitor's own domain, e.g. 'vw.com' — used for citation matching, same role as the "
+        "client's own domain.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Add a competitor to track alongside this client, for the competitive_visibility analysis skill
+    (docs/TASKS_PHASE5.md P5-T4).
+
+    Duplicate detection mirrors client aliases: a case-insensitive pre-check here for a fast 409, and
+    the DB-level functional unique index (migration 0017) as the actual source of truth for a
+    concurrent duplicate that races past the pre-check.
+    """
+    t = get_t(request)
+    client = _get_client_or_404(db, request, client_id)
+    name = name.strip()
+
+    def _duplicate_response():
+        return render(
+            request,
+            "clients/detail.html",
+            {
+                "client": client,
+                "prompt_sets": _prompt_sets_for_client(db, client_id),
+                "error": t("errors.tracked_entity_duplicate"),
+            },
+            status_code=409,
+        )
+
+    existing = db.scalar(
+        select(TrackedEntity).where(
+            TrackedEntity.client_id == client_id, func.lower(TrackedEntity.name) == name.lower()
+        )
+    )
+    if existing is not None:
+        return _duplicate_response()
+    db.add(TrackedEntity(client_id=client_id, name=name, domain=domain.strip().lower() or None))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _duplicate_response()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/tracked-entities/{entity_id}/delete")
+def delete_tracked_entity(request: Request, client_id: int, entity_id: int, db: Session = Depends(get_db)):
+    """Delete a tracked entity and its aliases. Configuration, not evidence — no in-use check, always allowed."""
+    entity = _get_tracked_entity_or_404(db, request, client_id, entity_id)
+    db.delete(entity)
+    db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/tracked-entities/{entity_id}/aliases")
+def create_tracked_entity_alias(
+    request: Request,
+    client_id: int,
+    entity_id: int,
+    alias: str = Form(
+        ..., max_length=200, description="Alternate name/spelling to match against, e.g. 'VW'."
+    ),
+    db: Session = Depends(get_db),
+):
+    """Add an alternate name/spelling for a tracked entity — mirrors client alias handling one level
+    down (docs/TASKS_PHASE5.md P5-T4).
+    """
+    t = get_t(request)
+    client = _get_client_or_404(db, request, client_id)
+    entity = _get_tracked_entity_or_404(db, request, client_id, entity_id)
+    alias = alias.strip()
+
+    def _duplicate_response():
+        return render(
+            request,
+            "clients/detail.html",
+            {
+                "client": client,
+                "prompt_sets": _prompt_sets_for_client(db, client_id),
+                "error": t("errors.tracked_entity_duplicate"),
+            },
+            status_code=409,
+        )
+
+    existing = db.scalar(
+        select(TrackedEntityAlias).where(
+            TrackedEntityAlias.tracked_entity_id == entity.id, func.lower(TrackedEntityAlias.alias) == alias.lower()
+        )
+    )
+    if existing is not None:
+        return _duplicate_response()
+    db.add(TrackedEntityAlias(tracked_entity_id=entity.id, alias=alias))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _duplicate_response()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/tracked-entities/{entity_id}/aliases/{alias_id}/delete")
+def delete_tracked_entity_alias(
+    request: Request, client_id: int, entity_id: int, alias_id: int, db: Session = Depends(get_db)
+):
+    """Delete a tracked entity's alias. Configuration, not evidence — always allowed."""
+    alias = _get_tracked_entity_alias_or_404(db, request, client_id, entity_id, alias_id)
     db.delete(alias)
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
