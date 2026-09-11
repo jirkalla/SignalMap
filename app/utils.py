@@ -18,6 +18,33 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
 
 
+def normalize_domain(domain: str) -> str:
+    """Lowercase, strip a leading 'www.' — the shared form used to compare domains."""
+    domain = domain.strip().lower()
+    if domain.startswith("www."):
+        domain = domain[len("www.") :]
+    return domain
+
+
+def is_own_domain(candidate_domain: str | None, client_domain: str | None) -> bool:
+    """True when `candidate_domain` is the client's own domain, exactly or as a subdomain
+    (e.g. blog.acme.com matches acme.com).
+
+    The one comparison rule shared by the `mention_visibility` analysis skill (app/analysis/
+    mention_visibility.py, matching a client's own domain against citation sources) and the
+    phase 4 dashboard's league table (flagging which cited domain is the client's own) — not
+    two independently-maintained copies of the same predicate.
+
+    False whenever either domain is missing — a client with no `domain` set has nothing to
+    compare against, and an empty citation source_domain can't match anything.
+    """
+    if not candidate_domain or not client_domain:
+        return False
+    candidate_norm = normalize_domain(candidate_domain)
+    client_norm = normalize_domain(client_domain)
+    return candidate_norm == client_norm or candidate_norm.endswith("." + client_norm)
+
+
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "client"

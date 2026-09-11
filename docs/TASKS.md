@@ -134,25 +134,48 @@ Full task breakdown, design decisions, and the code-review findings:
 `docs/TASKS_EXPORT.md` and `docs/PROMPTS_EXPORT.md`. Visual design + UI
 mockups: [Export Design artifact](https://claude.ai/code/artifact/c6e05821-fbb5-4ad7-8440-613db84ba022).
 
-## Phase 3: First analysis skill — mention/visibility detection
+## Phase 3: First analysis skill — mention/visibility detection ✅ Done
 
-Branch `feature/signalmap-phase3-mention-detection` (planned 2026-09-10, not yet
-started). Adds the first entry in `analysis_skills`/`analysis_results` (excluded from
-`schema_phase1.sql` by design — see its header comment) — a deterministic, non-LLM
-mention/visibility check: does the client's name (or a known alias) appear in a run's
-`rendered_text`, and is the client's own domain among its `citations`. Deliberately the
-simplest defensible metric to start the analysis layer with — no sentiment, no
-brand-attribute extraction, no LLM classification call. Those carry materially higher
-risk of arbitrary/unreliable output and are explicitly deferred to a later skill.
+Branch `feature/signalmap-phase3-mention-detection`, merged 2026-09-10
+([PR #5](https://github.com/jirkalla/SignalMap/pull/5)). Adds the first entry in
+`analysis_skills`/`analysis_results` (excluded from `schema_phase1.sql` by design — see
+its header comment) — a deterministic, non-LLM mention/visibility check: does the
+client's name (or a known alias) appear in a run's `rendered_text`, and is the client's
+own domain among its `citations`. Deliberately the simplest defensible metric to start
+the analysis layer with — no sentiment, no brand-attribute extraction, no LLM
+classification call. Those carry materially higher risk of arbitrary/unreliable output
+and are explicitly deferred to a later skill.
 
 Also adds `clients.domain` and a new `client_aliases` table (name variants to match
 against, e.g. "Acme" / "Acme Corp" / "Acme GmbH"), and a general `execution_type`
 (`rule_based` | `llm_prompt`) on `analysis_skills` so a future LLM-based skill (e.g.
 sentiment) doesn't require another schema rework — this skill is the first `rule_based`
-entry, not the only kind the framework supports.
+entry, not the only kind the framework supports. Matched mention terms are also
+highlighted (`<mark>`) directly in the rendered answer on the run detail page, based on
+the `match_spans` stored at computation time.
 
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE3.md` and
 `docs/PROMPTS_PHASE3.md`.
+
+## Phase 4: Dashboard v0 — domain league table + time series
+
+Branch `feature/signalmap-phase4-dashboard-v0` (implemented 2026-09-10/11, PR pending).
+Adds the first dashboard screen: for one selected client, a league table of the domains
+AI providers cite when talking about them, and a weekly time series of citation/run
+volume — built entirely from `citations`/`runs`/`raw_responses` that already exist, no
+new analysis skill. The "own-domain citation rate" figure is the one exception — it
+reads the existing `mention_visibility` result from phase 3 rather than recomputing
+domain matching.
+
+First real use of the Vue3-island pattern described in the signalmap-conventions skill:
+the rest of the app stays Jinja2 + HTMX, but `/dashboard` mounts a single Vue3
+component (loaded from a CDN, no build step) so changing a filter re-fetches and
+re-renders the table/chart without a full page reload — deliberately not a move to a
+full Vue frontend (see design decision 1 in `docs/TASKS_PHASE4.md` for why, and what
+would actually trigger that move later).
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE4.md` and
+`docs/PROMPTS_PHASE4.md`.
 
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Dashboard, Vue islands for interactivity.

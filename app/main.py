@@ -14,6 +14,7 @@ from app.logging_config import configure_logging
 from app.routers import (
     ai_models,
     clients,
+    dashboard,
     findings,
     help,
     locale,
@@ -46,6 +47,7 @@ app.include_router(runs.router)
 app.include_router(markets.router)
 app.include_router(providers.router)
 app.include_router(ai_models.router)
+app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(help.router)
 app.include_router(findings.router)

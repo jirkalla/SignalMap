@@ -1,0 +1,272 @@
+"""Dashboard v0 aggregation queries and JSON API (docs/TASKS_PHASE4.md P4-T5).
+
+Fixture data is built directly against the ORM (not FakeAdapter/trigger_run) so each run's
+started_at can be pinned to an exact week bucket — trigger_run always stamps now(), which can't
+express "two runs in one week, a third two weeks later, with an empty week in between" needed to
+exercise the league table, the own-domain matching, and the timeseries gap-filling together.
+"""
+
+from datetime import datetime, timedelta, timezone
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models import AnalysisResult, Citation, Client, Market, Prompt, PromptSet, RawResponse, Run
+
+# Two runs in this week, a third two weeks later — 2026-01-12 (the week between them) has no
+# runs at all, so it exercises the timeseries "gap weeks are 0, not missing" guarantee.
+WEEK_1 = datetime(2026, 1, 5, 12, 0, tzinfo=timezone.utc)
+WEEK_3 = datetime(2026, 1, 19, 12, 0, tzinfo=timezone.utc)
+
+
+def _client_with_prompt(db_session: Session, seed: dict, name: str, slug: str, domain: str | None = None) -> tuple[Client, Prompt]:
+    """A minimal Client -> PromptSet -> Prompt chain for one test's fixture data, independent of
+    the shared `sample_prompt` fixture (which is tied to a fixed, domain-less "Test Client").
+    """
+    client_row = Client(name=name, slug=slug, domain=domain)
+    db_session.add(client_row)
+    db_session.flush()
+    prompt_set = PromptSet(client_id=client_row.id, name="Perception")
+    db_session.add(prompt_set)
+    db_session.flush()
+    prompt = Prompt(prompt_set_id=prompt_set.id, text="How is this brand perceived?", market_id=seed["market"].id)
+    db_session.add(prompt)
+    db_session.commit()
+    db_session.refresh(prompt)
+    return client_row, prompt
+
+
+def _make_run(
+    db_session: Session,
+    prompt: Prompt,
+    *,
+    model_id: int,
+    market_id: int,
+    started_at: datetime,
+    status: str = "success",
+    citation_domains: tuple[str, ...] = (),
+    analysis_skill_id: int | None = None,
+    cited: bool = False,
+) -> Run:
+    """One Run, plus (for a successful run) its RawResponse/Citations/AnalysisResult — the direct-ORM
+    equivalent of what trigger_run builds, but with a caller-chosen started_at and citation set.
+    """
+    run = Run(prompt_id=prompt.id, model_id=model_id, market_id=market_id, status=status, started_at=started_at)
+    db_session.add(run)
+    db_session.flush()
+
+    if status == "success":
+        raw_response = RawResponse(
+            run_id=run.id,
+            raw_payload={"answer": "..."},
+            rendered_text="...",
+            has_citations=bool(citation_domains),
+        )
+        db_session.add(raw_response)
+        db_session.flush()
+        for position, domain in enumerate(citation_domains):
+            db_session.add(Citation(raw_response_id=raw_response.id, source_domain=domain, citation_position=position))
+        if analysis_skill_id is not None:
+            db_session.add(
+                AnalysisResult(
+                    raw_response_id=raw_response.id,
+                    analysis_skill_id=analysis_skill_id,
+                    skill_version=1,
+                    output={"cited": cited, "cited_domains": list(citation_domains) if cited else []},
+                )
+            )
+
+    db_session.commit()
+    return run
+
+
+def test_summary_counts_match_fixture(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    skill_id = seed["analysis_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("wikipedia.org", "acme.com"), analysis_skill_id=skill_id, cited=True)
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("wikipedia.org",), analysis_skill_id=skill_id, cited=False)
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_3,
+              citation_domains=("news.example.com", "sub.acme.com"), analysis_skill_id=skill_id, cited=True)
+
+    resp = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runs_count"] == 3
+    assert body["citations_count"] == 5
+    assert body["distinct_domains_count"] == 4  # wikipedia.org, acme.com, sub.acme.com, news.example.com
+    assert body["own_domain_rate"] == round(100 * 2 / 3, 1)
+
+
+def test_own_domain_rate_is_none_without_a_client_domain(client: TestClient, db_session: Session, seed: dict):
+    no_domain_co, prompt = _client_with_prompt(db_session, seed, "No Domain Co", "no-domain-co", domain=None)
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id,
+        started_at=WEEK_1, citation_domains=("news.example.com",),
+    )
+
+    resp = client.get(f"/dashboard/api/summary?client_id={no_domain_co.id}&range=all")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runs_count"] == 1  # real data either side of the None — proves it's not a blanket failure
+    assert body["own_domain_rate"] is None
+
+
+def test_domain_league_table_ranking_and_own_domain_matching(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("wikipedia.org", "acme.com"))
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("wikipedia.org",))
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_3,
+              citation_domains=("news.example.com", "sub.acme.com"))
+
+    resp = client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all")
+    assert resp.status_code == 200
+    rows = resp.json()
+    by_domain = {row["domain"]: row for row in rows}
+
+    assert rows[0]["domain"] == "wikipedia.org"  # unambiguous top: 2 citations, everything else has 1
+    assert rows[0]["rank"] == 1
+    assert by_domain["wikipedia.org"]["citations_count"] == 2
+    assert by_domain["wikipedia.org"]["run_coverage_pct"] == round(100 * 2 / 3, 1)
+    assert by_domain["wikipedia.org"]["is_own_domain"] is False
+
+    assert by_domain["acme.com"]["is_own_domain"] is True  # exact match
+    assert by_domain["sub.acme.com"]["is_own_domain"] is True  # subdomain match (design decision 6)
+    assert by_domain["news.example.com"]["is_own_domain"] is False  # not related to acme.com at all
+    assert by_domain["acme.com"]["run_coverage_pct"] == round(100 * 1 / 3, 1)
+
+
+def test_timeseries_fills_gap_weeks_with_zero(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    skill_id = seed["analysis_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("wikipedia.org", "acme.com"), analysis_skill_id=skill_id, cited=True)
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("wikipedia.org",), analysis_skill_id=skill_id, cited=False)
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_3,
+              citation_domains=("news.example.com", "sub.acme.com"), analysis_skill_id=skill_id, cited=True)
+
+    citations = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=citations").json()["weeks"]
+    runs = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=runs").json()["weeks"]
+    own_rate = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=own_rate").json()["weeks"]
+
+    assert [w["week_start"] for w in citations] == ["2026-01-05", "2026-01-12", "2026-01-19"]
+    assert [w["value"] for w in citations] == [3, 0, 2]  # gap week is 0, not missing
+    assert [w["value"] for w in runs] == [2, 0, 1]
+    assert [w["value"] for w in own_rate] == [50.0, 0.0, 100.0]  # week 1: 1/2 cited, week 3: 1/1 cited
+
+
+def test_missing_client_id_is_a_structured_422(client: TestClient):
+    resp = client.get("/dashboard/api/summary")
+    assert resp.status_code == 422
+    assert resp.json()["error_code"] == "validation_error"
+
+
+def test_unknown_client_id_is_a_structured_404(client: TestClient):
+    resp = client.get("/dashboard/api/summary?client_id=999999")
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "client_not_found"
+
+
+def test_range_filter_excludes_runs_outside_the_window(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    old_run_at = datetime.now(timezone.utc) - timedelta(days=200)  # outside any rolling window, always
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=old_run_at)
+
+    within_all = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all").json()
+    within_90d = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=90d").json()
+
+    assert within_all["runs_count"] == 1
+    assert within_90d["runs_count"] == 0
+
+
+def test_market_and_provider_filters_narrow_the_result(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    other_market = Market(code="de-DE", language="de", country="DE", locale_name="German (Germany)")
+    db_session.add(other_market)
+    db_session.commit()
+    db_session.refresh(other_market)
+
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=WEEK_1)
+    _make_run(db_session, prompt, model_id=seed["anthropic_model"].id, market_id=other_market.id, started_at=WEEK_1)
+
+    all_runs = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all").json()
+    by_market = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all&market_id={other_market.id}").json()
+    by_provider = client.get(
+        f"/dashboard/api/summary?client_id={acme.id}&range=all&provider_id={seed['provider'].id}"
+    ).json()
+
+    assert all_runs["runs_count"] == 2
+    assert by_market["runs_count"] == 1
+    assert by_provider["runs_count"] == 1
+
+
+def test_only_successful_runs_are_counted(client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id,
+              started_at=WEEK_1, citation_domains=("wikipedia.org",))
+    error_run = Run(prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id,
+                     status="error", started_at=WEEK_1, error_message="simulated provider failure")
+    db_session.add(error_run)
+    db_session.commit()
+
+    resp = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all")
+    assert resp.status_code == 200
+    assert resp.json()["runs_count"] == 1  # the error run (no RawResponse) never counted or crashed the query
+
+
+def test_dashboard_page_renders_with_client_init_data(client: TestClient, db_session: Session, seed: dict):
+    acme, _prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert 'id="dashboard-init"' in resp.text
+    assert "Acme Corp" in resp.text
+
+
+def test_dashboard_never_leaks_another_clients_data(client: TestClient, db_session: Session, seed: dict):
+    """Regression guard for the client-scoping join itself (docs/TASKS_PHASE4.md design decision
+    4) — every other dashboard test only ever has one client's data in the database at a time, so
+    a future refactor that weakens/drops the `PromptSet.client_id == client_id` filter wouldn't be
+    caught by any of them. This test puts two clients' runs/citations in the same week side by
+    side and asserts summary/domains/timeseries for one never reflect the other's.
+    """
+    skill_id = seed["analysis_skill"].id
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    acme, acme_prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    _make_run(db_session, acme_prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("acme.com", "wikipedia.org"), analysis_skill_id=skill_id, cited=True)
+
+    globex, globex_prompt = _client_with_prompt(db_session, seed, "Globex Inc", "globex-inc", domain="globex.com")
+    _make_run(db_session, globex_prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("globex.com", "reuters.com", "reuters.com"), analysis_skill_id=skill_id, cited=True)
+    _make_run(db_session, globex_prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("reuters.com",), analysis_skill_id=skill_id, cited=True)
+
+    acme_summary = client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all").json()
+    globex_summary = client.get(f"/dashboard/api/summary?client_id={globex.id}&range=all").json()
+    assert acme_summary["runs_count"] == 1
+    assert acme_summary["citations_count"] == 2
+    assert globex_summary["runs_count"] == 2
+    assert globex_summary["citations_count"] == 4
+
+    acme_domains = {row["domain"] for row in client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()}
+    globex_domains = {row["domain"] for row in client.get(f"/dashboard/api/domains?client_id={globex.id}&range=all").json()}
+    assert acme_domains == {"acme.com", "wikipedia.org"}
+    assert globex_domains == {"globex.com", "reuters.com"}
+    assert acme_domains.isdisjoint(globex_domains)
+
+    acme_weeks = client.get(f"/dashboard/api/timeseries?client_id={acme.id}&range=all&metric=citations").json()["weeks"]
+    globex_weeks = client.get(f"/dashboard/api/timeseries?client_id={globex.id}&range=all&metric=citations").json()["weeks"]
+    assert [w["value"] for w in acme_weeks] == [2]
+    assert [w["value"] for w in globex_weeks] == [4]
