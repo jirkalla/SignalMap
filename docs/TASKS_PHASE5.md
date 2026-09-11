@@ -554,21 +554,24 @@ docs(help): document dashboard metrics and how they're calculated
 
 ## Completion Checklist
 
-- [ ] Schema návrhy (domain_classifications, tracked_entities/tracked_entity_aliases)
+- [x] Schema návrhy (domain_classifications, tracked_entities/tracked_entity_aliases)
       výslovně potvrzené před P5-T2/P5-T3
-- [ ] Trendové delty fungují na KPI dlaždicích, `None` místo zavádějících hodnot bez dat
-- [ ] Doménová typologie — ruční klasifikace v league table, žádná automatická heuristika
-- [ ] `tracked_entities`/`tracked_entity_aliases` existují a jdou spravovat přes UI
-- [ ] `competitive_visibility` skill počítá share-of-voice/position automaticky po každém
+- [x] Trendové delty fungují na KPI dlaždicích, `None` místo zavádějících hodnot bez dat
+- [x] Doménová typologie — ruční klasifikace v league table, žádná automatická heuristika
+- [x] `tracked_entities`/`tracked_entity_aliases` existují a jdou spravovat přes UI
+- [x] `competitive_visibility` skill počítá share-of-voice/position automaticky po každém
       úspěšném runu, viditelné na run detailu bez ruční DB inspekce
-- [ ] Sdílený `match_spans` helper — žádná duplicitní regex logika mezi `mention_visibility`
+- [x] Sdílený `match_spans` helper — žádná duplicitní regex logika mezi `mention_visibility`
       a `competitive_visibility`
-- [ ] Dashboard rozšířený o share-of-voice/position KPI, competitive league table, chart metriku
-- [ ] `pytest` sada zelená, pokrývá entity CRUD, skill logiku i dashboard rozšíření
-- [ ] Ověřeno v prohlížeči na ~640px/~1024px/desktop, všechny nové obrazovky/sekce
-- [ ] Dashboard má odkaz na detail vybraného klienta (P5-T9)
-- [ ] `/help` má sekci "Dashboard" popisující metriky fáze 4 (P5-T10) — bez zmínky metrik,
-      co v týhle branch ještě nejsou hotové v době, kdy se P5-T10 píše
-- [ ] `docs/TASKS.md` — poznámka, že fáze 5 větev existuje a co pokrývá (odkaz na tenhle soubor)
-- [ ] `docs/REQUIREMENTS.md` — pokud se rozsah generace-2 skillů/dashboardu shoduje s
-      původním zadáním beze změny, žádná úprava potřeba; jinak zdokumentovat diff
+- [x] Dashboard rozšířený o share-of-voice/position KPI, competitive league table, chart metriku
+- [x] `pytest` sada zelená (106/106), pokrývá entity CRUD, skill logiku i dashboard rozšíření
+- [x] Ověřeno v prohlížeči na ~375px/~768px/desktop, všechny nové obrazovky/sekce
+- [x] Dashboard má odkaz na detail vybraného klienta (P5-T9)
+- [x] `/help` má sekci "Dashboard" — **rozšířeno oproti původnímu zadání**: P5-10 šel v branch
+      jako poslední, ne první, takže appka v době psaní sekce už reálně měla i P5-1/P5-2/P5-7
+      (trendové delty, doménovou typologii, share-of-voice/position) — na výslovnou žádost
+      uživatele sekce popisuje plný aktuální stav, ne jen fázi 4, jak zněl původní plán
+- [x] `docs/TASKS.md` — poznámka, že fáze 5 větev existuje a co pokrývá (odkaz na tenhle soubor)
+- [x] `docs/REQUIREMENTS.md` — amendment přidán (2026-09-11); nic ze stávajícího seznamu
+      "Explicitly Out of Scope" se neruší, jen se zaznamenává nová schopnost pro konzistenci
+      s tím, jak to dostaly fáze 2-4
