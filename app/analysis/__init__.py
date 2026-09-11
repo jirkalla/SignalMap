@@ -6,10 +6,12 @@ Mirrors app/adapters/__init__.py's ADAPTERS registry for providers.
 """
 
 from app.analysis.base import AnalysisSkillRunner
+from app.analysis.competitive_visibility import CompetitiveVisibilityRunner
 from app.analysis.mention_visibility import MentionVisibilityRunner
 
 ANALYSIS_SKILLS: dict[str, type[AnalysisSkillRunner]] = {
     "mention_visibility": MentionVisibilityRunner,
+    "competitive_visibility": CompetitiveVisibilityRunner,
 }
 
 
