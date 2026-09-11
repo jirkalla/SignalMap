@@ -158,6 +158,7 @@
   "client.export_csv": "CSV",
   "client.export_xlsx": "XLSX",
   "client.export_json": "JSON",
+  "client.view_in_dashboard": "Dashboard",
   "client.domain_label": "Domain",
   "client.domain_placeholder": "e.g. acme.com",
   "client.aliases_title": "Aliases",

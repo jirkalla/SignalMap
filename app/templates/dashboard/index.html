@@ -186,7 +186,7 @@
       const providers = init.providers;
 
       const filters = reactive({
-        clientId: clients.length ? clients[0].id : null,
+        clientId: init.initial_client_id ?? (clients.length ? clients[0].id : null),
         range: '90d',
         marketId: '',
         providerId: '',

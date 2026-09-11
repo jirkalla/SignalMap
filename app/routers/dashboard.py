@@ -186,7 +186,15 @@ def _own_domain_rate(db: Session, client: Client, run_ids_query: Select) -> floa
 
 
 @router.get("", include_in_schema=False)
-def dashboard_page(request: Request, db: Session = Depends(get_db)):
+def dashboard_page(
+    request: Request,
+    client_id: int | None = Query(
+        None,
+        description="Client to preselect on load, e.g. when linked from that client's own detail page. "
+        "Falls back to the first client (alphabetically) when omitted or when it doesn't match any client.",
+    ),
+    db: Session = Depends(get_db),
+):
     """Dashboard v0 page shell.
 
     Renders only the client/market/provider option lists and the page frame — every KPI, the league
@@ -196,6 +204,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
     clients = db.scalars(select(Client).order_by(Client.name)).all()
     markets = db.scalars(select(Market).order_by(Market.code)).all()
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
+    valid_client_id = client_id if any(c.id == client_id for c in clients) else None
     return render(
         request,
         "dashboard/index.html",
@@ -204,6 +213,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
                 "clients": [{"id": c.id, "name": c.name, "domain": c.domain} for c in clients],
                 "markets": [{"id": m.id, "label": m.locale_name or m.code} for m in markets],
                 "providers": [{"id": p.id, "name": p.name} for p in providers],
+                "initial_client_id": valid_client_id,
             }
         },
     )
