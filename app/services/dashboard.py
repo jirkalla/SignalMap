@@ -365,8 +365,17 @@ def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueR
     LATERAL keyword needed — verified against the running DB, docs/TASKS_PHASE5.md P5-T7 design
     decision 11), since entities live inside one JSON column per run rather than their own rows
     the way citations do for the domain league table above.
+
+    Builds on `_competitive_visibility_base_query` (not a second, hand-rolled copy of its
+    join/filter) so this table can never silently drift from what `avg_share_of_voice`/
+    `weekly_values` consider "in scope" — a code-review finding against the first version of this
+    function. `run_coverage_pct`'s denominator is the number of *analyzed* runs (runs that have a
+    competitive_visibility result), not every successful run in range — using the wider count
+    understated coverage for any client with run history predating this skill (no backfill exists,
+    design decision 6), since those older runs were never scored for it at all.
     """
-    total_runs = count_runs(db, run_ids_query)
+    base = _competitive_visibility_base_query(run_ids_query)
+    total_analyzed_runs = db.scalar(select(func.count()).select_from(base.subquery())) or 0
 
     entity_elem = func.jsonb_array_elements(AnalysisResult.output["entities"]).table_valued(
         column("value", JSONB)
@@ -378,7 +387,8 @@ def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueR
     first_position_col = entity_elem.c.value["first_position"].astext.cast(Integer)
 
     rows = db.execute(
-        select(
+        base.join(entity_elem, true())
+        .with_only_columns(
             name_col,
             is_own_col,
             func.avg(mention_count_col).label("avg_mention_count"),
@@ -387,11 +397,6 @@ def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueR
             func.avg(first_position_col).filter(mentioned_col).label("avg_first_position"),
             func.count().filter(mentioned_col).label("mentioned_run_count"),
         )
-        .select_from(AnalysisResult)
-        .join(entity_elem, true())
-        .join(RawResponse, AnalysisResult.raw_response_id == RawResponse.id)
-        .join(AnalysisSkill, AnalysisResult.analysis_skill_id == AnalysisSkill.id)
-        .where(AnalysisSkill.key == "competitive_visibility", RawResponse.run_id.in_(run_ids_query))
         .group_by(name_col, is_own_col)
         .order_by(func.avg(mention_count_col).desc(), name_col.asc())
     ).all()
@@ -403,7 +408,7 @@ def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueR
             is_own_client=row.is_own_client,
             avg_mention_count=round(float(row.avg_mention_count), 1),
             avg_first_position=round(float(row.avg_first_position), 1) if row.avg_first_position is not None else None,
-            run_coverage_pct=round(100 * row.mentioned_run_count / total_runs, 1) if total_runs else 0.0,
+            run_coverage_pct=round(100 * row.mentioned_run_count / total_analyzed_runs, 1) if total_analyzed_runs else 0.0,
         )
         for rank, row in enumerate(rows, start=1)
     ]
