@@ -46,6 +46,12 @@
     <div v-show="loading" class="text-xs text-stone-400 pb-2">{{ t('dashboard.loading') }}</div>
   </div>
 
+  {# Empty-state banner — shown whenever the resolved filters match zero runs, so the four zeroed
+     KPI tiles / empty table / empty chart below aren't left unexplained (design decision 11). #}
+  <div v-if="summary && summary.runs_count === 0" class="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3 mb-4">
+    {{ t('dashboard.no_runs_in_range') }}
+  </div>
+
   {# KPI tiles #}
   <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
     <div class="bg-white border border-stone-200 rounded-lg p-4">
@@ -63,7 +69,12 @@
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('dashboard.kpi_own_rate') }}</div>
       <div class="text-2xl font-semibold font-mono text-emerald-700" v-if="summary && summary.own_domain_rate !== null">[[ summary.own_domain_rate ]]<span class="text-base">%</span></div>
-      <div class="text-sm text-stone-400" v-else>—</div>
+      <template v-else>
+        <div class="text-2xl font-semibold font-mono text-stone-300">—</div>
+        <div class="text-xs text-stone-400 mt-0.5">
+          [[ selectedClient && !selectedClient.domain ? clientDomainMissingLabel : noAnalyzedRunsLabel ]]
+        </div>
+      </template>
     </div>
   </div>
 
@@ -72,6 +83,7 @@
     <div class="bg-white border border-stone-200 rounded-lg overflow-hidden">
       <div class="px-4 py-3 border-b border-stone-100">
         <h2 class="text-sm font-semibold">{{ t('dashboard.table_title') }}</h2>
+        <p v-if="selectedClient && !selectedClient.domain" class="text-xs text-stone-400 mt-0.5">{{ t('dashboard.table_no_domain_note') }}</p>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm text-left">
@@ -149,6 +161,8 @@
   const { createApp, reactive, ref, computed, onMounted, watch } = Vue;
   const init = JSON.parse(document.getElementById('dashboard-init').textContent);
   const locale = {{ locale | tojson }};
+  const clientDomainMissingLabel = {{ t('dashboard.kpi_own_rate_no_domain') | tojson }};
+  const noAnalyzedRunsLabel = {{ t('dashboard.kpi_own_rate_no_data') | tojson }};
 
   const chartW = 560, chartH = 200, padL = 34, padR = 8, padT = 10, padB = 20;
   const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
@@ -177,6 +191,8 @@
         marketId: '',
         providerId: '',
       });
+
+      const selectedClient = computed(() => clients.find((c) => c.id === filters.clientId) || null);
 
       const metric = ref('citations');
       const summary = ref(null);
@@ -219,7 +235,11 @@
       const chartMax = computed(() => {
         if (metric.value === 'own_rate') return 100;
         const vals = (timeseries.value.weeks || []).map((w) => w.value);
-        return niceMax(vals.length ? Math.max(...vals, 1) : 1);
+        const max = vals.length ? Math.max(...vals) : 0;
+        // Floor of 4 (not 1) even for an all-zero range — niceMax(1) rounds up to just 2,
+        // which produces duplicate rounded gridline labels (0, 1, 1, 2, 2); niceMax(4) gives
+        // 5, spacing the 4 gridlines into distinct whole numbers.
+        return niceMax(Math.max(max, 4));
       });
 
       const points = computed(() => {
@@ -252,8 +272,13 @@
       });
 
       const xLabels = computed(() => {
+        // Cap at ~8 visible labels regardless of how many weeks are in range (a year of
+        // weekly buckets is 52 points — "every other" alone would still overcrowd a 560px
+        // chart), always including the most recent week.
         const pts = points.value;
-        const step = pts.length > 8 ? 2 : 1;
+        if (!pts.length) return [];
+        const maxLabels = 8;
+        const step = Math.max(1, Math.ceil(pts.length / maxLabels));
         return pts.filter((p, i) => i % step === 0 || i === pts.length - 1);
       });
 
@@ -309,6 +334,7 @@
 
       return {
         clients, markets, providers, filters, metric, summary, domains, timeseries, loading,
+        selectedClient, clientDomainMissingLabel, noAnalyzedRunsLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH,
         points, linePath, areaPath, xLabels, gridLines, hover,
         onChartMove, onChartLeave, formatWeekLabel, shareWidth,

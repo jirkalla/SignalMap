@@ -201,7 +201,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         "dashboard/index.html",
         {
             "dashboard_init": {
-                "clients": [{"id": c.id, "name": c.name} for c in clients],
+                "clients": [{"id": c.id, "name": c.name, "domain": c.domain} for c in clients],
                 "markets": [{"id": m.id, "label": m.locale_name or m.code} for m in markets],
                 "providers": [{"id": p.id, "name": p.name} for p in providers],
             }
