@@ -112,6 +112,11 @@
               <td class="py-2 px-4 font-mono text-xs">
                 [[ row.domain ]]
                 <span v-if="row.is_own_domain" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">{{ t('dashboard.own_domain_badge') }}</span>
+                <span v-if="row.domain_type" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-600">[[ domainTypeLabel(row.domain_type) ]]</span>
+                <select v-else value="" @change="classifyDomain(row, $event.target.value)" class="ml-1 inline-block rounded-md border border-stone-300 px-1.5 py-0.5 text-xs bg-white text-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+                  <option value="" disabled selected>[[ classifyPlaceholderLabel ]]</option>
+                  <option v-for="dt in domainTypes" :key="dt" :value="dt">[[ domainTypeLabel(dt) ]]</option>
+                </select>
               </td>
               <td class="py-2 px-4 text-right">
                 <div class="flex items-center justify-end gap-2">
@@ -174,6 +179,16 @@
   const noAnalyzedRunsLabel = {{ t('dashboard.kpi_own_rate_no_data') | tojson }};
   const trendNoDataLabel = {{ t('dashboard.trend_no_data') | tojson }};
   const trendPpSuffix = {{ t('dashboard.trend_pp_suffix') | tojson }};
+  const domainTypeLabels = {
+    institutional: {{ t('dashboard.domain_type_institutional') | tojson }},
+    editorial: {{ t('dashboard.domain_type_editorial') | tojson }},
+    corporate: {{ t('dashboard.domain_type_corporate') | tojson }},
+    reference: {{ t('dashboard.domain_type_reference') | tojson }},
+    ugc: {{ t('dashboard.domain_type_ugc') | tojson }},
+    other: {{ t('dashboard.domain_type_other') | tojson }},
+  };
+  const domainTypes = Object.keys(domainTypeLabels);
+  const classifyPlaceholderLabel = {{ t('dashboard.domain_type_classify_placeholder') | tojson }};
 
   const chartW = 560, chartH = 200, padL = 34, padR = 8, padT = 10, padB = 20;
   const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
@@ -359,12 +374,36 @@
         return (v > 0 ? '+' : '') + v + ' ' + trendPpSuffix;
       }
 
+      function domainTypeLabel(type) {
+        return domainTypeLabels[type] || type;
+      }
+
+      // P5-T2 — classify one league-table domain. Mutates the row in place (domains.value
+      // entries are reactive, per ref()'s deep-reactivity default) instead of refetching the
+      // whole league table for a one-field change.
+      async function classifyDomain(row, domainType) {
+        if (!domainType) return;
+        const body = new URLSearchParams();
+        body.set('domain_type', domainType);
+        const res = await fetch('/dashboard/api/domains/' + encodeURIComponent(row.domain) + '/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          row.domain_type = data.domain_type;
+        }
+      }
+
       return {
         clients, markets, providers, filters, metric, summary, domains, timeseries, loading,
         selectedClient, clientDomainMissingLabel, noAnalyzedRunsLabel, trendNoDataLabel,
+        domainTypes, classifyPlaceholderLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH,
         points, linePath, areaPath, xLabels, gridLines, hover,
         onChartMove, onChartLeave, formatWeekLabel, shareWidth, deltaClass, formatDeltaPct, formatDeltaPp,
+        domainTypeLabel, classifyDomain,
       };
     },
   });

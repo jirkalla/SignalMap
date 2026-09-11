@@ -12,17 +12,20 @@ scope, no cross-client aggregate view) and shares the same optional `range`/`mar
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Client, Market, Provider
+from app.errors import AppError
+from app.models import Client, DomainClassification, Market, Provider
+from app.models.domain_classification import DOMAIN_TYPES
 from app.routers.clients import _get_client_or_404
 from app.services import dashboard as dashboard_service
 from app.services.dashboard import DashboardMetric, DashboardRange
-from app.templating import render
+from app.templating import get_t, render
+from app.utils import normalize_domain
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -84,6 +87,18 @@ class DomainRow(BaseModel):
     is_own_domain: bool = Field(
         ..., description="True when this domain is the client's own domain, exactly or as a subdomain."
     )
+    domain_type: str | None = Field(
+        ...,
+        description="Manually assigned editorial type (institutional, editorial, corporate, reference, ugc, "
+        "other), or None when this domain hasn't been classified yet.",
+    )
+
+
+class DomainClassifyResponse(BaseModel):
+    """Result of setting one domain's editorial classification."""
+
+    domain: str
+    domain_type: str
 
 
 class WeekPoint(BaseModel):
@@ -236,6 +251,36 @@ def dashboard_domains(
     """
     rows = dashboard_service.domain_league_rows(db, scope.client, scope.run_ids_query, limit)
     return [DomainRow(**vars(row)) for row in rows]
+
+
+@router.post("/api/domains/{domain}/classify", response_model=DomainClassifyResponse)
+def classify_domain(
+    domain: str,
+    request: Request,
+    domain_type: str = Form(
+        ..., description="One of: institutional, editorial, corporate, reference, ugc, other."
+    ),
+    db: Session = Depends(get_db),
+) -> DomainClassifyResponse:
+    """Set (or update) one domain's manual editorial classification (docs/TASKS_PHASE5.md P5-T2).
+
+    Upserts by normalized domain (app.utils.normalize_domain) — classifying 'www.iea.org' and
+    'iea.org' sets the same row, matching how the rest of the dashboard already compares domains.
+    Classification is manual only; there is no automatic/heuristic assignment (design decision 9).
+    """
+    t = get_t(request)
+    if domain_type not in DOMAIN_TYPES:
+        raise AppError("invalid_domain_type", t("errors.invalid_domain_type"), status_code=400)
+
+    normalized = normalize_domain(domain)
+    existing = db.get(DomainClassification, normalized)
+    if existing is not None:
+        existing.domain_type = domain_type
+    else:
+        db.add(DomainClassification(domain=normalized, domain_type=domain_type))
+    db.commit()
+
+    return DomainClassifyResponse(domain=normalized, domain_type=domain_type)
 
 
 @router.get("/api/timeseries", response_model=TimeseriesResponse)

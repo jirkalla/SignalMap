@@ -238,6 +238,7 @@
   "errors.client_in_use": "This client has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts or prompt sets first.",
   "errors.client_alias_duplicate": "This alias is already registered for this client.",
   "errors.client_alias_not_found": "Alias not found.",
+  "errors.invalid_domain_type": "Not a valid domain type.",
   "errors.prompt_set_not_found": "Prompt set not found.",
   "errors.prompt_set_in_use": "This prompt set has {count} run(s) recorded under its prompts and can't be deleted. Delete those prompts first.",
   "errors.prompt_not_found": "Prompt not found.",
@@ -298,5 +299,13 @@
   "dashboard.kpi_own_rate_no_data": "No analyzed runs yet",
   "dashboard.table_no_domain_note": "Own-domain matching unavailable — no domain set for this client.",
   "dashboard.trend_no_data": "No prior period to compare",
-  "dashboard.trend_pp_suffix": "pp"
+  "dashboard.trend_pp_suffix": "pp",
+  "dashboard.domain_type_institutional": "Institutional",
+  "dashboard.domain_type_editorial": "Editorial",
+  "dashboard.domain_type_corporate": "Corporate",
+  "dashboard.domain_type_reference": "Reference",
+  "dashboard.domain_type_ugc": "UGC",
+  "dashboard.domain_type_other": "Other",
+  "dashboard.domain_type_unclassified": "Unclassified",
+  "dashboard.domain_type_classify_placeholder": "Classify…"
 }

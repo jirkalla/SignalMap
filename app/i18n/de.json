@@ -238,6 +238,7 @@
   "errors.client_in_use": "Für diesen Klienten sind {count} Lauf/Läufe unter seinen Prompts erfasst — er kann nicht gelöscht werden. Lösche zuerst diese Prompts oder Prompt-Sets.",
   "errors.client_alias_duplicate": "Dieser Alias ist für diesen Klienten bereits registriert.",
   "errors.client_alias_not_found": "Alias nicht gefunden.",
+  "errors.invalid_domain_type": "Kein gültiger Domain-Typ.",
   "errors.prompt_set_not_found": "Prompt-Set nicht gefunden.",
   "errors.prompt_set_in_use": "Für dieses Prompt-Set sind {count} Lauf/Läufe unter seinen Prompts erfasst — es kann nicht gelöscht werden. Lösche zuerst diese Prompts.",
   "errors.prompt_not_found": "Prompt nicht gefunden.",
@@ -298,5 +299,13 @@
   "dashboard.kpi_own_rate_no_data": "Noch keine analysierten Läufe",
   "dashboard.table_no_domain_note": "Abgleich mit eigener Domain nicht möglich — keine Domain für diesen Klienten hinterlegt.",
   "dashboard.trend_no_data": "Kein Vorzeitraum zum Vergleich",
-  "dashboard.trend_pp_suffix": "Pp."
+  "dashboard.trend_pp_suffix": "Pp.",
+  "dashboard.domain_type_institutional": "Institutionell",
+  "dashboard.domain_type_editorial": "Redaktionell",
+  "dashboard.domain_type_corporate": "Unternehmen",
+  "dashboard.domain_type_reference": "Nachschlagewerk",
+  "dashboard.domain_type_ugc": "Nutzerinhalte",
+  "dashboard.domain_type_other": "Sonstige",
+  "dashboard.domain_type_unclassified": "Nicht eingeordnet",
+  "dashboard.domain_type_classify_placeholder": "Einordnen…"
 }

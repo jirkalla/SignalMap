@@ -16,8 +16,19 @@ from typing import Literal
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.models import AIModel, AnalysisResult, AnalysisSkill, Citation, Client, Prompt, PromptSet, RawResponse, Run
-from app.utils import is_own_domain
+from app.models import (
+    AIModel,
+    AnalysisResult,
+    AnalysisSkill,
+    Citation,
+    Client,
+    DomainClassification,
+    Prompt,
+    PromptSet,
+    RawResponse,
+    Run,
+)
+from app.utils import is_own_domain, normalize_domain
 
 DashboardRange = Literal["30d", "90d", "quarter", "all"]
 DashboardMetric = Literal["citations", "runs", "own_rate"]
@@ -227,6 +238,7 @@ class DomainLeagueRow:
     first_seen: date
     last_seen: date
     is_own_domain: bool
+    domain_type: str | None
 
 
 def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit: int) -> list[DomainLeagueRow]:
@@ -252,6 +264,26 @@ def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit
         .limit(limit)
     ).all()
 
+    # Looked up by normalize_domain() in Python rather than a SQL join on a normalized
+    # expression — domain_classifications is keyed by the same normalize_domain() output used
+    # everywhere else (is_own_domain, mention_visibility), and duplicating that normalization
+    # rule as a second, SQL-side expression is exactly the two-independent-copies drift this
+    # module already avoids elsewhere (see is_own_domain's own docstring). The row count here
+    # is capped by `limit` (dashboard default/max far below anything that makes a second small
+    # query costly).
+    classifications = (
+        {
+            c.domain: c.domain_type
+            for c in db.scalars(
+                select(DomainClassification).where(
+                    DomainClassification.domain.in_({normalize_domain(row.source_domain) for row in rows})
+                )
+            ).all()
+        }
+        if rows
+        else {}
+    )
+
     return [
         DomainLeagueRow(
             rank=rank,
@@ -261,6 +293,7 @@ def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit
             first_seen=row.first_seen.date(),
             last_seen=row.last_seen.date(),
             is_own_domain=is_own_domain(row.source_domain, client.domain),
+            domain_type=classifications.get(normalize_domain(row.source_domain)),
         )
         for rank, row in enumerate(rows, start=1)
     ]
