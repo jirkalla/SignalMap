@@ -195,6 +195,8 @@ feat(dashboard): add citation league table and time series aggregation API
 
 ## PROMPT P4-3 — Dashboard stránka + Vue3 ostrůvek
 
+### DONE — commit 760ba51
+
 ```
 Task: Prompt P4-3 — dashboard page with Vue3 island
 
@@ -256,6 +258,8 @@ feat(dashboard): add dashboard page with Vue3 filter/table/chart island
 ---
 
 ## PROMPT P4-4 — Empty states + responsive polish
+
+### DONE — commit 41463f6
 
 ```
 Task: Prompt P4-4 — dashboard empty states and responsive polish
