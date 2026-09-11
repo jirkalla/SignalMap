@@ -44,6 +44,7 @@
       </select>
     </div>
     <div v-show="loading" class="text-xs text-stone-400 pb-2">{{ t('dashboard.loading') }}</div>
+    <a v-if="selectedClient" :href="'/clients/' + selectedClient.id" class="ml-auto inline-flex items-center px-3 py-[5px] rounded-md text-sm font-medium bg-white text-stone-700 border border-stone-300 hover:bg-stone-50 transition shrink-0">{{ t('dashboard.view_client_link') }}</a>
   </div>
 
   {# Empty-state banner — shown whenever the resolved filters match zero runs, so the four zeroed

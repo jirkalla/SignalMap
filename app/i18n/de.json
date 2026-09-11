@@ -328,5 +328,6 @@
   "dashboard.competitive_table_no_entities_note": "Keine Wettbewerber hinterlegt — füge Konkurrenten auf der Detailseite des Klienten hinzu.",
   "dashboard.competitive_table_empty": "In diesem Zeitraum noch keine analysierten Läufe.",
   "dashboard.metric_share_of_voice": "Share of Voice",
-  "dashboard.metric_position": "Position"
+  "dashboard.metric_position": "Position",
+  "dashboard.view_client_link": "Klient anzeigen"
 }

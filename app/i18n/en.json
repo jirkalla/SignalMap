@@ -328,5 +328,6 @@
   "dashboard.competitive_table_no_entities_note": "No tracked entities configured — add competitors on the client's detail page.",
   "dashboard.competitive_table_empty": "No analyzed runs in this range yet.",
   "dashboard.metric_share_of_voice": "Share of voice",
-  "dashboard.metric_position": "Position"
+  "dashboard.metric_position": "Position",
+  "dashboard.view_client_link": "View client"
 }
