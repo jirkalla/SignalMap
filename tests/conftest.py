@@ -98,12 +98,12 @@ def client(db_session: Session) -> TestClient:
 @pytest.fixture
 def seed(db_session: Session) -> dict:
     """Minimal rows every prompt/run/admin test needs: one market, both providers with one model
-    each, and the mention_visibility analysis skill.
+    each, and the mention_visibility/competitive_visibility analysis skills.
 
     Both providers are seeded (not just google_gemini) so provider/ai-model
     admin tests, and a run against either provider, all have real FK targets
-    without each test building its own — see P2-T6. The analysis skill is
-    seeded here too (not just by migration 0011) because the test database
+    without each test building its own — see P2-T6. Both analysis skills are
+    seeded here too (not just by migrations 0011/0017) because the test database
     is built via Base.metadata.create_all, never via Alembic — without this,
     _run_active_analysis_skills would silently find zero active skills.
     """
@@ -117,7 +117,14 @@ def seed(db_session: Session) -> dict:
         execution_type="rule_based",
         is_active=True,
     )
-    db_session.add_all([market, provider, anthropic_provider, analysis_skill])
+    competitive_visibility_skill = AnalysisSkill(
+        key="competitive_visibility",
+        name="Competitive Visibility Detection",
+        version=1,
+        execution_type="rule_based",
+        is_active=True,
+    )
+    db_session.add_all([market, provider, anthropic_provider, analysis_skill, competitive_visibility_skill])
     db_session.flush()
     model = AIModel(
         provider_id=provider.id,
@@ -139,6 +146,7 @@ def seed(db_session: Session) -> dict:
     db_session.refresh(anthropic_provider)
     db_session.refresh(anthropic_model)
     db_session.refresh(analysis_skill)
+    db_session.refresh(competitive_visibility_skill)
     return {
         "market": market,
         "provider": provider,
@@ -146,6 +154,7 @@ def seed(db_session: Session) -> dict:
         "anthropic_provider": anthropic_provider,
         "anthropic_model": anthropic_model,
         "analysis_skill": analysis_skill,
+        "competitive_visibility_skill": competitive_visibility_skill,
     }
 
 

@@ -182,6 +182,51 @@ def test_successful_run_stores_a_mention_visibility_analysis_result(
 
     run. sample_prompt's client is named "Test Client" (tests/conftest.py), so a rendered
     answer that literally contains that name gives a predictable, assertable output.
+
+    Both mention_visibility and competitive_visibility run for every successful run (seed fixture
+    activates both, docs/TASKS_PHASE5.md P5-T3) — this test asserts on the mention_visibility row
+    specifically; test_successful_run_also_stores_a_competitive_visibility_analysis_result below
+    covers the second one.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Test Client is known for reliability."},
+        rendered_text="Test Client is known for reliability.",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    results = db_session.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == raw_response.id)).all()
+    assert len(results) == 2
+
+    result = next(r for r in results if r.analysis_skill_id == seed["analysis_skill"].id)
+    assert result.skill_version == 1
+    assert result.output == {
+        "text_mentioned": True,
+        "mention_count": 1,
+        "first_mention_position": 0,
+        "matched_terms": ["Test Client"],
+        "match_spans": [[0, 11]],
+        "cited": False,
+        "cited_domains": [],
+    }
+
+
+def test_successful_run_also_stores_a_competitive_visibility_analysis_result(
+    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_PHASE5.md P5-T6 — competitive_visibility runs automatically alongside
+    mention_visibility, with no signature change to _run_active_analysis_skills (design decision
+    7). sample_prompt's client has no tracked_entities, so the entities array holds only the
+    client's own row — still a real, assertable output, not skipped.
     """
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Test Client is known for reliability."},
@@ -201,19 +246,21 @@ def test_successful_run_stores_a_mention_visibility_analysis_result(
     raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
     results = db_session.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == raw_response.id)).all()
 
-    assert len(results) == 1
-    result = results[0]
-    assert result.analysis_skill_id == seed["analysis_skill"].id
+    result = next(r for r in results if r.analysis_skill_id == seed["competitive_visibility_skill"].id)
     assert result.skill_version == 1
-    assert result.output == {
-        "text_mentioned": True,
-        "mention_count": 1,
-        "first_mention_position": 0,
-        "matched_terms": ["Test Client"],
-        "match_spans": [[0, 11]],
-        "cited": False,
-        "cited_domains": [],
-    }
+    assert result.output["share_of_voice"] == 1.0
+    assert result.output["position"] == 1
+    assert result.output["entities"] == [
+        {
+            "name": "Test Client",
+            "is_own_client": True,
+            "mentioned": True,
+            "mention_count": 1,
+            "first_position": 0,
+            "cited": False,
+            "cited_domains": [],
+        }
+    ]
 
 
 def test_analysis_engine_failure_never_fails_the_run(
