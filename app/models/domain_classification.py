@@ -7,6 +7,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
+# Alembic migrations don't import application code (they must stay runnable against whatever
+# the model looked like at the time they were written), so migration 0016 hardcodes this same
+# tuple independently for its CHECK constraint. Changing the set of valid types here requires a
+# new migration to ALTER that constraint too — editing this tuple alone does not touch the
+# already-deployed database.
 DOMAIN_TYPES = ("institutional", "editorial", "corporate", "reference", "ugc", "other")
 
 

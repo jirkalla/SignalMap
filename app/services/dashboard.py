@@ -57,11 +57,15 @@ def previous_range_bounds(date_from: datetime | None, date_to: datetime | None) 
 
     None when either bound is open — "all time" (range="all") has no natural predecessor to compare
     against, so there's nothing meaningful to return rather than an arbitrary window.
+
+    The returned end is one microsecond before `date_from`, not `date_from` itself — both bounds in
+    `scoped_run_ids_query` are inclusive (`>=`/`<=`), so a run started at exactly `date_from` would
+    otherwise be counted in both the current and the previous period.
     """
     if date_from is None or date_to is None:
         return None
     length = date_to - date_from
-    return date_from - length, date_from
+    return date_from - length, date_from - timedelta(microseconds=1)
 
 
 def delta_pct(current: int | float, previous: int | float) -> float | None:

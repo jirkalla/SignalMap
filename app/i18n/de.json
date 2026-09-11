@@ -252,6 +252,7 @@
   "analysis.competitive_section_title": "Wettbewerbssichtbarkeit",
   "analysis.share_of_voice_label": "Share of Voice",
   "analysis.position_label": "Position",
+  "analysis.first_position_label": "Erste Position",
   "analysis.no_tracked_entities": "Für diesen Klienten sind noch keine Wettbewerber hinterlegt — füge Konkurrenten auf der Detailseite des Klienten hinzu, um die Sichtbarkeit zu vergleichen.",
   "analysis.own_client_badge": "Eigener Klient",
   "analysis.competitor_badge": "Wettbewerber",

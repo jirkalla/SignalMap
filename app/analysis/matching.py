@@ -1,12 +1,16 @@
-"""Shared candidate-matching helper for rule_based analysis skills.
+"""Shared candidate-matching helpers for rule_based analysis skills.
 
 Used by both mention_visibility (docs/TASKS_PHASE3.md) and competitive_visibility
 (docs/TASKS_PHASE5.md P5-T5) — moved here from mention_visibility.py so a second skill can
-reuse the exact same word-boundary/case-insensitive/longest-match-first regex logic instead of
-a second, independently-maintained copy (docs/TASKS_PHASE5.md design decision 2).
+reuse the exact same word-boundary/case-insensitive/longest-match-first regex logic, and the
+same own-domain citation matching, instead of a second, independently-maintained copy
+(docs/TASKS_PHASE5.md design decision 2).
 """
 
 import re
+
+from app.models import Citation
+from app.utils import is_own_domain
 
 
 def match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[int]], list[str]]:
@@ -34,3 +38,13 @@ def match_spans(rendered_text: str, candidates: list[str]) -> tuple[list[list[in
 
     matched_terms = list(dict.fromkeys(c for c in candidates if c in matched))
     return spans, matched_terms
+
+
+def matching_citation_domains(entity_domain: str | None, citations: list[Citation]) -> list[str]:
+    """Original (non-normalized) source_domain values that match `entity_domain`, exactly or as a
+    subdomain (docs/TASKS_PHASE3.md design decision 6) — see app.utils.is_own_domain for the
+    shared comparison rule.
+    """
+    if not entity_domain:
+        return []
+    return [c.source_domain for c in citations if is_own_domain(c.source_domain, entity_domain)]

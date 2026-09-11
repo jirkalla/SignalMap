@@ -9,19 +9,8 @@ module implements them as written, not a reinvented variant.
 
 from typing import Any
 
-from app.analysis.matching import match_spans
+from app.analysis.matching import match_spans, matching_citation_domains
 from app.models import Citation, Client
-from app.utils import is_own_domain
-
-
-def _matching_citation_domains(client_domain: str | None, citations: list[Citation]) -> list[str]:
-    """Original (non-normalized) source_domain values that match the client's own domain,
-    exactly or as a subdomain (design decision 6) — see app.utils.is_own_domain for the shared
-    comparison rule.
-    """
-    if not client_domain:
-        return []
-    return [c.source_domain for c in citations if is_own_domain(c.source_domain, client_domain)]
 
 
 class MentionVisibilityRunner:
@@ -35,7 +24,7 @@ class MentionVisibilityRunner:
         else:
             spans, matched_terms = [], []
 
-        cited_domains = _matching_citation_domains(client.domain, citations)
+        cited_domains = matching_citation_domains(client.domain, citations)
 
         return {
             "text_mentioned": len(spans) > 0,

@@ -72,6 +72,23 @@ def _prompt_sets_for_client(db: Session, client_id: int) -> list[PromptSet]:
     )
 
 
+def _client_detail_conflict_response(request: Request, db: Session, client: Client, error_message: str):
+    """Re-render the client detail page with a 409 error banner — the shared shape for every
+    conflict on this page (a duplicate alias/tracked entity, or a blocked delete), so each route
+    doesn't redefine the same render() call with only the error message differing.
+    """
+    return render(
+        request,
+        "clients/detail.html",
+        {
+            "client": client,
+            "prompt_sets": _prompt_sets_for_client(db, client.id),
+            "error": error_message,
+        },
+        status_code=409,
+    )
+
+
 def _client_run_count(db: Session, client_id: int) -> int:
     """How many runs exist under any prompt set/prompt of this client — the delete-block check."""
     return (
@@ -196,16 +213,7 @@ def delete_client(request: Request, client_id: int, db: Session = Depends(get_db
     client = _get_client_or_404(db, request, client_id)
     run_count = _client_run_count(db, client_id)
     if run_count:
-        return render(
-            request,
-            "clients/detail.html",
-            {
-                "client": client,
-                "prompt_sets": _prompt_sets_for_client(db, client_id),
-                "error": t("errors.client_in_use").format(count=run_count),
-            },
-            status_code=409,
-        )
+        return _client_detail_conflict_response(request, db, client, t("errors.client_in_use").format(count=run_count))
     db.delete(client)
     db.commit()
     return RedirectResponse(url="/clients", status_code=303)
@@ -236,29 +244,17 @@ def create_client_alias(
     client = _get_client_or_404(db, request, client_id)
     alias = alias.strip()
 
-    def _duplicate_response():
-        return render(
-            request,
-            "clients/detail.html",
-            {
-                "client": client,
-                "prompt_sets": _prompt_sets_for_client(db, client_id),
-                "error": t("errors.client_alias_duplicate"),
-            },
-            status_code=409,
-        )
-
     existing = db.scalar(
         select(ClientAlias).where(ClientAlias.client_id == client_id, func.lower(ClientAlias.alias) == alias.lower())
     )
     if existing is not None:
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.client_alias_duplicate"))
     db.add(ClientAlias(client_id=client_id, alias=alias))
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.client_alias_duplicate"))
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
@@ -294,31 +290,19 @@ def create_tracked_entity(
     client = _get_client_or_404(db, request, client_id)
     name = name.strip()
 
-    def _duplicate_response():
-        return render(
-            request,
-            "clients/detail.html",
-            {
-                "client": client,
-                "prompt_sets": _prompt_sets_for_client(db, client_id),
-                "error": t("errors.tracked_entity_duplicate"),
-            },
-            status_code=409,
-        )
-
     existing = db.scalar(
         select(TrackedEntity).where(
             TrackedEntity.client_id == client_id, func.lower(TrackedEntity.name) == name.lower()
         )
     )
     if existing is not None:
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.tracked_entity_duplicate"))
     db.add(TrackedEntity(client_id=client_id, name=name, domain=domain.strip().lower() or None))
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.tracked_entity_duplicate"))
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
@@ -349,31 +333,19 @@ def create_tracked_entity_alias(
     entity = _get_tracked_entity_or_404(db, request, client_id, entity_id)
     alias = alias.strip()
 
-    def _duplicate_response():
-        return render(
-            request,
-            "clients/detail.html",
-            {
-                "client": client,
-                "prompt_sets": _prompt_sets_for_client(db, client_id),
-                "error": t("errors.tracked_entity_duplicate"),
-            },
-            status_code=409,
-        )
-
     existing = db.scalar(
         select(TrackedEntityAlias).where(
             TrackedEntityAlias.tracked_entity_id == entity.id, func.lower(TrackedEntityAlias.alias) == alias.lower()
         )
     )
     if existing is not None:
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.tracked_entity_duplicate"))
     db.add(TrackedEntityAlias(tracked_entity_id=entity.id, alias=alias))
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        return _duplicate_response()
+        return _client_detail_conflict_response(request, db, client, t("errors.tracked_entity_duplicate"))
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 

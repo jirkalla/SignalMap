@@ -69,10 +69,10 @@
   <p class="whitespace-pre-line text-stone-900">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
 </div>
 
-{% if analysis_results %}
+{% if single_entity_analysis_results %}
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('analysis.section_title') }}</h2>
-  {% for result in analysis_results if result.analysis_skill.key != 'competitive_visibility' %}
+  {% for result in single_entity_analysis_results %}
   <div class="{{ 'border-t border-stone-100 pt-4 mt-4 first:border-t-0 first:pt-0 first:mt-0' }}">
     <div class="text-sm font-medium text-stone-900 mb-2">{{ result.analysis_skill.name }}</div>
     <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -117,7 +117,7 @@
           <th class="py-2 px-3 font-medium"></th>
           <th class="py-2 px-3 font-medium">{{ t('analysis.mentioned_yes') }}</th>
           <th class="py-2 px-3 font-medium text-right">{{ t('analysis.mention_count_label') }}</th>
-          <th class="py-2 px-3 font-medium text-right">{{ t('analysis.position_label') }}</th>
+          <th class="py-2 px-3 font-medium text-right">{{ t('analysis.first_position_label') }}</th>
         </tr>
       </thead>
       <tbody>

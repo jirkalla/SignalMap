@@ -16,9 +16,8 @@ match_spans() already deduplicates internally (design decision 3).
 
 from typing import Any
 
-from app.analysis.matching import match_spans
+from app.analysis.matching import match_spans, matching_citation_domains
 from app.models import Citation, Client
-from app.utils import is_own_domain
 
 
 def _entity_result(
@@ -37,7 +36,7 @@ def _entity_result(
     else:
         spans = []
 
-    cited_domains = [c.source_domain for c in citations if is_own_domain(c.source_domain, domain)] if domain else []
+    cited_domains = matching_citation_domains(domain, citations)
 
     return {
         "name": name,
@@ -64,7 +63,7 @@ class CompetitiveVisibilityRunner:
                 _entity_result(entity.name, False, entity.domain, candidates, rendered_text, citations)
             )
 
-        own = entities[0]
+        own = next(e for e in entities if e["is_own_client"])
         total_mention_count = sum(e["mention_count"] for e in entities)
         share_of_voice = round(own["mention_count"] / total_mention_count, 4) if total_mention_count else None
 

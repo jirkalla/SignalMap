@@ -391,6 +391,11 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     competitive_result = next(
         (r for r in analysis_results if r.analysis_skill.key == "competitive_visibility"), None
     )
+    # Every other skill's results (currently just mention_visibility) — competitive_visibility
+    # gets its own section below, so it's excluded here rather than filtered again in the
+    # template, which would leave the "Analysis" section heading rendered with an empty body
+    # whenever a run has a competitive_visibility result and nothing else.
+    single_entity_analysis_results = [r for r in analysis_results if r.analysis_skill.key != "competitive_visibility"]
     # Distinct from competitive_result.output.share_of_voice/position being None (which can also
     # legitimately mean "client itself wasn't mentioned") — this specifically flags "there is
     # nothing configured to compare against", so the template can show an explanatory empty
@@ -409,7 +414,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "rendered_text_html": rendered_text_html,
             "citations": citations,
             "search_queries": search_queries,
-            "analysis_results": analysis_results,
+            "single_entity_analysis_results": single_entity_analysis_results,
             "competitive_result": competitive_result,
             "tracked_entities_configured": tracked_entities_configured,
             "raw_payload_json": raw_payload_json,

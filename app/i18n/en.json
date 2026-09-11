@@ -252,6 +252,7 @@
   "analysis.competitive_section_title": "Competitive visibility",
   "analysis.share_of_voice_label": "Share of voice",
   "analysis.position_label": "Position",
+  "analysis.first_position_label": "First position",
   "analysis.no_tracked_entities": "No tracked entities configured for this client yet — add competitors on the client's detail page to compare visibility.",
   "analysis.own_client_badge": "Own client",
   "analysis.competitor_badge": "Competitor",
