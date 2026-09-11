@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.models.market import Market
     from app.models.prompt import Prompt
     from app.models.provider import AIModel
+    from app.models.user import User
 
 
 class Run(Base):
@@ -50,10 +51,14 @@ class Run(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
     request_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Nullable: a future scheduler-triggered run (docs/ROADMAP.md §5) has no human behind it —
+    # trigger_type='scheduled' + triggered_by_user_id=None together are unambiguous.
+    triggered_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
     prompt: Mapped["Prompt"] = relationship(back_populates="runs")
     model: Mapped["AIModel"] = relationship()
     market: Mapped["Market"] = relationship()
+    triggered_by: Mapped["User | None"] = relationship()
     raw_response: Mapped["RawResponse | None"] = relationship(
         back_populates="run", uselist=False, cascade="all, delete-orphan"
     )
