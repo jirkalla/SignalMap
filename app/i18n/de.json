@@ -235,6 +235,7 @@
   "run.rendered_answer_label": "Aufbereitete Antwort",
   "run.request_sent_label": "Gesendete Anfrage",
   "run.raw_json_label": "Rohantwort (JSON)",
+  "run.export_raw_json": "Rohdaten (JSON) herunterladen",
   "run.raw_json_toggle": "Rohes JSON ein-/ausblenden",
   "run.citations_label": "Quellenangaben",
   "run.citations_empty": "Für diesen Lauf wurden keine Quellenangaben zurückgegeben.",

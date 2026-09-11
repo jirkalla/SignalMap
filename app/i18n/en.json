@@ -235,6 +235,7 @@
   "run.rendered_answer_label": "Rendered answer",
   "run.request_sent_label": "Request sent",
   "run.raw_json_label": "Raw response (JSON)",
+  "run.export_raw_json": "Download raw JSON",
   "run.raw_json_toggle": "Show / hide raw JSON",
   "run.citations_label": "Citations",
   "run.citations_empty": "No citations were returned for this run.",
