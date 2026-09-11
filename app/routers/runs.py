@@ -388,6 +388,14 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             None,
         )
         rendered_text_html = _highlight_matches(raw_response.rendered_text, match_spans or [])
+    competitive_result = next(
+        (r for r in analysis_results if r.analysis_skill.key == "competitive_visibility"), None
+    )
+    # Distinct from competitive_result.output.share_of_voice/position being None (which can also
+    # legitimately mean "client itself wasn't mentioned") — this specifically flags "there is
+    # nothing configured to compare against", so the template can show an explanatory empty
+    # state instead of a technically-correct-but-misleading number (docs/TASKS_PHASE5.md P5-T6).
+    tracked_entities_configured = bool(run.prompt.prompt_set.client.tracked_entities)
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
@@ -402,6 +410,8 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "citations": citations,
             "search_queries": search_queries,
             "analysis_results": analysis_results,
+            "competitive_result": competitive_result,
+            "tracked_entities_configured": tracked_entities_configured,
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
         },
