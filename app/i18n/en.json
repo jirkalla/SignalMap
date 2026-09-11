@@ -296,5 +296,7 @@
   "dashboard.no_clients": "No clients yet — create one first.",
   "dashboard.no_runs_in_range": "No runs match these filters in this range.",
   "dashboard.kpi_own_rate_no_data": "No analyzed runs yet",
-  "dashboard.table_no_domain_note": "Own-domain matching unavailable — no domain set for this client."
+  "dashboard.table_no_domain_note": "Own-domain matching unavailable — no domain set for this client.",
+  "dashboard.trend_no_data": "No prior period to compare",
+  "dashboard.trend_pp_suffix": "pp"
 }

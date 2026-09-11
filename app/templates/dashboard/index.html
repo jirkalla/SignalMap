@@ -57,10 +57,16 @@
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('dashboard.kpi_runs') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? summary.runs_count : '—' ]]</div>
+      <div v-if="summary" class="text-xs mt-1" :class="summary.runs_count_delta_pct !== null ? deltaClass(summary.runs_count_delta_pct) : 'text-stone-400'">
+        [[ summary.runs_count_delta_pct !== null ? formatDeltaPct(summary.runs_count_delta_pct) : trendNoDataLabel ]]
+      </div>
     </div>
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('dashboard.kpi_citations') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? summary.citations_count : '—' ]]</div>
+      <div v-if="summary" class="text-xs mt-1" :class="summary.citations_count_delta_pct !== null ? deltaClass(summary.citations_count_delta_pct) : 'text-stone-400'">
+        [[ summary.citations_count_delta_pct !== null ? formatDeltaPct(summary.citations_count_delta_pct) : trendNoDataLabel ]]
+      </div>
     </div>
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('dashboard.kpi_domains') }}</div>
@@ -75,6 +81,9 @@
           [[ selectedClient && !selectedClient.domain ? clientDomainMissingLabel : noAnalyzedRunsLabel ]]
         </div>
       </template>
+      <div v-if="summary && summary.own_domain_rate !== null" class="text-xs mt-1" :class="summary.own_domain_rate_delta_pct !== null ? deltaClass(summary.own_domain_rate_delta_pct) : 'text-stone-400'">
+        [[ summary.own_domain_rate_delta_pct !== null ? formatDeltaPp(summary.own_domain_rate_delta_pct) : trendNoDataLabel ]]
+      </div>
     </div>
   </div>
 
@@ -163,6 +172,8 @@
   const locale = {{ locale | tojson }};
   const clientDomainMissingLabel = {{ t('dashboard.kpi_own_rate_no_domain') | tojson }};
   const noAnalyzedRunsLabel = {{ t('dashboard.kpi_own_rate_no_data') | tojson }};
+  const trendNoDataLabel = {{ t('dashboard.trend_no_data') | tojson }};
+  const trendPpSuffix = {{ t('dashboard.trend_pp_suffix') | tojson }};
 
   const chartW = 560, chartH = 200, padL = 34, padR = 8, padT = 10, padB = 20;
   const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
@@ -332,12 +343,28 @@
         return max ? Math.round((row.citations_count / max) * 100) : 0;
       }
 
+      // Trend delta helpers (P5-T1) — deltaClass colors a value by sign, formatDeltaPct renders a
+      // relative percent change (runs/citations), formatDeltaPp renders a percentage-point change
+      // (own_domain_rate is itself already a percentage, so its delta is expressed in points, not a
+      // relative percent — see DashboardSummary.own_domain_rate_delta_pct description).
+      function deltaClass(v) {
+        if (v > 0) return 'text-emerald-600';
+        if (v < 0) return 'text-rose-600';
+        return 'text-stone-400';
+      }
+      function formatDeltaPct(v) {
+        return (v > 0 ? '+' : '') + v + '%';
+      }
+      function formatDeltaPp(v) {
+        return (v > 0 ? '+' : '') + v + ' ' + trendPpSuffix;
+      }
+
       return {
         clients, markets, providers, filters, metric, summary, domains, timeseries, loading,
-        selectedClient, clientDomainMissingLabel, noAnalyzedRunsLabel,
+        selectedClient, clientDomainMissingLabel, noAnalyzedRunsLabel, trendNoDataLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH,
         points, linePath, areaPath, xLabels, gridLines, hover,
-        onChartMove, onChartLeave, formatWeekLabel, shareWidth,
+        onChartMove, onChartLeave, formatWeekLabel, shareWidth, deltaClass, formatDeltaPct, formatDeltaPp,
       };
     },
   });

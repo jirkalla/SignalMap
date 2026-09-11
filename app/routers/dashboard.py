@@ -53,6 +53,23 @@ class DashboardSummary(BaseModel):
         "mention_visibility result computed at run time. None when the client has no domain set, or no run "
         "in range has been analyzed yet.",
     )
+    runs_count_delta_pct: float | None = Field(
+        ...,
+        description="Relative percent change in runs_count versus the immediately preceding period of equal "
+        "length (e.g. the prior 30 days for range=30d). None when range=all (no natural prior period) or the "
+        "prior period had zero runs (percent change from zero is undefined).",
+    )
+    citations_count_delta_pct: float | None = Field(
+        ...,
+        description="Relative percent change in citations_count versus the immediately preceding period of "
+        "equal length. None under the same conditions as runs_count_delta_pct.",
+    )
+    own_domain_rate_delta_pct: float | None = Field(
+        ...,
+        description="Change in own_domain_rate versus the immediately preceding period, in percentage points "
+        "(not a relative percent — own_domain_rate is itself already a percentage, e.g. 40% -> 55% is +15, not "
+        "+37.5%). None when range=all, or either period's own_domain_rate is itself None.",
+    )
 
 
 class DomainRow(BaseModel):
@@ -91,6 +108,7 @@ class DashboardScope:
 
     client: Client
     run_ids_query: Select
+    previous_run_ids_query: Select | None
     date_from: datetime | None
     date_to: datetime | None
 
@@ -106,11 +124,30 @@ def _dashboard_scope(
     """Resolve `client_id` (404 if unknown) and the shared client/date/market/provider filter set
     into one `DashboardScope`, reused by every JSON endpoint via FastAPI's per-request dependency
     caching (this runs once per request even though multiple things depend on it).
+
+    `previous_run_ids_query` is the same filter set applied to the immediately preceding period of
+    equal length (for trend deltas, docs/TASKS_PHASE5.md P5-T1) — built here rather than in the
+    summary route so it stays a single source of truth alongside `run_ids_query`, and so a future
+    endpoint besides `/api/summary` can reuse it without recomputing the filter set itself.
     """
     client = _get_client_or_404(db, request, client_id)
     date_from, date_to = dashboard_service.range_bounds(range)
     run_ids_query = dashboard_service.scoped_run_ids_query(client_id, date_from, date_to, market_id, provider_id)
-    return DashboardScope(client=client, run_ids_query=run_ids_query, date_from=date_from, date_to=date_to)
+
+    previous_bounds = dashboard_service.previous_range_bounds(date_from, date_to)
+    previous_run_ids_query = (
+        dashboard_service.scoped_run_ids_query(client_id, previous_bounds[0], previous_bounds[1], market_id, provider_id)
+        if previous_bounds is not None
+        else None
+    )
+
+    return DashboardScope(
+        client=client,
+        run_ids_query=run_ids_query,
+        previous_run_ids_query=previous_run_ids_query,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 
 @router.get("", include_in_schema=False)
@@ -149,18 +186,39 @@ def dashboard_page(
 
 @router.get("/api/summary", response_model=DashboardSummary)
 def dashboard_summary(scope: DashboardScope = Depends(_dashboard_scope), db: Session = Depends(get_db)) -> DashboardSummary:
-    """KPI totals for one client: run/citation counts, distinct domains, and own-domain citation rate.
+    """KPI totals for one client: run/citation counts, distinct domains, own-domain citation rate, and
+    each metric's period-over-period trend delta.
 
     Backs the dashboard's KPI tiles. `own_domain_rate` reuses the phase 3 `mention_visibility` result
-    rather than recomputing domain matching here — see docs/TASKS_PHASE4.md design decision 6.
+    rather than recomputing domain matching here — see docs/TASKS_PHASE4.md design decision 6. The
+    `*_delta_pct` fields compare against the immediately preceding period of equal length (see
+    `DashboardScope.previous_run_ids_query`) — see docs/TASKS_PHASE5.md P5-T1 design decision 10.
     """
     runs_count = dashboard_service.count_runs(db, scope.run_ids_query)
     citations_count, distinct_domains_count = dashboard_service.citation_totals(db, scope.run_ids_query)
+    own_domain_rate = dashboard_service.own_domain_rate(db, scope.client, scope.run_ids_query)
+
+    runs_count_delta_pct: float | None = None
+    citations_count_delta_pct: float | None = None
+    own_domain_rate_delta_pct: float | None = None
+    if scope.previous_run_ids_query is not None:
+        previous_runs_count = dashboard_service.count_runs(db, scope.previous_run_ids_query)
+        previous_citations_count, _ = dashboard_service.citation_totals(db, scope.previous_run_ids_query)
+        previous_own_domain_rate = dashboard_service.own_domain_rate(db, scope.client, scope.previous_run_ids_query)
+
+        runs_count_delta_pct = dashboard_service.delta_pct(runs_count, previous_runs_count)
+        citations_count_delta_pct = dashboard_service.delta_pct(citations_count, previous_citations_count)
+        if own_domain_rate is not None and previous_own_domain_rate is not None:
+            own_domain_rate_delta_pct = round(own_domain_rate - previous_own_domain_rate, 1)
+
     return DashboardSummary(
         runs_count=runs_count,
         citations_count=citations_count,
         distinct_domains_count=distinct_domains_count,
-        own_domain_rate=dashboard_service.own_domain_rate(db, scope.client, scope.run_ids_query),
+        own_domain_rate=own_domain_rate,
+        runs_count_delta_pct=runs_count_delta_pct,
+        citations_count_delta_pct=citations_count_delta_pct,
+        own_domain_rate_delta_pct=own_domain_rate_delta_pct,
     )
 
 

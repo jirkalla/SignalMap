@@ -296,5 +296,7 @@
   "dashboard.no_clients": "Noch keine Klienten — lege zuerst einen an.",
   "dashboard.no_runs_in_range": "Keine Läufe für diese Filter in diesem Zeitraum.",
   "dashboard.kpi_own_rate_no_data": "Noch keine analysierten Läufe",
-  "dashboard.table_no_domain_note": "Abgleich mit eigener Domain nicht möglich — keine Domain für diesen Klienten hinterlegt."
+  "dashboard.table_no_domain_note": "Abgleich mit eigener Domain nicht möglich — keine Domain für diesen Klienten hinterlegt.",
+  "dashboard.trend_no_data": "Kein Vorzeitraum zum Vergleich",
+  "dashboard.trend_pp_suffix": "Pp."
 }

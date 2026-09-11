@@ -39,6 +39,30 @@ def range_bounds(range_: DashboardRange) -> tuple[datetime | None, datetime | No
     return quarter_start, now
 
 
+def previous_range_bounds(date_from: datetime | None, date_to: datetime | None) -> tuple[datetime, datetime] | None:
+    """The period of equal length immediately preceding (date_from, date_to), for period-over-period
+    trend deltas (docs/TASKS_PHASE5.md P5-T1, design decision 10).
+
+    None when either bound is open — "all time" (range="all") has no natural predecessor to compare
+    against, so there's nothing meaningful to return rather than an arbitrary window.
+    """
+    if date_from is None or date_to is None:
+        return None
+    length = date_to - date_from
+    return date_from - length, date_from
+
+
+def delta_pct(current: int | float, previous: int | float) -> float | None:
+    """Relative percent change from `previous` to `current`, rounded to one decimal.
+
+    None when `previous` is 0 — division by zero has no meaningful percent-change answer, and
+    treating it as 0% (no change) or an arbitrarily large number would both be misleading.
+    """
+    if not previous:
+        return None
+    return round(100 * (current - previous) / previous, 1)
+
+
 def scoped_run_ids_query(
     client_id: int,
     date_from: datetime | None,
