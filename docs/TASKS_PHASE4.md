@@ -96,7 +96,7 @@
 | P4-T2 | Dashboard JSON API: agregační dotazy (summary/domains/timeseries) | ✅ |
 | P4-T3 | Dashboard stránka + Vue3 ostrůvek (filtry, KPI, league table, graf) | ✅ |
 | P4-T4 | Empty states + responsive polish | ✅ |
-| P4-T5 | Testy: agregační dotazy + API endpointy | ⏳ |
+| P4-T5 | Testy: agregační dotazy + API endpointy | ✅ |
 
 Pořadí je vynucené: P4-T2 potřebuje index/helper z P4-T1 (`normalize_domain` pro own-
 domain výpočet v `domains` endpointu); P4-T3 staví na API z P4-T2 (Vue fetchuje z
@@ -315,20 +315,28 @@ test: cover dashboard aggregation queries and API endpoints
 
 ## Completion Checklist
 
-- [ ] `citations.source_domain`/`prompts.prompt_set_id`/`runs.started_at` mají indexy;
-      `normalize_domain` je sdílený helper v `app/utils.py`, `mention_visibility.py`
-      ho importuje místo vlastní kopie
-- [ ] `/dashboard/api/summary|domains|timeseries` fungují, zdokumentované ve Swaggeru,
+- [x] `citations.source_domain`/`prompts.prompt_set_id`/`runs.started_at` (+ dodatečně
+      `citations.raw_response_id`, migrace 0015, nalezeno code review passem) mají
+      indexy; `normalize_domain`/`is_own_domain` jsou sdílené helpery v `app/utils.py`,
+      `mention_visibility.py` je importuje místo vlastní kopie
+- [x] `/dashboard/api/summary|domains|timeseries` fungují, zdokumentované ve Swaggeru,
       strukturované chyby na chybějící/neexistující `client_id`
-- [ ] `/dashboard` — filtry, KPI dlaždice, league table, time series graf fungují nad
+- [x] `/dashboard` — filtry, KPI dlaždice, league table, time series graf fungují nad
       reálnými daty, filtr se mění bez reloadu stránky
-- [ ] Own-domain citation rate čte `analysis_results` (fáze 3), nepočítá se znovu
-- [ ] Empty states (žádné běhy, chybějící `domain`) neukazují zavádějící čísla
-- [ ] `pytest` sada zelená, pokrývá agregační dotazy i API endpointy
-- [ ] `docs/TASKS.md` — poznámka, že fáze 4 větev existuje a co pokrývá (odkaz na
-      tenhle soubor) — **hotovo v rámci přípravy tohoto dokumentu**, ověřit že zůstává
-      aktuální po mergi
-- [ ] `docs/REQUIREMENTS.md` §4 "Explicitly Out of Scope" — odstranit/upravit
-      "Dashboard, source/signal map, intervention hypotheses" řádek (jen "Dashboard"
-      část — source/signal map a intervention hypotheses zůstávají mimo rozsah, to
-      jsou pozdější fáze), jakmile je větev smergnutá
+- [x] Own-domain citation rate čte `analysis_results` (fáze 3), nepočítá se znovu
+- [x] Empty states (žádné běhy, chybějící `domain`) neukazují zavádějící čísla
+- [x] `pytest` sada zelená (81 testů), pokrývá agregační dotazy, API endpointy i
+      cross-client izolaci
+- [x] `docs/TASKS.md` — poznámka, že fáze 4 větev existuje a co pokrývá (odkaz na
+      tenhle soubor) — hotovo v rámci přípravy tohoto dokumentu, aktuální po mergi
+- [x] `docs/REQUIREMENTS.md` §4 "Explicitly Out of Scope" — "Dashboard" a "Vue3
+      interactive components" odstraněny (amendment 2026-09-11); source/signal map a
+      intervention hypotheses zůstávají mimo rozsah
+- [x] Code review (security/DRY focus, `/code-review high --focus security,dry`) proti
+      celé větvi, 10 nálezů — všechny opravené a znovu ověřené (81/81 testů, curl proti
+      reálným datům před/po refactoru identický, browser smoke test bez chyb) — league
+      table tiebreaker, UTC-pinned week bucketing, `tojson` U+2028/U+2029 escaping,
+      sdílený `is_own_domain`/own-domain-rate helper, sloučené summary dotazy, chybějící
+      index, extrakce agregační logiky do `app/services/dashboard.py`, sdílená
+      `DashboardScope` dependency, cross-client izolační test. Následný lehký spot-check
+      jen na `app/services/dashboard.py` (nový soubor z refactoru) — bez nálezů.

@@ -159,7 +159,7 @@ Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE3.md` and
 
 ## Phase 4: Dashboard v0 — domain league table + time series
 
-Branch `feature/signalmap-phase4-dashboard-v0` (planned 2026-09-10, not yet started).
+Branch `feature/signalmap-phase4-dashboard-v0` (implemented 2026-09-10/11, PR pending).
 Adds the first dashboard screen: for one selected client, a league table of the domains
 AI providers cite when talking about them, and a weekly time series of citation/run
 volume — built entirely from `citations`/`runs`/`raw_responses` that already exist, no

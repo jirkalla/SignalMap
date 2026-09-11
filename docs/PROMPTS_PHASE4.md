@@ -297,6 +297,9 @@ feat(dashboard): handle empty states and verify responsive layout
 
 ## PROMPT P4-5 — Testy
 
+### DONE — commit 17a7412 (plus code-review fix pass: commit a81323e, findings viz
+docs/TASKS_PHASE4.md Completion Checklist)
+
 ```
 Task: Prompt P4-5 — test coverage for dashboard aggregation and API
 
