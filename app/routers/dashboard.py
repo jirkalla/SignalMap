@@ -73,6 +73,12 @@ class DashboardSummary(BaseModel):
         "(not a relative percent — own_domain_rate is itself already a percentage, e.g. 40% -> 55% is +15, not "
         "+37.5%). None when range=all, or either period's own_domain_rate is itself None.",
     )
+    share_of_voice: float | None = Field(
+        ...,
+        description="Average share (0-100) of mentions held by the client itself among its tracked competitors, "
+        "across analyzed runs in range (competitive_visibility skill, docs/TASKS_PHASE5.md). None when the "
+        "client has no tracked entities configured, or no run in range has been analyzed yet.",
+    )
 
 
 class DomainRow(BaseModel):
@@ -99,6 +105,21 @@ class DomainClassifyResponse(BaseModel):
 
     domain: str
     domain_type: str
+
+
+class EntityRow(BaseModel):
+    """One row of the competitive league table (own client + tracked competitors)."""
+
+    rank: int
+    name: str
+    is_own_client: bool = Field(..., description="True for the client's own row, False for a tracked competitor.")
+    avg_mention_count: float = Field(..., description="Average mention count per analyzed run in range.")
+    avg_first_position: float | None = Field(
+        ...,
+        description="Average character position of this entity's first mention, across only the runs where it "
+        "was actually mentioned. None when it was never mentioned in any run in range.",
+    )
+    run_coverage_pct: float = Field(..., description="Share (0-100) of runs in range where this entity was mentioned.")
 
 
 class WeekPoint(BaseModel):
@@ -190,7 +211,10 @@ def dashboard_page(
         "dashboard/index.html",
         {
             "dashboard_init": {
-                "clients": [{"id": c.id, "name": c.name, "domain": c.domain} for c in clients],
+                "clients": [
+                    {"id": c.id, "name": c.name, "domain": c.domain, "tracked_entities_count": len(c.tracked_entities)}
+                    for c in clients
+                ],
                 "markets": [{"id": m.id, "label": m.locale_name or m.code} for m in markets],
                 "providers": [{"id": p.id, "name": p.name} for p in providers],
                 "initial_client_id": valid_client_id,
@@ -212,6 +236,7 @@ def dashboard_summary(scope: DashboardScope = Depends(_dashboard_scope), db: Ses
     runs_count = dashboard_service.count_runs(db, scope.run_ids_query)
     citations_count, distinct_domains_count = dashboard_service.citation_totals(db, scope.run_ids_query)
     own_domain_rate = dashboard_service.own_domain_rate(db, scope.client, scope.run_ids_query)
+    share_of_voice = dashboard_service.avg_share_of_voice(db, scope.run_ids_query)
 
     runs_count_delta_pct: float | None = None
     citations_count_delta_pct: float | None = None
@@ -234,6 +259,7 @@ def dashboard_summary(scope: DashboardScope = Depends(_dashboard_scope), db: Ses
         runs_count_delta_pct=runs_count_delta_pct,
         citations_count_delta_pct=citations_count_delta_pct,
         own_domain_rate_delta_pct=own_domain_rate_delta_pct,
+        share_of_voice=share_of_voice,
     )
 
 
@@ -283,15 +309,32 @@ def classify_domain(
     return DomainClassifyResponse(domain=normalized, domain_type=domain_type)
 
 
+@router.get("/api/entities", response_model=list[EntityRow])
+def dashboard_entities(scope: DashboardScope = Depends(_dashboard_scope), db: Session = Depends(get_db)) -> list[EntityRow]:
+    """Competitive league table: the client itself plus every tracked competitor, ranked by average
+    mention count (docs/TASKS_PHASE5.md P5-T7).
+
+    Reads the competitive_visibility skill's per-run `entities` array, not a client-configuration
+    listing — a client with tracked_entities configured but zero analyzed runs in range still comes
+    back empty here (nothing to aggregate yet), same "explicit empty state, not a misleading number"
+    instinct as the rest of the dashboard.
+    """
+    rows = dashboard_service.entity_league_rows(db, scope.run_ids_query)
+    return [EntityRow(**vars(row)) for row in rows]
+
+
 @router.get("/api/timeseries", response_model=TimeseriesResponse)
 def dashboard_timeseries(
     scope: DashboardScope = Depends(_dashboard_scope),
     metric: DashboardMetric = Query(
-        "citations", description="Weekly metric to return: citations, runs, or own_rate (own-domain citation %)."
+        "citations",
+        description="Weekly metric to return: citations, runs, own_rate (own-domain citation %), "
+        "share_of_voice, or position (both from the competitive_visibility skill).",
     ),
     db: Session = Depends(get_db),
 ) -> TimeseriesResponse:
-    """Weekly time series for one client: citation volume, run volume, or own-domain citation rate.
+    """Weekly time series for one client: citation volume, run volume, own-domain citation rate,
+    share of voice, or competitive position.
 
     Buckets are calendar weeks (Monday-start). Every week between the resolved date bounds is present
     with value=0 when there is no data that week — never a gap, so a chart never has to guess whether a

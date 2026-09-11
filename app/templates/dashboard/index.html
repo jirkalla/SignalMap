@@ -85,6 +85,16 @@
         [[ summary.own_domain_rate_delta_pct !== null ? formatDeltaPp(summary.own_domain_rate_delta_pct) : trendNoDataLabel ]]
       </div>
     </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('dashboard.kpi_share_of_voice') }}</div>
+      <div class="text-2xl font-semibold font-mono text-emerald-700" v-if="hasTrackedEntities && summary && summary.share_of_voice !== null">[[ summary.share_of_voice ]]<span class="text-base">%</span></div>
+      <template v-else>
+        <div class="text-2xl font-semibold font-mono text-stone-300">—</div>
+        <div class="text-xs text-stone-400 mt-0.5">
+          [[ !hasTrackedEntities ? noTrackedEntitiesLabel : noAnalyzedRunsLabel ]]
+        </div>
+      </template>
+    </div>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-4">
@@ -143,10 +153,12 @@
       <div class="px-4 py-3 border-b border-stone-100 flex items-center justify-between gap-2">
         <h2 class="text-sm font-semibold">{{ t('dashboard.chart_title') }}</h2>
       </div>
-      <div class="flex gap-1.5 px-4 pt-3">
+      <div class="flex gap-1.5 px-4 pt-3 flex-wrap">
         <button type="button" @click="metric = 'citations'" :class="metric === 'citations' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'" class="px-2.5 py-1 rounded-full text-xs font-medium border">{{ t('dashboard.metric_citations') }}</button>
         <button type="button" @click="metric = 'runs'" :class="metric === 'runs' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'" class="px-2.5 py-1 rounded-full text-xs font-medium border">{{ t('dashboard.metric_runs') }}</button>
         <button type="button" @click="metric = 'own_rate'" :class="metric === 'own_rate' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'" class="px-2.5 py-1 rounded-full text-xs font-medium border">{{ t('dashboard.metric_own_rate') }}</button>
+        <button type="button" @click="metric = 'share_of_voice'" :class="metric === 'share_of_voice' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'" class="px-2.5 py-1 rounded-full text-xs font-medium border">{{ t('dashboard.metric_share_of_voice') }}</button>
+        <button type="button" @click="metric = 'position'" :class="metric === 'position' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'" class="px-2.5 py-1 rounded-full text-xs font-medium border">{{ t('dashboard.metric_position') }}</button>
       </div>
       <div class="relative p-3" v-if="points.length">
         <svg :viewBox="'0 0 ' + chartW + ' ' + chartH" class="w-full h-auto block" @pointerleave="onChartLeave">
@@ -165,6 +177,43 @@
         </div>
       </div>
       <div v-else class="p-6 text-center text-sm text-stone-400">{{ t('dashboard.chart_empty') }}</div>
+    </div>
+  </div>
+
+  {# Competitive league table (P5-T7) — mirrors the domain league table above, ranked by
+     tracked entity instead of cited domain. #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mt-4">
+    <div class="px-4 py-3 border-b border-stone-100">
+      <h2 class="text-sm font-semibold">{{ t('dashboard.competitive_table_title') }}</h2>
+      <p v-if="!hasTrackedEntities" class="text-xs text-stone-400 mt-0.5">{{ t('dashboard.competitive_table_no_entities_note') }}</p>
+    </div>
+    <div class="overflow-x-auto" v-if="hasTrackedEntities">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+          <tr>
+            <th class="py-2 px-4 font-medium">{{ t('dashboard.table_rank') }}</th>
+            <th class="py-2 px-4 font-medium">{{ t('common.name') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('analysis.mention_count_label') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('dashboard.table_cited_in') }}</th>
+            <th class="py-2 px-4 font-medium hidden sm:table-cell text-right">{{ t('analysis.position_label') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in entities" :key="row.name" class="border-t border-stone-100 hover:bg-stone-50">
+            <td class="py-2 px-4 font-mono text-xs text-stone-400">[[ row.rank ]]</td>
+            <td class="py-2 px-4 text-xs">
+              [[ row.name ]]
+              <span class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium" :class="row.is_own_client ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-600'">[[ row.is_own_client ? ownClientBadgeLabel : competitorBadgeLabel ]]</span>
+            </td>
+            <td class="py-2 px-4 text-right font-mono">[[ row.avg_mention_count ]]</td>
+            <td class="py-2 px-4 text-right font-mono text-stone-500">[[ row.run_coverage_pct ]]%</td>
+            <td class="py-2 px-4 hidden sm:table-cell text-right font-mono text-stone-500">[[ row.avg_first_position !== null ? row.avg_first_position : commonNoneLabel ]]</td>
+          </tr>
+          <tr v-if="!loading && entities.length === 0">
+            <td colspan="5" class="py-6 px-4 text-center text-stone-400">{{ t('dashboard.competitive_table_empty') }}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -189,6 +238,10 @@
   };
   const domainTypes = Object.keys(domainTypeLabels);
   const classifyPlaceholderLabel = {{ t('dashboard.domain_type_classify_placeholder') | tojson }};
+  const noTrackedEntitiesLabel = {{ t('dashboard.kpi_share_of_voice_no_entities') | tojson }};
+  const ownClientBadgeLabel = {{ t('analysis.own_client_badge') | tojson }};
+  const competitorBadgeLabel = {{ t('analysis.competitor_badge') | tojson }};
+  const commonNoneLabel = {{ t('common.none') | tojson }};
 
   const chartW = 560, chartH = 200, padL = 34, padR = 8, padT = 10, padB = 20;
   const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
@@ -219,10 +272,12 @@
       });
 
       const selectedClient = computed(() => clients.find((c) => c.id === filters.clientId) || null);
+      const hasTrackedEntities = computed(() => !!(selectedClient.value && selectedClient.value.tracked_entities_count > 0));
 
       const metric = ref('citations');
       const summary = ref(null);
       const domains = ref([]);
+      const entities = ref([]);
       const timeseries = ref({ weeks: [] });
       const loading = ref(false);
 
@@ -242,13 +297,15 @@
           const params = baseParams();
           const tsParams = new URLSearchParams(params);
           tsParams.set('metric', metric.value);
-          const [summaryRes, domainsRes, tsRes] = await Promise.all([
+          const [summaryRes, domainsRes, entitiesRes, tsRes] = await Promise.all([
             fetch('/dashboard/api/summary?' + params.toString()).then((r) => r.json()),
             fetch('/dashboard/api/domains?' + params.toString() + '&limit=10').then((r) => r.json()),
+            fetch('/dashboard/api/entities?' + params.toString()).then((r) => r.json()),
             fetch('/dashboard/api/timeseries?' + tsParams.toString()).then((r) => r.json()),
           ]);
           summary.value = summaryRes;
           domains.value = domainsRes;
+          entities.value = entitiesRes;
           timeseries.value = tsRes;
         } finally {
           loading.value = false;
@@ -259,7 +316,7 @@
       onMounted(fetchAll);
 
       const chartMax = computed(() => {
-        if (metric.value === 'own_rate') return 100;
+        if (metric.value === 'own_rate' || metric.value === 'share_of_voice') return 100;
         const vals = (timeseries.value.weeks || []).map((w) => w.value);
         const max = vals.length ? Math.max(...vals) : 0;
         // Floor of 4 (not 1) even for an all-zero range — niceMax(1) rounds up to just 2,
@@ -314,7 +371,8 @@
         for (let g = 0; g <= 4; g++) {
           const y = padT + plotH - (plotH * g) / 4;
           const val = (max * g) / 4;
-          lines.push({ y, label: metric.value === 'own_rate' ? Math.round(val) + '%' : Math.round(val) });
+          const isPercent = metric.value === 'own_rate' || metric.value === 'share_of_voice';
+          lines.push({ y, label: isPercent ? Math.round(val) + '%' : Math.round(val) });
         }
         return lines;
       });
@@ -325,7 +383,8 @@
       }
 
       function formatValue(v) {
-        if (metric.value === 'own_rate') return Math.round(v * 10) / 10 + '%';
+        if (metric.value === 'own_rate' || metric.value === 'share_of_voice') return Math.round(v * 10) / 10 + '%';
+        if (metric.value === 'position') return Math.round(v * 10) / 10;
         return Math.round(v);
       }
 
@@ -397,9 +456,10 @@
       }
 
       return {
-        clients, markets, providers, filters, metric, summary, domains, timeseries, loading,
-        selectedClient, clientDomainMissingLabel, noAnalyzedRunsLabel, trendNoDataLabel,
-        domainTypes, classifyPlaceholderLabel,
+        clients, markets, providers, filters, metric, summary, domains, entities, timeseries, loading,
+        selectedClient, hasTrackedEntities, clientDomainMissingLabel, noAnalyzedRunsLabel, trendNoDataLabel,
+        domainTypes, classifyPlaceholderLabel, noTrackedEntitiesLabel, ownClientBadgeLabel, competitorBadgeLabel,
+        commonNoneLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH,
         points, linePath, areaPath, xLabels, gridLines, hover,
         onChartMove, onChartLeave, formatWeekLabel, shareWidth, deltaClass, formatDeltaPct, formatDeltaPp,

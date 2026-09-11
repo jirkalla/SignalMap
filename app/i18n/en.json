@@ -321,5 +321,12 @@
   "dashboard.domain_type_ugc": "UGC",
   "dashboard.domain_type_other": "Other",
   "dashboard.domain_type_unclassified": "Unclassified",
-  "dashboard.domain_type_classify_placeholder": "Classify…"
+  "dashboard.domain_type_classify_placeholder": "Classify…",
+  "dashboard.kpi_share_of_voice": "Share of voice",
+  "dashboard.kpi_share_of_voice_no_entities": "No tracked entities",
+  "dashboard.competitive_table_title": "Competitive visibility",
+  "dashboard.competitive_table_no_entities_note": "No tracked entities configured — add competitors on the client's detail page.",
+  "dashboard.competitive_table_empty": "No analyzed runs in this range yet.",
+  "dashboard.metric_share_of_voice": "Share of voice",
+  "dashboard.metric_position": "Position"
 }

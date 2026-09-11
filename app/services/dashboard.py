@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Boolean, Float, Integer, Select, column, func, select, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -31,7 +32,7 @@ from app.models import (
 from app.utils import is_own_domain, normalize_domain
 
 DashboardRange = Literal["30d", "90d", "quarter", "all"]
-DashboardMetric = Literal["citations", "runs", "own_rate"]
+DashboardMetric = Literal["citations", "runs", "own_rate", "share_of_voice", "position"]
 
 
 def range_bounds(range_: DashboardRange) -> tuple[datetime | None, datetime | None]:
@@ -189,6 +190,34 @@ def own_domain_rate(db: Session, client: Client, run_ids_query: Select) -> float
     return round(100 * cited / total, 1)
 
 
+def _competitive_visibility_base_query(run_ids_query: Select) -> Select:
+    """AnalysisResult rows for the competitive_visibility skill, scoped to `run_ids_query` — the
+    join+filter shared by `avg_share_of_voice`, `weekly_values`'s share_of_voice/position metrics,
+    and `entity_league_rows` (docs/TASKS_PHASE5.md P5-T7), mirroring
+    `_mention_visibility_base_query`'s role for the phase 3 skill.
+    """
+    return (
+        select(AnalysisResult)
+        .join(RawResponse, AnalysisResult.raw_response_id == RawResponse.id)
+        .join(AnalysisSkill, AnalysisResult.analysis_skill_id == AnalysisSkill.id)
+        .where(AnalysisSkill.key == "competitive_visibility", RawResponse.run_id.in_(run_ids_query))
+    )
+
+
+def avg_share_of_voice(db: Session, run_ids_query: Select) -> float | None:
+    """Average share_of_voice (0-100) across competitive_visibility results in `run_ids_query`.
+
+    None when no analyzed run in scope has a non-null share_of_voice (no tracked entities
+    configured yet, or no run in range has been analyzed) — Postgres AVG() already skips SQL NULL
+    rows on its own (verified empirically, docs/TASKS_PHASE5.md P5-T7 design decision 11), so no
+    extra IS NOT NULL filter is needed to get a correct average over only the meaningful rows.
+    """
+    base = _competitive_visibility_base_query(run_ids_query)
+    value_expr = AnalysisResult.output["share_of_voice"].astext.cast(Float)
+    avg = db.scalar(base.with_only_columns(func.avg(value_expr)))
+    return round(100 * float(avg), 1) if avg is not None else None
+
+
 def weekly_values(db: Session, run_ids_query: Select, metric: DashboardMetric) -> dict[date, float]:
     """{week_start: value} for the requested metric — only weeks with at least one row, the caller
     fills every other week in range with 0 (see `week_starts`/`resolve_week_range`).
@@ -213,16 +242,29 @@ def weekly_values(db: Session, run_ids_query: Select, metric: DashboardMetric) -
         ).all()
         return {row[0].date(): float(row[1]) for row in rows}
 
-    # own_rate
-    base = _mention_visibility_base_query(run_ids_query).join(Run, RawResponse.run_id == Run.id)
-    rows = db.execute(
-        base.with_only_columns(
-            week_col,
-            func.count(AnalysisResult.id),
-            func.count(AnalysisResult.id).filter(AnalysisResult.output["cited"].astext == "true"),
-        ).group_by("week")
-    ).all()
-    return {row[0].date(): (round(100 * row[2] / row[1], 1) if row[1] else 0.0) for row in rows}
+    if metric == "own_rate":
+        base = _mention_visibility_base_query(run_ids_query).join(Run, RawResponse.run_id == Run.id)
+        rows = db.execute(
+            base.with_only_columns(
+                week_col,
+                func.count(AnalysisResult.id),
+                func.count(AnalysisResult.id).filter(AnalysisResult.output["cited"].astext == "true"),
+            ).group_by("week")
+        ).all()
+        return {row[0].date(): (round(100 * row[2] / row[1], 1) if row[1] else 0.0) for row in rows}
+
+    # share_of_voice / position — both read straight off competitive_visibility's top-level
+    # output fields (not the per-entity array), averaged per week. AVG() skips SQL NULL rows on
+    # its own (verified, see avg_share_of_voice), so weeks where every run in scope has a null
+    # value for this metric (e.g. no tracked entities, or client never mentioned) simply average
+    # to NULL here and fall back to 0.0 below, same as any other week with nothing to show.
+    field = "share_of_voice" if metric == "share_of_voice" else "position"
+    cast_type = Float if metric == "share_of_voice" else Integer
+    value_expr = AnalysisResult.output[field].astext.cast(cast_type)
+    multiplier = 100 if metric == "share_of_voice" else 1
+    base = _competitive_visibility_base_query(run_ids_query).join(Run, RawResponse.run_id == Run.id)
+    rows = db.execute(base.with_only_columns(week_col, func.avg(value_expr)).group_by("week")).all()
+    return {row[0].date(): (round(float(row[1]) * multiplier, 1) if row[1] is not None else 0.0) for row in rows}
 
 
 @dataclass
@@ -294,6 +336,74 @@ def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit
             last_seen=row.last_seen.date(),
             is_own_domain=is_own_domain(row.source_domain, client.domain),
             domain_type=classifications.get(normalize_domain(row.source_domain)),
+        )
+        for rank, row in enumerate(rows, start=1)
+    ]
+
+
+@dataclass
+class EntityLeagueRow:
+    """One row of the competitive league table — plain data, wrapped into the router's Pydantic
+    EntityRow response model (docs/TASKS_PHASE5.md P5-T7).
+    """
+
+    rank: int
+    name: str
+    is_own_client: bool
+    avg_mention_count: float
+    avg_first_position: float | None
+    run_coverage_pct: float
+
+
+def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueRow]:
+    """League table of tracked entities (own client + competitors) across `run_ids_query`, ranked
+    by average mention count.
+
+    Unnests each competitive_visibility result's `entities` JSONB array with
+    jsonb_array_elements() — a table-valued function joined via an implicit lateral join
+    (Postgres treats a set-returning function in a JOIN as lateral automatically; no explicit
+    LATERAL keyword needed — verified against the running DB, docs/TASKS_PHASE5.md P5-T7 design
+    decision 11), since entities live inside one JSON column per run rather than their own rows
+    the way citations do for the domain league table above.
+    """
+    total_runs = count_runs(db, run_ids_query)
+
+    entity_elem = func.jsonb_array_elements(AnalysisResult.output["entities"]).table_valued(
+        column("value", JSONB)
+    )
+    name_col = entity_elem.c.value["name"].astext.label("name")
+    is_own_col = entity_elem.c.value["is_own_client"].astext.cast(Boolean).label("is_own_client")
+    mentioned_col = entity_elem.c.value["mentioned"].astext.cast(Boolean)
+    mention_count_col = entity_elem.c.value["mention_count"].astext.cast(Integer)
+    first_position_col = entity_elem.c.value["first_position"].astext.cast(Integer)
+
+    rows = db.execute(
+        select(
+            name_col,
+            is_own_col,
+            func.avg(mention_count_col).label("avg_mention_count"),
+            # AVG() skips SQL NULL on its own, so entities never mentioned in any run in scope
+            # naturally get avg_first_position=None here, not an arbitrary 0.
+            func.avg(first_position_col).filter(mentioned_col).label("avg_first_position"),
+            func.count().filter(mentioned_col).label("mentioned_run_count"),
+        )
+        .select_from(AnalysisResult)
+        .join(entity_elem, true())
+        .join(RawResponse, AnalysisResult.raw_response_id == RawResponse.id)
+        .join(AnalysisSkill, AnalysisResult.analysis_skill_id == AnalysisSkill.id)
+        .where(AnalysisSkill.key == "competitive_visibility", RawResponse.run_id.in_(run_ids_query))
+        .group_by(name_col, is_own_col)
+        .order_by(func.avg(mention_count_col).desc(), name_col.asc())
+    ).all()
+
+    return [
+        EntityLeagueRow(
+            rank=rank,
+            name=row.name,
+            is_own_client=row.is_own_client,
+            avg_mention_count=round(float(row.avg_mention_count), 1),
+            avg_first_position=round(float(row.avg_first_position), 1) if row.avg_first_position is not None else None,
+            run_coverage_pct=round(100 * row.mentioned_run_count / total_runs, 1) if total_runs else 0.0,
         )
         for rank, row in enumerate(rows, start=1)
     ]
