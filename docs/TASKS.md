@@ -157,10 +157,11 @@ the `match_spans` stored at computation time.
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE3.md` and
 `docs/PROMPTS_PHASE3.md`.
 
-## Phase 4: Dashboard v0 — domain league table + time series
+## Phase 4: Dashboard v0 — domain league table + time series ✅ Done
 
-Branch `feature/signalmap-phase4-dashboard-v0` (implemented 2026-09-10/11, PR pending).
-Adds the first dashboard screen: for one selected client, a league table of the domains
+Branch `feature/signalmap-phase4-dashboard-v0`, merged 2026-09-11
+([PR #6](https://github.com/jirkalla/SignalMap/pull/6)). Adds the first dashboard
+screen: for one selected client, a league table of the domains
 AI providers cite when talking about them, and a weekly time series of citation/run
 volume — built entirely from `citations`/`runs`/`raw_responses` that already exist, no
 new analysis skill. The "own-domain citation rate" figure is the one exception — it
@@ -174,9 +175,16 @@ re-renders the table/chart without a full page reload — deliberately not a mov
 full Vue frontend (see design decision 1 in `docs/TASKS_PHASE4.md` for why, and what
 would actually trigger that move later).
 
+Includes a code-review pass (security/DRY focus, `/code-review high`) before merge —
+10 findings (deterministic league-table ranking, UTC-pinned week bucketing, `tojson`
+XSS hardening, a shared `is_own_domain()` helper replacing two duplicated copies,
+merged/indexed queries, aggregation logic extracted into `app/services/dashboard.py`,
+a cross-client data-isolation regression test) all fixed and re-verified before the PR
+was opened.
+
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE4.md` and
 `docs/PROMPTS_PHASE4.md`.
 
 ## After phase 1 (not started yet — flag if a request touches these early)
-- Dashboard, Vue islands for interactivity.
+- Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Authentication (fastapi-users) and multi-tenant scoping by client_id.
