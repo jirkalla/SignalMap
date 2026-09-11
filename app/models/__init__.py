@@ -14,6 +14,7 @@ from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, Provider
 from app.models.run import Citation, RawResponse, Run, SearchQuery
 from app.models.settings import SystemInstructionTemplate
+from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
 
 __all__ = [
     "Base",
@@ -32,4 +33,6 @@ __all__ = [
     "SystemInstructionTemplate",
     "AnalysisSkill",
     "AnalysisResult",
+    "TrackedEntity",
+    "TrackedEntityAlias",
 ]
