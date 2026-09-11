@@ -20,8 +20,21 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AIModel, AnalysisResult, AnalysisSkill, Citation, Client, Prompt, PromptSet, RawResponse, Run
+from app.models import (
+    AIModel,
+    AnalysisResult,
+    AnalysisSkill,
+    Citation,
+    Client,
+    Market,
+    Prompt,
+    PromptSet,
+    Provider,
+    RawResponse,
+    Run,
+)
 from app.routers.clients import _get_client_or_404
+from app.templating import render
 from app.utils import normalize_domain
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -170,6 +183,30 @@ def _own_domain_rate(db: Session, client: Client, run_ids_query: Select) -> floa
         select(func.count()).select_from(base.where(AnalysisResult.output["cited"].astext == "true").subquery())
     ) or 0
     return round(100 * cited / total, 1)
+
+
+@router.get("", include_in_schema=False)
+def dashboard_page(request: Request, db: Session = Depends(get_db)):
+    """Dashboard v0 page shell.
+
+    Renders only the client/market/provider option lists and the page frame — every KPI, the league
+    table, and the time series are fetched client-side by the Vue island from the JSON endpoints
+    below (design decision 10), not computed here.
+    """
+    clients = db.scalars(select(Client).order_by(Client.name)).all()
+    markets = db.scalars(select(Market).order_by(Market.code)).all()
+    providers = db.scalars(select(Provider).order_by(Provider.name)).all()
+    return render(
+        request,
+        "dashboard/index.html",
+        {
+            "dashboard_init": {
+                "clients": [{"id": c.id, "name": c.name} for c in clients],
+                "markets": [{"id": m.id, "label": m.locale_name or m.code} for m in markets],
+                "providers": [{"id": p.id, "name": p.name} for p in providers],
+            }
+        },
+    )
 
 
 @router.get("/api/summary", response_model=DashboardSummary)
