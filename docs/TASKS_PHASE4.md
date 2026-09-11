@@ -93,7 +93,7 @@
 | ID | Name | Status |
 |----|------|--------|
 | P4-T1 | Foundations: performance indexy + sdílený `normalize_domain` helper | ✅ |
-| P4-T2 | Dashboard JSON API: agregační dotazy (summary/domains/timeseries) | ⏳ |
+| P4-T2 | Dashboard JSON API: agregační dotazy (summary/domains/timeseries) | ✅ |
 | P4-T3 | Dashboard stránka + Vue3 ostrůvek (filtry, KPI, league table, graf) | ⏳ |
 | P4-T4 | Empty states + responsive polish | ⏳ |
 | P4-T5 | Testy: agregační dotazy + API endpointy | ⏳ |

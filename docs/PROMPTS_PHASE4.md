@@ -136,6 +136,8 @@ refactor(dashboard): extract shared domain-normalization helper and add supporti
 
 ## PROMPT P4-2 — Dashboard JSON API: agregační dotazy
 
+### DONE — commit 4e0d64b
+
 ```
 Task: Prompt P4-2 — dashboard aggregation API (summary/domains/timeseries)
 
