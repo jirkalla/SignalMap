@@ -40,6 +40,28 @@ def test_logout_invalidates_the_session_cookie(client: TestClient, editor_user: 
     assert after_logout.headers["location"] == "/login"
 
 
+def test_change_password_rejects_a_wrong_current_password(client: TestClient, editor_user: User):
+    """Code-review regression guard, 2026-09-12 — this route used to accept a new password from
+    any active session with no proof the caller actually knows the account's current one, which
+    would have let a stolen session cookie alone take the account over permanently.
+    """
+    login = client.post("/auth/login", data={"username": editor_user.email, "password": TEST_USER_PASSWORD})
+    assert login.status_code == 204
+
+    response = client.post(
+        "/change-password",
+        data={"current_password": "not-the-real-password", "new_password": "BrandNewPass456!"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "incorrect" in response.text.lower()
+
+    # The password must be genuinely unchanged — log in again with the ORIGINAL password.
+    relogin = client.post("/auth/login", data={"username": editor_user.email, "password": TEST_USER_PASSWORD})
+    assert relogin.status_code == 204
+
+
 def test_unauthenticated_request_to_a_protected_route_redirects_to_login(client: TestClient):
     response = client.get("/clients", follow_redirects=False)
 

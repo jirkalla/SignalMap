@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from fastapi_users.db import SQLAlchemyBaseUserTable
+from fastapi_users.password import PasswordHelper
 from sqlalchemy import Boolean, CheckConstraint, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,3 +51,34 @@ class User(SQLAlchemyBaseUserTable[int], Base):
         if len(parts) == 1:
             return parts[0][0].upper()
         return (parts[0][0] + parts[-1][0]).upper()
+
+
+def build_user(
+    *,
+    email: str,
+    password: str,
+    name: str,
+    role: str,
+    must_change_password: bool = True,
+    is_active: bool = True,
+    is_verified: bool = False,
+) -> User:
+    """Construct a valid `User` row with a properly hashed password — the one shared place every
+    account-creation path in this app builds one, instead of each re-typing the same
+    `PasswordHelper().hash(...)` + field list (`app/routers/users.py`'s `create_user`,
+    `scripts/create_admin.py`'s two modes, `scripts/seed_dev_users.py`, and `tests/conftest.py`'s
+    test fixtures all called this a "same pattern as ..." before this existed — a code review
+    caught that pattern already silently diverging between two of those call sites on `is_active`
+    handling). Caller is responsible for uniqueness-checking `email` first and adding/committing
+    the returned row.
+    """
+    return User(
+        email=email,
+        hashed_password=PasswordHelper().hash(password),
+        name=name,
+        role=role,
+        must_change_password=must_change_password,
+        is_active=is_active,
+        is_verified=is_verified,
+        is_superuser=False,
+    )

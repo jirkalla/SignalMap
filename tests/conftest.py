@@ -13,7 +13,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from fastapi.testclient import TestClient
-from fastapi_users.password import PasswordHelper
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -23,6 +22,7 @@ from app.config import get_settings
 from app.database import get_async_db, get_db
 from app.main import app
 from app.models import AIModel, AnalysisSkill, Base, Client, Market, Prompt, Provider, PromptSet, User
+from app.models.user import build_user
 from tests.fake_adapter import FakeAdapter
 
 
@@ -133,25 +133,15 @@ def client(db_session: Session) -> TestClient:
 
 
 def _seed_user(db_session: Session, *, email: str, name: str, role: str) -> User:
-    """A real account with a validly hashed password — the same synchronous PasswordHelper +
-    direct User(...) construction every account-creation path in this app already uses
-    (app/routers/users.py, scripts/create_admin.py, scripts/seed_dev_users.py), not fastapi-users'
-    async UserManager.create(). That flow expects a UserCreate schema shaped around its own base
-    fields (email/password) and has no slot for this project's required name/role columns without
-    a custom schema — sticking to the app's own established sync pattern avoids that mismatch and
-    an unnecessary event-loop bridge in a fixture, for the exact same reason those other three
-    call sites never use it either.
+    """A real account with a validly hashed password, via the same shared `build_user()` every
+    other account-creation path in this app uses (app/routers/users.py, scripts/create_admin.py,
+    scripts/seed_dev_users.py) — not fastapi-users' async `UserManager.create()`. That flow
+    expects a `UserCreate` schema shaped around its own base fields (email/password) and has no
+    slot for this project's required name/role columns without a custom schema — sticking to the
+    app's own established sync pattern avoids that mismatch and an unnecessary event-loop bridge
+    in a fixture, for the exact same reason those other call sites never use it either.
     """
-    user = User(
-        email=email,
-        hashed_password=PasswordHelper().hash(TEST_USER_PASSWORD),
-        name=name,
-        role=role,
-        must_change_password=False,
-        is_active=True,
-        is_verified=True,
-        is_superuser=False,
-    )
+    user = build_user(email=email, password=TEST_USER_PASSWORD, name=name, role=role, must_change_password=False, is_verified=True)
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)

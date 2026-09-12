@@ -55,7 +55,7 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
    docker compose exec app python -m scripts.seed_dev_users
    ```
 
-   Creates `editor@dev.local` / `viewer@dev.local`, both with the password
+   Creates `editor@local.dev` / `viewer@local.dev`, both with the password
    printed by the script. Local development only — hardcoded, disposable
    credentials that only ever exist on your own database, and the script
    refuses to run when `ENVIRONMENT=production`.

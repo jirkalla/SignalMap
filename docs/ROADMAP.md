@@ -50,11 +50,22 @@ pro bezpečnost; skryté UI prvky jsou jen UX — obojí potřeba.
 | Vytvořit/editovat/mazat (klient, prompt, tracked entity...) | ✅ | ✅ | ❌ |
 | Export (CSV/XLSX/JSON) | ✅ | ✅ | ❌ |
 | Doménová klasifikace (dashboard league table) | ✅ | ✅ | ❌ |
-| `/providers`, `/ai-models`, `/settings` | ✅ | ❌ | ❌ |
-| `/users` | ✅ | ❌ | ❌ |
+| `/providers`, `/users` | ✅ | ❌ | ❌ |
+| `/ai-models`, `/settings` | ✅ | ✅ | ❌ |
+| `/help`, `/findings` (Guide/Findings) | ✅ | ✅ | ❌ |
+| `/docs` (API dokumentace) | ✅ | ❌ | ❌ |
 
 Viewer je čistě read-only — žádná akce, co appku nebo data mění, ani je
 nestahuje.
+
+**Dodatečná úprava (2026-09-12):** `/ai-models` a `/settings` byly původně
+plánované jako admin-only (spolu s `/providers`), ale na výslovný požadavek v
+konverzaci byly otevřené i editorovi — editor smí upravovat modely a
+system-instruction šablony, ne ale spravovat providery/uživatele. `/help` a
+`/findings` byly naopak zavřené viewerovi (ten čte jen data klientů, ne interní
+dokumentaci/log). Tabulka výše odráží skutečný stav; `docs/TASKS_PHASE6.md`
+P6-T6 pořád popisuje původní (admin-only) plán jako historický záznam
+rozhodnutí v době psaní promptu, ne jako aktuální zdroj pravdy.
 
 ### Architektura
 
@@ -344,7 +355,7 @@ novou funkcionalitu:
 
 | # | Krok | Status |
 |---|------|--------|
-| 1 | Auth + user management | Návrh hotový (tenhle dokument), implementace čeká |
+| 1 | Auth + user management | Implementováno (branch `feature/signalmap-phase6-auth`, P6-T1 až P6-T8) — chybí jen systematické ověření na ~375/768px/desktop pro všechny obrazovky |
 | 2 | Deploy hardening | Neimplementováno |
 | 3 | Jít online | Čeká na 1–2 |
 | 4 | Cost/ops dashboard | Neimplementováno |

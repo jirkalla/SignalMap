@@ -44,20 +44,11 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import User
-from app.models.user import ROLES
+from app.models.user import ROLES, build_user
 
 
 def _create(db, *, email: str, name: str, password: str, role: str) -> User:
-    user = User(
-        email=email,
-        hashed_password=PasswordHelper().hash(password),
-        name=name,
-        role=role,
-        must_change_password=True,
-        is_active=True,
-        is_verified=False,
-        is_superuser=False,
-    )
+    user = build_user(email=email, password=password, name=name, role=role)
     db.add(user)
     db.commit()
     return user

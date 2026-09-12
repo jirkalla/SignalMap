@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
 # Triggering a run spends real provider API budget; exporting is read-only but still gated
-# (docs/ROADMAP.md §1 "Co je vidět komu" — viewer explicitly gets no export). Reused below
+# (docs/ROADMAP.md §1 "who sees what" — viewer explicitly gets no export). Reused below
 # instead of repeating the same Depends(...) call at each site (docs/TASKS_PHASE6.md P6-T6).
 _editor_or_admin = [Depends(require_role("admin", "editor"))]
 

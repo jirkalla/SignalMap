@@ -108,14 +108,14 @@ prostý `VARCHAR` bez DB enum typu.
 
 | ID | Name | Závislost | Status |
 |----|------|-----------|--------|
-| P6-T1 | Schema: `users` tabulka + `Run.triggered_by_user_id` | žádná | ⏳ |
-| P6-T2 | Auth backend: fastapi-users wiring, login/logout, `require_role()` | P6-T1 | ⏳ |
-| P6-T3 | Login gate + `current_user` v šablonách | P6-T2 | ⏳ |
-| P6-T4 | Admin: správa uživatelů (UI) | P6-T3 | ⏳ |
-| P6-T5 | Vynucená změna hesla po prvním přihlášení | P6-T3 | ⏳ |
-| P6-T6 | Role-based guardy a skryté UI napříč appkou | P6-T3 | ⏳ |
-| P6-T7 | Audit: `triggered_by_user_id` v `trigger_run` | P6-T2 | ⏳ |
-| P6-T8 | Testy | P6-T1 až P6-T7 | ⏳ |
+| P6-T1 | Schema: `users` tabulka + `Run.triggered_by_user_id` | žádná | ✅ |
+| P6-T2 | Auth backend: fastapi-users wiring, login/logout, `require_role()` | P6-T1 | ✅ |
+| P6-T3 | Login gate + `current_user` v šablonách | P6-T2 | ✅ |
+| P6-T4 | Admin: správa uživatelů (UI) | P6-T3 | ✅ |
+| P6-T5 | Vynucená změna hesla po prvním přihlášení | P6-T3 | ✅ |
+| P6-T6 | Role-based guardy a skryté UI napříč appkou | P6-T3 | ✅ |
+| P6-T7 | Audit: `triggered_by_user_id` v `trigger_run` | P6-T2 | ✅ |
+| P6-T8 | Testy | P6-T1 až P6-T7 | ✅ |
 
 Striktně sekvenční — na rozdíl od fáze 5 tu není žádná dvojice úkolů, co jde souběžně. P6-T4,
 P6-T5, P6-T6 mají společnou prerekvizitu P6-T3, ale mezi sebou na sobě nezávisí — jdou v
@@ -296,7 +296,7 @@ vypadají podobně, ale nemají stejnou povahu:
   `python -m scripts.create_admin --from-env`, idempotentní na rozdíl od interaktivní cesty).
 - **Testovací editor/viewer účty** — čistě lokální dev fixture, nikdy nic skutečného nechrání
   (existují jen na jednorázovém lokálním Postgresu) → **natvrdo v kódu**
-  (`scripts/seed_dev_users.py`, `editor@dev.local`/`viewer@dev.local`, pevné heslo), ne přes env
+  (`scripts/seed_dev_users.py`, `editor@local.dev`/`viewer@local.dev`, pevné heslo), ne přes env
   — stejný vzor jako Rails/Laravel seed data. Env proměnná na tohle by neřešila žádné skutečné
   riziko, jen přidávala vyplňování.
 - **`ENVIRONMENT=development/production`** (`app/config.py`, default `development`) — nová
@@ -377,6 +377,12 @@ Po dokončení:
 5. Ověř na ~640px/~1024px/desktop šířce.
 6. Implementation summary + navrhni commit message (nespouštěj git)
 
+> **Pozn. (2026-09-12, dodatečně):** bod 3 výše a řádek `{% if current_user.role in (...) %}`
+> v bodě 2 popisují původní plán, ne aktuální stav — viz `docs/ROADMAP.md` §1 "Dodatečná úprava"
+> pro skutečné chování (`/ai-models`/`/settings` teď editor vidí, šablony používají sdílenou
+> funkci `can_edit(current_user)`, ne inline `role in (...)`). Neverifikuj podle tohohle checklistu
+> doslovně, drž se `ROADMAP.md`.
+
 **Expected commit:**
 ```
 feat(auth): apply role-based route guards and hide UI by role across the app
@@ -444,17 +450,19 @@ test: cover authentication, roles, and user management
 
 ## Completion Checklist
 
-- [ ] Schema (`users`, `Run.triggered_by_user_id`) potvrzené před P6-T1 (viz konverzace +
+- [x] Schema (`users`, `Run.triggered_by_user_id`) potvrzené před P6-T1 (viz konverzace +
       tenhle dokument)
-- [ ] Login/logout funguje, cookie session, žádné API tokeny
-- [ ] Žádná self-service registrace, žádný emailový reset hesla — obojí vestavěné v
+- [x] Login/logout funguje, cookie session, žádné API tokeny
+- [x] Žádná self-service registrace, žádný emailový reset hesla — obojí vestavěné v
       fastapi-users, ale nezapojené
-- [ ] Admin může vytvářet/editovat/deaktivovat uživatele a resetovat hesla přes UI
-- [ ] Bootstrap prvního admin účtu (`scripts/create_admin.py`) existuje a je zdokumentovaný v README
-- [ ] Nový/resetovaný účet vynutí změnu hesla při prvním přihlášení
-- [ ] Role `admin`/`editor`/`viewer` vynucené na úrovni routy (403), ne jen v UI
-- [ ] Viewer nemá export ani doménovou klasifikaci, jen čtení
-- [ ] `Run.triggered_by_user_id` se zapisuje při každém `trigger_run` a zobrazuje na run detailu
-- [ ] `pytest` sada zelená, pokrývá auth, role, user CRUD i regresi existujících routerů
-- [ ] Ověřeno v prohlížeči na ~375px/~768px/desktop, všechny nové obrazovky
-- [ ] `docs/ROADMAP.md` — stav bodu 1 aktualizován po dokončení
+- [x] Admin může vytvářet/editovat/deaktivovat uživatele a resetovat hesla přes UI
+- [x] Bootstrap prvního admin účtu (`scripts/create_admin.py`) existuje a je zdokumentovaný v README
+- [x] Nový/resetovaný účet vynutí změnu hesla při prvním přihlášení
+- [x] Role `admin`/`editor`/`viewer` vynucené na úrovni routy (403), ne jen v UI
+- [x] Viewer nemá export ani doménovou klasifikaci, jen čtení
+- [x] `Run.triggered_by_user_id` se zapisuje při každém `trigger_run` a zobrazuje na run detailu
+- [x] `pytest` sada zelená, pokrývá auth, role, user CRUD i regresi existujících routerů (124 testů)
+- [ ] Ověřeno v prohlížeči na ~375px/~768px/desktop, všechny nové obrazovky — **stále chybí
+      systematický průchod**, jen bodové kontroly (account stránka na mobilu, menu/error page na
+      desktopu)
+- [x] `docs/ROADMAP.md` — stav bodu 1 aktualizován po dokončení

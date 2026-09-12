@@ -33,7 +33,7 @@ from app.routers import (
     settings,
     users,
 )
-from app.templating import render
+from app.templating import get_t, render
 
 # Exempt from the must-change-password redirect below: the login/logout flow itself (or a
 # stuck account could never log out of its own forced state), the change-password page and its
@@ -86,9 +86,22 @@ async def enforce_password_change(request: Request, call_next):
     router, set up with its own `require_role` gate) without editing each one individually.
     `current_user_from_cookie` returns None for an anonymous request, so this is a no-op for
     visitors who aren't logged in at all — the existing login gate still handles those.
+
+    Only resolves the user (and stashes it on `request.state.current_user` for `app/templating.py`'s
+    `render()` to reuse, avoiding a second redundant DB round-trip on the same request) on
+    non-exempt paths — NOT unconditionally on every request. An earlier version of this fix did it
+    unconditionally, which silently gave the exempt paths a database dependency they explicitly
+    don't have: `/health`'s own docstring/test say "no database access", but `current_user_from_cookie`
+    does a real sync DB query whenever a valid session cookie is present, regardless of path (found
+    in a second round of code review, 2026-09-12 — reproduced against a real cookie hitting
+    `/health`). Exempt paths that DO render a template while logged in anyway (`/login`,
+    `/change-password`) fall back to `render()`'s own direct `current_user_from_cookie` call
+    instead — one lookup on those two low-traffic pages, same as before this optimization existed,
+    rather than a lookup on every single request including `/health`/`/auth/logout`/`/set-locale*`.
     """
     if request.url.path not in _PASSWORD_CHANGE_EXEMPT_PATHS and not request.url.path.startswith("/set-locale"):
-        user = current_user_from_cookie(request)
+        request.state.current_user = current_user_from_cookie(request)
+        user = request.state.current_user
         if user is not None and user.must_change_password:
             return RedirectResponse(url="/change-password", status_code=status.HTTP_303_SEE_OTHER)
     return await call_next(request)
@@ -167,6 +180,8 @@ def change_password_form(request: Request, user: User = Depends(current_active_u
 
 @app.post("/change-password", include_in_schema=False)
 def change_password(
+    request: Request,
+    current_password: str = Form(..., description="The account's current password, to prove this request isn't just a stolen session cookie."),
     new_password: str = Form(..., min_length=8, description="The account's new password."),
     current: User = Depends(current_active_user),
     db: Session = Depends(get_db),
@@ -176,13 +191,27 @@ def change_password(
     Requires only being logged in, no specific role — every account goes through this after
     creation or an admin password reset (app/routers/users.py), regardless of role.
 
+    Requires the account's current password before accepting a new one (found in code review,
+    2026-09-12) — without this, anyone holding a valid session cookie (stolen via XSS, a shared
+    device, a leaked proxy log) could silently take the account over permanently, with no
+    re-authentication step and no notification path back to the real owner (this app has no email
+    flow by design). `verify_and_update` is fastapi-users' own PasswordHelper API for checking a
+    plaintext password against a stored hash.
+
     `current` (from `current_active_user`) is bound to the auth subsystem's async session
     (app/auth.py) — mutating it and committing `db` (a separate, synchronous session) would
     silently do nothing, since they aren't the same session. Re-fetching by id through the sync
     session first avoids that trap; only `current.id` is read off the async-bound object.
     """
     user = db.get(User, current.id)
-    user.hashed_password = PasswordHelper().hash(new_password)
+    password_helper = PasswordHelper()
+    verified, _ = password_helper.verify_and_update(current_password, user.hashed_password)
+    if not verified:
+        t = get_t(request)
+        return render(
+            request, "auth/change_password.html", {"error": t("errors.current_password_incorrect")}, status_code=400
+        )
+    user.hashed_password = password_helper.hash(new_password)
     user.must_change_password = False
     db.commit()
     return RedirectResponse(url="/", status_code=303)

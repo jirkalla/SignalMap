@@ -18,12 +18,12 @@ Idempotent: safe to run every time you reset your local database.
 
 import sys
 
-from fastapi_users.password import PasswordHelper
 from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import User
+from app.models.user import build_user
 
 _PASSWORD = "DevPass123!"
 _TEST_USERS = [
@@ -44,15 +44,12 @@ def main() -> None:
             if existing is not None:
                 print(f"{spec['email']} already exists (id={existing.id}) — skipping.")
                 continue
-            user = User(
+            user = build_user(
                 email=spec["email"],
-                hashed_password=PasswordHelper().hash(_PASSWORD),
+                password=_PASSWORD,
                 name=spec["name"],
                 role=spec["role"],
                 must_change_password=False,  # convenience fixtures, not real onboarding
-                is_active=True,
-                is_verified=False,
-                is_superuser=False,
             )
             db.add(user)
             db.commit()

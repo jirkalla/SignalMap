@@ -18,7 +18,7 @@ from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import User
-from app.models.user import ROLES
+from app.models.user import ROLES, build_user
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_role("admin"))])
@@ -34,19 +34,23 @@ def _get_user_or_404(db: Session, request: Request, user_id: int) -> User:
     return user
 
 
-def _duplicate_email_response(request: Request):
+def _form_error_response(request: Request, *, title: str, action: str, user: User | None, error: str, status_code: int):
+    """Re-render the create/edit form with an inline error — the same shape whether the problem
+    is a duplicate email (create only) or an invalid role (create or edit), so both call sites
+    share one response builder instead of two near-identical ones.
+    """
     return render(
         request,
         "users/form.html",
-        {
-            "title": get_t(request)("user.create_title"),
-            "action": "/users",
-            "cancel_url": "/users",
-            "user": None,
-            "role_options": _role_options,
-            "error": get_t(request)("errors.user_email_duplicate"),
-        },
-        status_code=409,
+        {"title": title, "action": action, "cancel_url": "/users", "user": user, "role_options": _role_options, "error": error},
+        status_code=status_code,
+    )
+
+
+def _duplicate_email_response(request: Request):
+    t = get_t(request)
+    return _form_error_response(
+        request, title=t("user.create_title"), action="/users", user=None, error=t("errors.user_email_duplicate"), status_code=409
     )
 
 
@@ -90,21 +94,22 @@ def create_user(
     design decision 3), not shown/emailed by the app itself. Duplicate email is a
     case-insensitive pre-check (fast path) plus a DB-level unique-index fallback (the actual
     source of truth for a concurrent race), same two-layer pattern as create_client_alias.
+
+    `role` is checked against `ROLES` before it ever reaches the database — without this, an
+    invalid value hit the `ck_users_role` CHECK constraint instead, which raised the exact same
+    `IntegrityError` the duplicate-email fallback below assumes means a duplicate email, silently
+    mislabeling the real error (found in code review, 2026-09-12).
     """
+    t = get_t(request)
+    if role not in ROLES:
+        return _form_error_response(
+            request, title=t("user.create_title"), action="/users", user=None, error=t("errors.invalid_role"), status_code=400
+        )
     email = email.strip().lower()
     existing = db.scalar(select(User).where(func.lower(User.email) == email))
     if existing is not None:
         return _duplicate_email_response(request)
-    user = User(
-        email=email,
-        hashed_password=_password_helper.hash(password),
-        name=name.strip(),
-        role=role,
-        must_change_password=True,
-        is_active=True,
-        is_verified=False,
-        is_superuser=False,
-    )
+    user = build_user(email=email, password=password, name=name.strip(), role=role)
     db.add(user)
     try:
         db.commit()
@@ -143,9 +148,31 @@ def update_user(
     name: str = Form(..., description="The user's display name."),
     role: str = Form(..., description="One of admin/editor/viewer."),
     db: Session = Depends(get_db),
+    current: User = Depends(current_active_user),
 ):
-    """Update a user's name/role (admin only)."""
+    """Update a user's name/role (admin only).
+
+    Refuses to change the logged-in admin's own role (found in code review, 2026-09-12) — same
+    self-lockout concern `toggle_user_active` below already guards against for deactivation: the
+    sole admin submitting `role=viewer` for themselves would leave the app with zero accounts able
+    to reach this admin-only router again. Editing your own name is still allowed; only an actual
+    role change on your own row is blocked.
+
+    `role` is checked against `ROLES` BEFORE the self-role-change guard, not after (found in a
+    second round of code review, 2026-09-12) — checking self-lockout first meant an admin
+    submitting an invalid role for their OWN row got the generic "can't change your own role" 403
+    (losing their edited name along the way) instead of the same friendly "not a valid role"
+    inline re-render every other invalid-role submission gets. Validating input before applying a
+    business rule on top of it is also just the more defensible order in general.
+    """
     user = _get_user_or_404(db, request, user_id)
+    if role not in ROLES:
+        t = get_t(request)
+        return _form_error_response(
+            request, title=t("user.edit_title"), action=f"/users/{user_id}/edit", user=user, error=t("errors.invalid_role"), status_code=400
+        )
+    if user.id == current.id and role != user.role:
+        raise AppError("forbidden", get_t(request)("errors.user_cannot_change_own_role"), status_code=403)
     user.name = name.strip()
     user.role = role
     db.commit()
@@ -162,10 +189,18 @@ def reset_password(
     """Set a new password directly (admin only) — there's no emailed reset-link flow to use
     instead (docs/TASKS_PHASE6.md design decision 2). Forces `must_change_password` again, same
     as account creation, so this password is also meant to be used exactly once.
+
+    Also reactivates the account (`is_active = True`) — an admin deliberately setting a specific
+    password for someone is a clear signal they want that person to be able to log in again;
+    `scripts/create_admin.py --reset-password` already did this and this route didn't, an
+    undocumented divergence between two paths both named "reset the password" found in code
+    review, 2026-09-12. Deactivation stays a separate, explicit action (`toggle_user_active`
+    below) — this only ever reactivates, never deactivates.
     """
     user = _get_user_or_404(db, request, user_id)
     user.hashed_password = _password_helper.hash(password)
     user.must_change_password = True
+    user.is_active = True
     db.commit()
     return RedirectResponse(url="/users", status_code=303)
 

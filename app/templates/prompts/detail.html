@@ -9,7 +9,7 @@
 </div>
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
   <h1 class="text-xl font-semibold break-words">{{ t('prompt.detail_title') }}</h1>
-  {% if current_user.role in ('admin', 'editor') %}
+  {% if can_edit(current_user) %}
   <div class="flex items-center gap-3 text-sm shrink-0">
     <a href="/prompts/{{ prompt.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
     {{ delete_button('/prompts/' ~ prompt.id ~ '/delete', t('prompt.delete_confirm'), t('prompt.delete_button')) }}
@@ -45,7 +45,7 @@
 </details>
 {% endif %}
 
-{% if current_user.role in ('admin', 'editor') %}
+{% if can_edit(current_user) %}
 <form method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3">
   <div class="flex-1 min-w-[200px] mb-0">
     <label for="model_id" class="block text-sm font-medium text-stone-700 mb-1">{{ t('prompt.select_model') }} *</label>
@@ -98,7 +98,7 @@
 
 <div class="flex items-center justify-between flex-wrap gap-3 mb-3">
   <h2 class="text-lg font-semibold">{{ t('prompt.runs_title') }}</h2>
-  {% if current_user.role in ('admin', 'editor') %}
+  {% if can_edit(current_user) %}
   <div class="flex items-center gap-3 flex-wrap">
     {% if versions %}
     <label class="flex items-center gap-1.5 text-sm text-stone-600">
@@ -110,7 +110,7 @@
   </div>
   {% endif %}
 </div>
-{% if versions and current_user.role in ('admin', 'editor') %}
+{% if versions and can_edit(current_user) %}
 <script>
   // Rewrites the three export links' query string when the "all versions"
   // checkbox is toggled — same lightweight vanilla-JS pattern as the

@@ -7,7 +7,7 @@
 </div>
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-6">
   <h1 class="text-xl font-semibold break-words">{{ prompt_set.name }}</h1>
-  {% if current_user.role in ('admin', 'editor') %}
+  {% if can_edit(current_user) %}
   <div class="flex items-center gap-3 text-sm shrink-0">
     <a href="/prompt-sets/{{ prompt_set.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
     {{ delete_button('/prompt-sets/' ~ prompt_set.id ~ '/delete', t('prompt_set.delete_confirm'), t('prompt_set.delete_button')) }}
@@ -18,7 +18,7 @@
 <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
 {% endif %}
 
-{% if current_user.role in ('admin', 'editor') %}
+{% if can_edit(current_user) %}
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.create_title') }}</h2>
 <form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 max-w-2xl">
   {{ textarea_field('text', t('prompt.text_label'), '', rows=3, required=True) }}

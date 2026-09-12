@@ -45,6 +45,61 @@ def test_duplicate_email_returns_structured_conflict_not_500(admin_client: TestC
     assert "already exists" in response.text
 
 
+def test_admin_cannot_change_their_own_role(admin_client: TestClient, admin_user: User, db_session: Session):
+    """Code-review regression guard, 2026-09-12 — the sole admin submitting a role change for
+    their own account must never succeed, or the app could end up with zero accounts able to
+    reach this admin-only router again. Editing your own name is still allowed (not asserted here,
+    covered implicitly by the role staying the request's only difference from a normal edit).
+    """
+    response = admin_client.post(
+        f"/users/{admin_user.id}/edit", data={"name": admin_user.name, "role": "viewer"}, follow_redirects=False
+    )
+
+    assert response.status_code == 403
+    db_session.refresh(admin_user)
+    assert admin_user.role == "admin"
+
+
+def test_invalid_role_is_rejected_on_create_not_a_500(admin_client: TestClient):
+    """Code-review regression guard, 2026-09-12 — role used to reach the DB unchecked, so a bad
+    value 500'd via the CHECK constraint's IntegrityError instead of a graceful 400.
+    """
+    response = admin_client.post(
+        "/users",
+        data={"name": "Bad Role", "email": "bad-role@test.local", "role": "superadmin", "password": "SomePass123!"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "valid role" in response.text
+
+
+def test_invalid_role_is_rejected_on_edit_not_a_500(admin_client: TestClient, editor_user: User):
+    response = admin_client.post(
+        f"/users/{editor_user.id}/edit", data={"name": editor_user.name, "role": "superadmin"}, follow_redirects=False
+    )
+
+    assert response.status_code == 400
+    assert "valid role" in response.text
+
+
+def test_reset_password_reactivates_a_deactivated_account(admin_client: TestClient, editor_user: User, db_session: Session):
+    """Code-review regression guard, 2026-09-12 — this route used to leave a deactivated account
+    deactivated after a password reset, diverging from scripts/create_admin.py --reset-password
+    (which always reactivates) with no documented reason for the difference.
+    """
+    editor_user.is_active = False
+    db_session.commit()
+
+    response = admin_client.post(
+        f"/users/{editor_user.id}/reset-password", data={"password": "BrandNewPass456!"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    db_session.refresh(editor_user)
+    assert editor_user.is_active is True
+
+
 def test_editor_gets_403_on_user_management(authed_client: TestClient):
     response = authed_client.get("/users")
 
@@ -83,7 +138,9 @@ def test_must_change_password_flow_forces_redirect_then_clears_after_change(admi
     assert redirected.headers["location"] == "/change-password"
 
     change_response = fresh_client.post(
-        "/change-password", data={"new_password": "BrandNewPass456!"}, follow_redirects=False
+        "/change-password",
+        data={"current_password": "FirstLogin123!", "new_password": "BrandNewPass456!"},
+        follow_redirects=False,
     )
     assert change_response.status_code == 303
 
