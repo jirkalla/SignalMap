@@ -26,6 +26,12 @@ DEV_ADMIN_PASSWORD from .env instead of prompting:
 Unlike the interactive path, --from-env is idempotent (exit 0, not 1, if the account already
 exists) — it's meant to be safely re-run every time you reset your local database, not a
 one-time action.
+
+Locked yourself out (forgot/changed an admin's password)? The /users UI can't help — it needs
+an existing logged-in admin, which is exactly what's missing. Reset it from here instead,
+same interactive getpass prompt as account creation:
+
+    docker compose exec app python -m scripts.create_admin --reset-password admin@example.com
 """
 
 import argparse
@@ -97,6 +103,29 @@ def _run_interactive(email: str, name: str, role: str, db) -> None:
     print(f"Created {role} user {email!r} (id={user.id}). They must change this password on first login.")
 
 
+def _run_reset_password(email: str, db) -> None:
+    email = email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
+    if user is None:
+        print(f"No user with email {email!r}.")
+        sys.exit(1)
+
+    password = getpass.getpass("New password: ")
+    confirm = getpass.getpass("Confirm new password: ")
+    if password != confirm:
+        print("Passwords don't match.")
+        sys.exit(1)
+    if len(password) < 8:
+        print("Password must be at least 8 characters.")
+        sys.exit(1)
+
+    user.hashed_password = PasswordHelper().hash(password)
+    user.must_change_password = True
+    user.is_active = True
+    db.commit()
+    print(f"Password reset for {email!r} (id={user.id}). They must change it again on next login.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--email", help="Login email for the new account.")
@@ -113,16 +142,27 @@ def main() -> None:
         help="Read DEV_ADMIN_EMAIL/DEV_ADMIN_NAME/DEV_ADMIN_PASSWORD from .env instead of "
         "prompting. Idempotent — safe to re-run on every fresh local database.",
     )
+    parser.add_argument(
+        "--reset-password",
+        metavar="EMAIL",
+        help="Reset an existing user's password (interactive getpass prompt) instead of "
+        "creating an account — for when you're locked out and there's no other admin to use "
+        "the /users UI with.",
+    )
     args = parser.parse_args()
 
+    if args.reset_password and (args.from_env or args.email or args.name):
+        parser.error("--reset-password can't be combined with --from-env/--email/--name.")
     if args.from_env and (args.email or args.name):
         parser.error("--from-env can't be combined with --email/--name.")
-    if not args.from_env and not (args.email and args.name):
-        parser.error("--email and --name are required unless --from-env is given.")
+    if not args.reset_password and not args.from_env and not (args.email and args.name):
+        parser.error("--email and --name are required unless --from-env or --reset-password is given.")
 
     db = SessionLocal()
     try:
-        if args.from_env:
+        if args.reset_password:
+            _run_reset_password(args.reset_password, db)
+        elif args.from_env:
             _run_from_env(db)
         else:
             _run_interactive(args.email, args.name, args.role, db)

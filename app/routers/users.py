@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import User
@@ -170,12 +170,22 @@ def reset_password(
     return RedirectResponse(url="/users", status_code=303)
 
 
-@router.post("/{user_id}/deactivate")
-def deactivate_user(request: Request, user_id: int, db: Session = Depends(get_db)):
-    """Deactivate a user account (admin only). Never DELETE — `Run.triggered_by_user_id` may
-    reference this account, and deleting it would break that audit trail.
+@router.post("/{user_id}/toggle-active")
+def toggle_user_active(
+    request: Request, user_id: int, db: Session = Depends(get_db), current: User = Depends(current_active_user)
+):
+    """Flip a user account's `is_active` flag (admin only). Never DELETE — `Run.triggered_by_user_id`
+    may reference this account, and deleting it would break that audit trail. Same reversible
+    toggle pattern as app/routers/ai_models.py's toggle_ai_model_active — deactivating a user
+    only blocks login, it never touches their past runs.
+
+    An admin deactivating their own account would lock themselves out with no other admin able
+    to undo it via this same admin-only UI (docs/TASKS_PHASE6.md follow-up, 2026-09-12) — refused
+    for the logged-in user's own id, same as the reactivation direction being harmless either way.
     """
     user = _get_user_or_404(db, request, user_id)
-    user.is_active = False
+    if user.id == current.id and user.is_active:
+        raise AppError("forbidden", get_t(request)("errors.user_cannot_deactivate_self"), status_code=403)
+    user.is_active = not user.is_active
     db.commit()
     return RedirectResponse(url="/users", status_code=303)

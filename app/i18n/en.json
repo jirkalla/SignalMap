@@ -31,8 +31,6 @@
   "user.role_label": "Role",
   "user.password_label": "Password",
   "user.reset_password_button": "Reset password",
-  "user.deactivate_button": "Deactivate",
-  "user.deactivate_confirm": "Deactivate this user? They will no longer be able to log in.",
   "user.active_label": "Active",
   "user.inactive_label": "Inactive",
   "user.empty_state": "No users yet.",
@@ -322,6 +320,7 @@
   "errors.ai_model_in_use": "This model has {count} run(s) recorded against it and can't be deleted. Deactivate it instead.",
   "errors.user_email_duplicate": "A user with this email already exists.",
   "errors.user_not_found": "User not found.",
+  "errors.user_cannot_deactivate_self": "You can't deactivate your own account.",
   "errors.forbidden": "You don't have permission to do that.",
   "errors.back_to_clients": "Back to clients",
 

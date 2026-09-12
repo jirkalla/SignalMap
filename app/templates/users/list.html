@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import button, delete_button, text_field %}
+{% from "partials/macros.html" import button, pill_badge, text_field, toggle_button %}
 {% block title %}{{ t('user.list_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
@@ -26,9 +26,11 @@
         <td class="py-3 px-4 text-stone-600">{{ u.email }}</td>
         <td class="py-3 px-4 text-stone-600 capitalize">{{ u.role }}</td>
         <td class="py-3 px-4">
-          <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if u.is_active else 'bg-stone-100 text-stone-500' }}">
-            {{ t('user.active_label') if u.is_active else t('user.inactive_label') }}
-          </span>
+          {% if current_user and u.id == current_user.id %}
+          {{ pill_badge(u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+          {% else %}
+          {{ toggle_button('/users/' ~ u.id ~ '/toggle-active', u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+          {% endif %}
         </td>
         <td class="py-3 px-4 text-right">
           <div class="flex items-center justify-end gap-3 flex-wrap">
@@ -40,9 +42,6 @@
                 {{ button(t('common.save'), variant='secondary') }}
               </form>
             </details>
-            {% if u.is_active %}
-            {{ delete_button('/users/' ~ u.id ~ '/deactivate', t('user.deactivate_confirm'), t('user.deactivate_button')) }}
-            {% endif %}
           </div>
         </td>
       </tr>
@@ -56,9 +55,11 @@
   <div class="border border-stone-200 rounded-lg p-4 bg-white">
     <div class="flex items-center justify-between gap-2">
       <div class="font-medium text-stone-900">{{ u.name }}</div>
-      <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if u.is_active else 'bg-stone-100 text-stone-500' }}">
-        {{ t('user.active_label') if u.is_active else t('user.inactive_label') }}
-      </span>
+      {% if current_user and u.id == current_user.id %}
+      {{ pill_badge(u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+      {% else %}
+      {{ toggle_button('/users/' ~ u.id ~ '/toggle-active', u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+      {% endif %}
     </div>
     <div class="text-sm text-stone-500 mt-1">{{ u.email }}</div>
     <div class="text-xs text-stone-400 mt-1 capitalize">{{ u.role }}</div>
@@ -71,9 +72,6 @@
           {{ button(t('common.save'), variant='secondary') }}
         </form>
       </details>
-      {% if u.is_active %}
-      {{ delete_button('/users/' ~ u.id ~ '/deactivate', t('user.deactivate_confirm'), t('user.deactivate_button')) }}
-      {% endif %}
     </div>
   </div>
   {% endfor %}
