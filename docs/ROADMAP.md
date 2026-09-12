@@ -355,7 +355,7 @@ novou funkcionalitu:
 
 | # | Krok | Status |
 |---|------|--------|
-| 1 | Auth + user management | Implementováno (branch `feature/signalmap-phase6-auth`, P6-T1 až P6-T8) — chybí jen systematické ověření na ~375/768px/desktop pro všechny obrazovky |
+| 1 | Auth + user management | Hotovo, smergnuto do `master` 2026-09-12 ([PR #8](https://github.com/jirkalla/SignalMap/pull/8)) — chybí jen systematické ověření na ~375/768px/desktop pro všechny obrazovky |
 | 2 | Deploy hardening | Neimplementováno |
 | 3 | Jít online | Čeká na 1–2 |
 | 4 | Cost/ops dashboard | Neimplementováno |

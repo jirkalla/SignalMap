@@ -223,9 +223,10 @@ helper) all fixed and re-verified before the PR was opened.
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE5.md` and
 `docs/PROMPTS_PHASE5.md`.
 
-## Phase 6: Auth + user management ✅ Done (branch not yet merged)
+## Phase 6: Auth + user management ✅ Done
 
-Branch `feature/signalmap-phase6-auth`. Adds fastapi-users cookie-session authentication with
+Branch `feature/signalmap-phase6-auth`, merged 2026-09-12
+([PR #8](https://github.com/jirkalla/SignalMap/pull/8)). Adds fastapi-users cookie-session authentication with
 three roles (admin/editor/viewer), enforced at the route level via `require_role()` — a UI
 element hidden by role elsewhere is convenience only, never a substitute for that check:
 
