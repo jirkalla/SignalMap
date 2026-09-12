@@ -131,6 +131,8 @@ Po dokončení:
 feat(schema): add users table and Run.triggered_by_user_id for auth
 ```
 
+### DONE — commit 4db1f11
+
 ---
 ---
 
@@ -173,6 +175,8 @@ Po dokončení:
 feat(auth): wire fastapi-users cookie authentication and require_role dependency
 ```
 
+### DONE — commit 8090256
+
 ---
 ---
 
@@ -210,6 +214,8 @@ Po dokončení:
 ```
 feat(auth): add login page, logout, and app-wide login gate
 ```
+
+### DONE — commit 7f1b502
 
 ---
 ---
@@ -252,6 +258,8 @@ Po dokončení:
 feat(users): add admin-only user management CRUD
 ```
 
+### DONE — commit be39e1f (+ follow-ups 7f193f0 "P6-T4b bootstrap script", 386aabb "P6-T4c ENVIRONMENT + dev test users", both dodatečně přidáno — viz `docs/TASKS_PHASE6.md`)
+
 ---
 ---
 
@@ -286,6 +294,8 @@ Po dokončení:
 ```
 feat(auth): force password change on first login after admin-created account
 ```
+
+### DONE — commit ad447a2
 
 ---
 ---
@@ -329,6 +339,8 @@ Po dokončení:
 feat(auth): apply role-based route guards and hide UI by role across the app
 ```
 
+### DONE — commit e1d8d4d (+ follow-ups z konverzace, ne v původním promptu: c2635a5 "HTML error page pro AppError", d002f66 "self-deactivate guard + toggle-active sjednocení", 0c74bef "self-service display name" — viz `docs/ROADMAP.md` §1 "Dodatečná úprava" pro roli-viditelnost odchylky od plánu)
+
 ---
 ---
 
@@ -357,6 +369,8 @@ Po dokončení:
 ```
 feat(runs): record which user triggered each run
 ```
+
+### DONE — commit 47104d6
 
 ---
 ---
@@ -391,3 +405,5 @@ Po dokončení:
 ```
 test: cover authentication, roles, and user management
 ```
+
+### DONE — commit bda7a67 (plus a follow-up code-review fix batch, uncommitted at time of writing — self-role-change guard, current-password check, role validation, shared `build_user()`/`can_edit()` helpers; see git log for the eventual commit(s))
