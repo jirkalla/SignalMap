@@ -226,3 +226,8 @@ Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE5.md` and
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Authentication (fastapi-users) and multi-tenant scoping by client_id.
+
+See `docs/ROADMAP.md` for the full ordered plan beyond phase 5 — auth, deploy
+hardening, going online, a cost/ops dashboard, a scheduler, brand-attribute
+tagging, sentiment, gap/opportunity score, and the ExpressYourself.AI frontend
+rebrand (design tokens and prototype already agreed, implementation pending).
