@@ -15,8 +15,10 @@ from markupsafe import Markup
 from app.auth import JWT_AUDIENCE, SESSION_COOKIE_NAME
 from app.config import get_settings
 from app.database import SessionLocal
-from app.i18n import LOCALE_COOKIE_NAME, get_translator, resolve_locale
+from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
+
+__all__ = ["get_t", "render", "templates"]
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -76,15 +78,6 @@ def _current_user_from_cookie(request: Request) -> User | None:
         return None
     with SessionLocal() as db:
         return db.get(User, int(user_id))
-
-
-def get_t(request: Request):
-    """Return the t() translator for the request's active locale.
-
-    Use this in route code that needs a translated string outside of a
-    template render (e.g. for an AppError message).
-    """
-    return get_translator(resolve_locale(request.cookies.get(LOCALE_COOKIE_NAME)))
 
 
 def render(request: Request, template_name: str, context: dict | None = None, status_code: int = 200):

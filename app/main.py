@@ -25,6 +25,7 @@ from app.routers import (
     providers,
     runs,
     settings,
+    users,
 )
 from app.templating import render
 
@@ -58,6 +59,11 @@ async def handle_http_exception(request: Request, exc: HTTPException) -> JSONRes
 
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
+
+# Already fully self-gated (require_role("admin") at the router level, app/routers/users.py) —
+# unlike the other routers below, admin-only was baked in from this router's first version, not
+# tightened in a later pass (docs/TASKS_PHASE6.md P6-T6).
+app.include_router(users.router)
 
 # Every router below requires a logged-in session (any role) except `locale` — the language
 # switch must keep working even on the login page itself, before anyone is authenticated.

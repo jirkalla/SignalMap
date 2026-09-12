@@ -11,7 +11,7 @@ users.py, added in P6-T4).
 
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, IntegerIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport, JWTStrategy
 from fastapi_users.db import SQLAlchemyUserDatabase
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_async_db
 from app.errors import AppError
+from app.i18n import get_t
 from app.models import User
 
 _SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 14  # 14 days
@@ -88,9 +89,9 @@ def require_role(*allowed_roles: str):
     (docs/TASKS_PHASE6.md design decision 4).
     """
 
-    def dependency(user: User = Depends(current_active_user)) -> User:
+    def dependency(request: Request, user: User = Depends(current_active_user)) -> User:
         if user.role not in allowed_roles:
-            raise AppError("forbidden", "You don't have permission to do that.", status_code=403)
+            raise AppError("forbidden", get_t(request)("errors.forbidden"), status_code=403)
         return user
 
     return dependency
