@@ -13,14 +13,16 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi_users.password import PasswordHelper
 from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.adapters import register_adapter
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_async_db, get_db
 from app.main import app
-from app.models import AIModel, AnalysisSkill, Base, Client, Market, Prompt, Provider, PromptSet
+from app.models import AIModel, AnalysisSkill, Base, Client, Market, Prompt, Provider, PromptSet, User
 from tests.fake_adapter import FakeAdapter
 
 
@@ -33,6 +35,19 @@ def _test_database_url() -> str:
 engine = create_engine(_test_database_url())
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# A second, async engine against the SAME test database — needed because the auth subsystem
+# (app/auth.py) reads/writes users exclusively through app.database.get_async_db, which by
+# default points at the app's own DATABASE_URL, not signalmap_test. Without overriding it too
+# (see the `client` fixture below), a real login POST during a test would look the seeded user
+# up in the wrong database and always fail with LOGIN_BAD_CREDENTIALS.
+async_engine = create_async_engine(_test_database_url())
+AsyncTestSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
+
+# Every seeded test user shares one known password — the tests that need to actually log in
+# (authed_client/admin_client/viewer_client below, or a test logging in manually) all use this
+# same literal rather than each inventing their own.
+TEST_USER_PASSWORD = "TestPass123!"
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema():
@@ -40,6 +55,20 @@ def _schema():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def _patch_auth_session_local(monkeypatch):
+    """`current_user_from_cookie` (app/auth.py) reads the logged-in user through a direct
+    `SessionLocal()` call, not FastAPI's dependency injection — it also runs inside
+    `enforce_password_change` (app/main.py), which executes before routing/DI even starts. The
+    `get_db` override in the `client` fixture below has no effect on it, so without this it would
+    always resolve to the app's own dev database, find no matching user, and silently treat every
+    logged-in test request as anonymous (current_user always None, must_change_password redirect
+    never firing) — same misdirected-database trap `client`/`get_async_db` already had to be
+    patched around.
+    """
+    monkeypatch.setattr("app.auth.SessionLocal", TestSessionLocal)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -83,16 +112,90 @@ def db_session() -> Session:
 
 @pytest.fixture
 def client(db_session: Session) -> TestClient:
-    """A TestClient whose get_db dependency is overridden to use this test's db_session."""
+    """A TestClient whose get_db AND get_async_db dependencies are overridden to use this test's
+    database — the async override matters even for tests that never touch auth directly, since
+    every login-gated route re-resolves `current_active_user` (async) on every request.
+    """
 
     def _override_get_db():
         yield db_session
 
+    async def _override_get_async_db():
+        async with AsyncTestSessionLocal() as session:
+            yield session
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_async_db] = _override_get_async_db
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.clear()
+
+
+def _seed_user(db_session: Session, *, email: str, name: str, role: str) -> User:
+    """A real account with a validly hashed password — the same synchronous PasswordHelper +
+    direct User(...) construction every account-creation path in this app already uses
+    (app/routers/users.py, scripts/create_admin.py, scripts/seed_dev_users.py), not fastapi-users'
+    async UserManager.create(). That flow expects a UserCreate schema shaped around its own base
+    fields (email/password) and has no slot for this project's required name/role columns without
+    a custom schema — sticking to the app's own established sync pattern avoids that mismatch and
+    an unnecessary event-loop bridge in a fixture, for the exact same reason those other three
+    call sites never use it either.
+    """
+    user = User(
+        email=email,
+        hashed_password=PasswordHelper().hash(TEST_USER_PASSWORD),
+        name=name,
+        role=role,
+        must_change_password=False,
+        is_active=True,
+        is_verified=True,
+        is_superuser=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def admin_user(db_session: Session) -> User:
+    return _seed_user(db_session, email="admin@test.local", name="Admin User", role="admin")
+
+
+@pytest.fixture
+def editor_user(db_session: Session) -> User:
+    return _seed_user(db_session, email="editor@test.local", name="Editor User", role="editor")
+
+
+@pytest.fixture
+def viewer_user(db_session: Session) -> User:
+    return _seed_user(db_session, email="viewer@test.local", name="Viewer User", role="viewer")
+
+
+def _login(client: TestClient, user: User) -> TestClient:
+    response = client.post("/auth/login", data={"username": user.email, "password": TEST_USER_PASSWORD})
+    assert response.status_code == 204, f"login as {user.email} failed: {response.status_code} {response.text}"
+    return client
+
+
+@pytest.fixture
+def authed_client(client: TestClient, editor_user: User) -> TestClient:
+    """The default logged-in client for existing tests that don't care which role they run as —
+    editor, since that's the role every pre-phase-6 mutating test implicitly assumed (full CRUD,
+    no admin-only or read-only restriction).
+    """
+    return _login(client, editor_user)
+
+
+@pytest.fixture
+def admin_client(client: TestClient, admin_user: User) -> TestClient:
+    return _login(client, admin_user)
+
+
+@pytest.fixture
+def viewer_client(client: TestClient, viewer_user: User) -> TestClient:
+    return _login(client, viewer_user)
 
 
 @pytest.fixture

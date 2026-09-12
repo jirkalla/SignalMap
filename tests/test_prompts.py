@@ -13,9 +13,9 @@ from sqlalchemy.orm import Session
 from app.models import Prompt, PromptSet
 
 
-def _create_new_version(client: TestClient, prompt_id: int, seed: dict, text: str) -> int:
+def _create_new_version(authed_client: TestClient, prompt_id: int, seed: dict, text: str) -> int:
     """Edit a prompt via the real endpoint (creates version+1) and return the new prompt id."""
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{prompt_id}/edit",
         data={"text": text, "market_id": seed["market"].id, "topic": "", "is_active": "true"},
         follow_redirects=False,
@@ -25,12 +25,12 @@ def _create_new_version(client: TestClient, prompt_id: int, seed: dict, text: st
 
 
 def test_delete_prompt_lineage_with_multiple_versions_and_no_runs_succeeds(
-    client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt
 ):
-    v2_id = _create_new_version(client, sample_prompt.id, seed, "Second version of the question?")
-    v3_id = _create_new_version(client, v2_id, seed, "Third version of the question?")
+    v2_id = _create_new_version(authed_client, sample_prompt.id, seed, "Second version of the question?")
+    v3_id = _create_new_version(authed_client, v2_id, seed, "Third version of the question?")
 
-    response = client.post(f"/prompts/{v3_id}/delete", follow_redirects=False)
+    response = authed_client.post(f"/prompts/{v3_id}/delete", follow_redirects=False)
 
     assert response.status_code == 303
     for prompt_id in (sample_prompt.id, v2_id, v3_id):
@@ -38,12 +38,12 @@ def test_delete_prompt_lineage_with_multiple_versions_and_no_runs_succeeds(
 
 
 def test_delete_prompt_set_with_versioned_prompt_and_no_runs_succeeds(
-    client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt
 ):
-    v2_id = _create_new_version(client, sample_prompt.id, seed, "Edited question?")
+    v2_id = _create_new_version(authed_client, sample_prompt.id, seed, "Edited question?")
     prompt_set_id = sample_prompt.prompt_set_id
 
-    response = client.post(f"/prompt-sets/{prompt_set_id}/delete", follow_redirects=False)
+    response = authed_client.post(f"/prompt-sets/{prompt_set_id}/delete", follow_redirects=False)
 
     assert response.status_code == 303
     assert db_session.get(PromptSet, prompt_set_id) is None

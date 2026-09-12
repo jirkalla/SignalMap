@@ -9,7 +9,7 @@ from app.models import AnalysisResult, Citation, Prompt, RawResponse, Run, Searc
 from tests.fake_adapter import FakeAdapter
 
 
-def test_successful_run_stores_run_raw_response_and_citations(client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+def test_successful_run_stores_run_raw_response_and_citations(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Acme is known for reliability."},
         rendered_text="Acme is known for reliability.",
@@ -20,7 +20,7 @@ def test_successful_run_stores_run_raw_response_and_citations(client: TestClient
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -44,7 +44,7 @@ def test_successful_run_stores_run_raw_response_and_citations(client: TestClient
 
 
 def test_successful_run_stores_and_displays_search_queries_in_order(
-    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
     """docs/TASKS_SEARCH_QUERIES.md SQ-T4 — persistence and display, via FakeAdapter."""
     FakeAdapter.payload_to_return = RawResponsePayload(
@@ -56,7 +56,7 @@ def test_successful_run_stores_and_displays_search_queries_in_order(
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -70,14 +70,14 @@ def test_successful_run_stores_and_displays_search_queries_in_order(
     assert [q.query_text for q in search_queries] == ["first query", "second query"]
     assert [q.query_position for q in search_queries] == [0, 1]
 
-    detail_response = client.get(f"/runs/{run_id}")
+    detail_response = authed_client.get(f"/runs/{run_id}")
     assert detail_response.status_code == 200
     assert "first query" in detail_response.text
     assert "second query" in detail_response.text
 
 
 def test_successful_run_without_search_queries_shows_empty_state(
-    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
     """A run whose payload has no search_queries (default empty list) must render the empty
 
@@ -91,7 +91,7 @@ def test_successful_run_without_search_queries_shows_empty_state(
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -102,15 +102,15 @@ def test_successful_run_without_search_queries_shows_empty_state(
     search_queries = db_session.scalars(select(SearchQuery).where(SearchQuery.raw_response_id == raw_response.id)).all()
     assert search_queries == []
 
-    detail_response = client.get(f"/runs/{run_id}")
+    detail_response = authed_client.get(f"/runs/{run_id}")
     assert detail_response.status_code == 200
     assert "did not issue any search queries" in detail_response.text
 
 
-def test_failed_run_records_error_status_and_message(client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+def test_failed_run_records_error_status_and_message(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     FakeAdapter.error_to_raise = RuntimeError("simulated provider failure")
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -126,7 +126,7 @@ def test_failed_run_records_error_status_and_message(client: TestClient, db_sess
     assert db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id)) is None
 
 
-def test_successful_run_against_the_anthropic_model(client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+def test_successful_run_against_the_anthropic_model(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     """Same flow as the Gemini test above, against seed['anthropic_model'] — proves the run
 
     path is provider-agnostic (P2-T4), still via FakeAdapter, never the real Anthropic API.
@@ -139,7 +139,7 @@ def test_successful_run_against_the_anthropic_model(client: TestClient, db_sessi
         token_usage={"input_tokens": 12, "output_tokens": 6},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -158,10 +158,10 @@ def test_successful_run_against_the_anthropic_model(client: TestClient, db_sessi
     assert raw_response.has_citations is False
 
 
-def test_failed_run_against_the_anthropic_model_records_error(client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+def test_failed_run_against_the_anthropic_model_records_error(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     FakeAdapter.error_to_raise = RuntimeError("Country code XX is not supported.")
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -176,11 +176,11 @@ def test_failed_run_against_the_anthropic_model_records_error(client: TestClient
 
 
 def test_successful_run_stores_a_mention_visibility_analysis_result(
-    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
     """docs/TASKS_PHASE3.md design decision 7 — analysis runs automatically after a successful
 
-    run. sample_prompt's client is named "Test Client" (tests/conftest.py), so a rendered
+    run. sample_prompt's authed_client is named "Test Client" (tests/conftest.py), so a rendered
     answer that literally contains that name gives a predictable, assertable output.
 
     Both mention_visibility and competitive_visibility run for every successful run (seed fixture
@@ -196,7 +196,7 @@ def test_successful_run_stores_a_mention_visibility_analysis_result(
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -221,12 +221,12 @@ def test_successful_run_stores_a_mention_visibility_analysis_result(
 
 
 def test_successful_run_also_stores_a_competitive_visibility_analysis_result(
-    client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
     """docs/TASKS_PHASE5.md P5-T6 — competitive_visibility runs automatically alongside
     mention_visibility, with no signature change to _run_active_analysis_skills (design decision
-    7). sample_prompt's client has no tracked_entities, so the entities array holds only the
-    client's own row — still a real, assertable output, not skipped.
+    7). sample_prompt's authed_client has no tracked_entities, so the entities array holds only the
+    authed_client's own row — still a real, assertable output, not skipped.
     """
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Test Client is known for reliability."},
@@ -236,7 +236,7 @@ def test_successful_run_also_stores_a_competitive_visibility_analysis_result(
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -264,7 +264,7 @@ def test_successful_run_also_stores_a_competitive_visibility_analysis_result(
 
 
 def test_analysis_engine_failure_never_fails_the_run(
-    client: TestClient, db_session: Session, seed, sample_prompt: Prompt, monkeypatch
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt, monkeypatch
 ):
     """docs/TASKS_PHASE3.md design decision 7 — a broken analysis skill must not roll back or
 
@@ -284,7 +284,7 @@ def test_analysis_engine_failure_never_fails_the_run(
         token_usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -297,3 +297,25 @@ def test_analysis_engine_failure_never_fails_the_run(
     assert run.status == "success"
     assert db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id)) is not None
     assert db_session.scalars(select(AnalysisResult).where(AnalysisResult.raw_response_id == run.raw_response.id)).all() == []
+
+
+def test_viewer_cannot_trigger_a_run(viewer_client: TestClient, seed, sample_prompt: Prompt):
+    """docs/TASKS_PHASE6.md P6-T6 — viewer is read-only everywhere; require_role() is the actual
+    enforcement, hiding the "Run" button in the template is UX only.
+    """
+    response = viewer_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403
+
+
+def test_viewer_cannot_export_a_run(viewer_client: TestClient):
+    """403 fires from require_role() before the route body even looks the run up — true
+    regardless of whether the run id exists, so this needs no real run fixture.
+    """
+    response = viewer_client.get("/runs/999999/export")
+
+    assert response.status_code == 403

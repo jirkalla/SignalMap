@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.models import AIModel, Client, Prompt, PromptSet, Run
 
 
-def _create_model(client: TestClient, provider_id: int, model_name: str = "test-model") -> None:
-    response = client.post(
+def _create_model(authed_client: TestClient, provider_id: int, model_name: str = "test-model") -> None:
+    response = authed_client.post(
         "/ai-models",
         data={
             "provider_id": provider_id,
@@ -25,17 +25,17 @@ def _create_model(client: TestClient, provider_id: int, model_name: str = "test-
     assert response.status_code == 303
 
 
-def test_create_list_edit_flow(client: TestClient, db_session: Session, seed: dict):
-    _create_model(client, seed["anthropic_provider"].id, "test-model-1")
+def test_create_list_edit_flow(authed_client: TestClient, db_session: Session, seed: dict):
+    _create_model(authed_client, seed["anthropic_provider"].id, "test-model-1")
 
-    list_response = client.get("/ai-models")
+    list_response = authed_client.get("/ai-models")
     assert list_response.status_code == 200
     assert "test-model-1" in list_response.text
     assert "$2.00 / $10.00 per 1M" in list_response.text
 
     model = db_session.query(AIModel).filter_by(model_name="test-model-1").one()
 
-    edit_response = client.post(
+    edit_response = authed_client.post(
         f"/ai-models/{model.id}/edit",
         data={
             "provider_id": seed["anthropic_provider"].id,
@@ -51,11 +51,11 @@ def test_create_list_edit_flow(client: TestClient, db_session: Session, seed: di
         follow_redirects=False,
     )
     assert edit_response.status_code == 303
-    assert "Renamed Model" in client.get("/ai-models").text
+    assert "Renamed Model" in authed_client.get("/ai-models").text
 
 
-def test_duplicate_model_name_under_same_provider_is_rejected(client: TestClient, seed: dict):
-    response = client.post(
+def test_duplicate_model_name_under_same_provider_is_rejected(authed_client: TestClient, seed: dict):
+    response = authed_client.post(
         "/ai-models",
         data={
             "provider_id": seed["provider"].id,
@@ -68,8 +68,8 @@ def test_duplicate_model_name_under_same_provider_is_rejected(client: TestClient
     assert "already has a model with this exact model name" in response.text
 
 
-def test_invalid_price_is_rejected(client: TestClient, seed: dict):
-    response = client.post(
+def test_invalid_price_is_rejected(authed_client: TestClient, seed: dict):
+    response = authed_client.post(
         "/ai-models",
         data={
             "provider_id": seed["provider"].id,
@@ -83,23 +83,23 @@ def test_invalid_price_is_rejected(client: TestClient, seed: dict):
     assert "plain number" in response.text
 
 
-def test_toggle_active_flips_state(client: TestClient, db_session: Session, seed: dict):
+def test_toggle_active_flips_state(authed_client: TestClient, db_session: Session, seed: dict):
     model_id = seed["model"].id
     assert seed["model"].is_active is True
 
-    client.post(f"/ai-models/{model_id}/toggle-active", follow_redirects=False)
+    authed_client.post(f"/ai-models/{model_id}/toggle-active", follow_redirects=False)
     db_session.refresh(seed["model"])
     assert seed["model"].is_active is False
 
-    client.post(f"/ai-models/{model_id}/toggle-active", follow_redirects=False)
+    authed_client.post(f"/ai-models/{model_id}/toggle-active", follow_redirects=False)
     db_session.refresh(seed["model"])
     assert seed["model"].is_active is True
 
 
-def test_delete_blocked_when_a_run_exists_against_the_model(client: TestClient, db_session: Session, seed: dict):
+def test_delete_blocked_when_a_run_exists_against_the_model(authed_client: TestClient, db_session: Session, seed: dict):
     # Runs always belong to a prompt (prompt_id NOT NULL) — build the minimal
     # chain, same as tests/test_clients.py's delete-block test.
-    client_row = Client(name="Test Client", slug="test-client")
+    client_row = Client(name="Test Client", slug="test-authed_client")
     db_session.add(client_row)
     db_session.flush()
     prompt_set = PromptSet(client_id=client_row.id, name="Set")
@@ -112,18 +112,18 @@ def test_delete_blocked_when_a_run_exists_against_the_model(client: TestClient, 
     db_session.add(run)
     db_session.commit()
 
-    response = client.post(f"/ai-models/{seed['model'].id}/delete", follow_redirects=False)
+    response = authed_client.post(f"/ai-models/{seed['model'].id}/delete", follow_redirects=False)
 
     assert response.status_code == 409
     assert "1 run" in response.text
     assert db_session.get(AIModel, seed["model"].id) is not None
 
 
-def test_delete_succeeds_for_a_model_with_no_runs(client: TestClient, db_session: Session, seed: dict):
-    _create_model(client, seed["anthropic_provider"].id, "unused-model")
+def test_delete_succeeds_for_a_model_with_no_runs(authed_client: TestClient, db_session: Session, seed: dict):
+    _create_model(authed_client, seed["anthropic_provider"].id, "unused-model")
     model = db_session.query(AIModel).filter_by(model_name="unused-model").one()
 
-    response = client.post(f"/ai-models/{model.id}/delete", follow_redirects=False)
+    response = authed_client.post(f"/ai-models/{model.id}/delete", follow_redirects=False)
 
     assert response.status_code == 303
     assert db_session.get(AIModel, model.id) is None

@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.models import Client, ClientAlias
 
 
-def _create_client(client: TestClient, name: str = "Acme Corporation", domain: str = "") -> int:
-    response = client.post(
+def _create_client(authed_client: TestClient, name: str = "Acme Corporation", domain: str = "") -> int:
+    response = authed_client.post(
         "/clients",
         data={"name": name, "industry": "Automotive", "notes": "", "domain": domain},
         follow_redirects=False,
@@ -19,13 +19,13 @@ def _create_client(client: TestClient, name: str = "Acme Corporation", domain: s
     return int(response.headers["location"].rsplit("/", 1)[-1])
 
 
-def test_domain_is_saved_and_lowercased_through_create_and_edit(client: TestClient, db_session: Session):
-    client_id = _create_client(client, domain="Acme.COM")
+def test_domain_is_saved_and_lowercased_through_create_and_edit(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client, domain="Acme.COM")
 
     row = db_session.get(Client, client_id)
     assert row.domain == "acme.com"
 
-    edit_response = client.post(
+    edit_response = authed_client.post(
         f"/clients/{client_id}/edit",
         data={"name": "Acme Corporation", "industry": "Automotive", "notes": "", "domain": "New-Domain.com"},
         follow_redirects=False,
@@ -35,44 +35,48 @@ def test_domain_is_saved_and_lowercased_through_create_and_edit(client: TestClie
     assert row.domain == "new-domain.com"
 
 
-def test_domain_left_blank_is_stored_as_none(client: TestClient, db_session: Session):
-    client_id = _create_client(client)
+def test_domain_left_blank_is_stored_as_none(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
 
     assert db_session.get(Client, client_id).domain is None
 
 
-def test_add_and_delete_alias(client: TestClient, db_session: Session):
-    client_id = _create_client(client)
+def test_add_and_delete_alias(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
 
-    add_response = client.post(f"/clients/{client_id}/aliases", data={"alias": "Acme"}, follow_redirects=False)
+    add_response = authed_client.post(f"/clients/{client_id}/aliases", data={"alias": "Acme"}, follow_redirects=False)
     assert add_response.status_code == 303
 
     aliases = db_session.scalars(select(ClientAlias).where(ClientAlias.client_id == client_id)).all()
     assert len(aliases) == 1
     assert aliases[0].alias == "Acme"
 
-    delete_response = client.post(
+    delete_response = authed_client.post(
         f"/clients/{client_id}/aliases/{aliases[0].id}/delete", follow_redirects=False
     )
     assert delete_response.status_code == 303
     assert db_session.scalars(select(ClientAlias).where(ClientAlias.client_id == client_id)).all() == []
 
 
-def test_duplicate_alias_returns_structured_conflict_not_500(client: TestClient, db_session: Session):
-    client_id = _create_client(client)
-    client.post(f"/clients/{client_id}/aliases", data={"alias": "Acme"}, follow_redirects=False)
+def test_duplicate_alias_returns_structured_conflict_not_500(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+    authed_client.post(f"/clients/{client_id}/aliases", data={"alias": "Acme"}, follow_redirects=False)
 
-    response = client.post(f"/clients/{client_id}/aliases", data={"alias": "acme"}, follow_redirects=False)
+    response = authed_client.post(f"/clients/{client_id}/aliases", data={"alias": "acme"}, follow_redirects=False)
 
     assert response.status_code == 409
     assert "already registered" in response.text
     assert len(db_session.scalars(select(ClientAlias).where(ClientAlias.client_id == client_id)).all()) == 1
 
 
-def test_deleting_a_nonexistent_alias_returns_structured_404_not_500(client: TestClient):
-    client_id = _create_client(client)
+def test_deleting_a_nonexistent_alias_returns_404_not_500(authed_client: TestClient):
+    """A plain form POST (not /api/*) gets the rendered HTML error page (app/errors.py's
+    content-negotiation, docs/TASKS_PHASE6.md follow-up), not the raw structured JSON — same
+    status code either way, just not a 500.
+    """
+    client_id = _create_client(authed_client)
 
-    response = client.post(f"/clients/{client_id}/aliases/999999/delete", follow_redirects=False)
+    response = authed_client.post(f"/clients/{client_id}/aliases/999999/delete", follow_redirects=False)
 
     assert response.status_code == 404
-    assert response.json()["error_code"] == "client_alias_not_found"
+    assert "Alias not found" in response.text
