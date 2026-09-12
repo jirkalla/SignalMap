@@ -18,6 +18,7 @@ from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
 from app.models import User
 from app.routers import (
+    account,
     ai_models,
     clients,
     dashboard,
@@ -95,13 +96,15 @@ async def enforce_password_change(request: Request, call_next):
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
 
-# Already fully self-gated (require_role("admin") at the router level) — registered on their
-# own, not with the generic _login_required batch below, so there's exactly one place each
-# expresses its access requirement instead of two overlapping ones (docs/TASKS_PHASE6.md P6-T6).
+# Already fully self-gated (require_role("admin") at the router level, or — for account —
+# current_active_user with no role restriction) — registered on their own, not with the generic
+# _login_required batch below, so there's exactly one place each expresses its access
+# requirement instead of two overlapping ones (docs/TASKS_PHASE6.md P6-T6).
 app.include_router(users.router)
 app.include_router(providers.router)
 app.include_router(ai_models.router)
 app.include_router(settings.router)
+app.include_router(account.router)
 
 # Every router below requires a logged-in session (any role) except `locale` — the language
 # switch must keep working even on the login page itself, before anyone is authenticated.

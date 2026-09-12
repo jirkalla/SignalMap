@@ -30,7 +30,23 @@ class User(SQLAlchemyBaseUserTable[int], Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def display_label(self) -> str:
+        """The short label shown in the header — self-service `display_name` if the account set
+        one, else initials computed from `name` (first letter of the first and last word), so an
+        unset display name never means showing the full, potentially long, `name` there.
+        """
+        if self.display_name:
+            return self.display_name
+        parts = self.name.split()
+        if not parts:
+            return self.name
+        if len(parts) == 1:
+            return parts[0][0].upper()
+        return (parts[0][0] + parts[-1][0]).upper()

@@ -23,6 +23,12 @@
   "auth.new_password_label": "Neues Passwort",
   "auth.change_password_button": "Passwort speichern",
 
+  "account.title": "Kontoeinstellungen",
+  "account.full_name_label": "Vollständiger Name:",
+  "account.display_name_label": "Anzeigename",
+  "account.display_name_placeholder": "Wird statt Ihres vollständigen Namens angezeigt — leer lassen für Initialen",
+  "account.change_password_link": "Passwort ändern",
+
   "user.list_title": "Benutzer",
   "user.create_title": "Neuer Benutzer",
   "user.edit_title": "Benutzer bearbeiten",
@@ -321,6 +327,7 @@
   "errors.user_email_duplicate": "Ein Benutzer mit dieser E-Mail existiert bereits.",
   "errors.user_not_found": "Benutzer nicht gefunden.",
   "errors.user_cannot_deactivate_self": "Sie können Ihr eigenes Konto nicht deaktivieren.",
+  "errors.display_name_too_long": "Der Anzeigename darf höchstens 50 Zeichen lang sein.",
   "errors.forbidden": "Dazu hast du keine Berechtigung.",
   "errors.back_to_clients": "Zurück zu den Klienten",
 
