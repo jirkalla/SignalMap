@@ -11,7 +11,9 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
 
 1. Copy the env template and fill in your Google API key
    (https://aistudio.google.com/apikey — required to trigger a run, not to
-   start the app):
+   start the app) and a `SECRET_KEY` (required to start the app at all — it
+   signs the login session cookie; generate one with
+   `python -c "import secrets; print(secrets.token_urlsafe(48))"`):
 
    ```bash
    cp .env.example .env
@@ -30,15 +32,46 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
    docker compose exec app alembic upgrade head
    ```
 
-4. Open the app:
+4. Create the first admin account — there's no other way in, since the
+   in-app user management screen (`/users`) is itself admin-only:
 
+   ```bash
+   docker compose exec app python -m scripts.create_admin --email you@example.com --name "Your Name"
+   ```
+
+   Prompts for a password interactively (never pass it as a CLI argument).
+   The account must change that password on first login.
+
+   Alternative for repeated local resets: fill in `DEV_ADMIN_EMAIL`,
+   `DEV_ADMIN_NAME`, and `DEV_ADMIN_PASSWORD` in `.env`, then run
+   `docker compose exec app python -m scripts.create_admin --from-env` —
+   no interactive prompt, and safe to re-run (it skips silently if the
+   account already exists).
+
+   To also get a test `editor` and a test `viewer` account for exercising
+   role-based behavior, run:
+
+   ```bash
+   docker compose exec app python -m scripts.seed_dev_users
+   ```
+
+   Creates `editor@local.dev` / `viewer@local.dev`, both with the password
+   printed by the script. Local development only — hardcoded, disposable
+   credentials that only ever exist on your own database, and the script
+   refuses to run when `ENVIRONMENT=production`.
+
+5. Open the app:
+
+   - http://localhost:58000/login — log in with the account from step 4
    - http://localhost:58000/clients — the app itself
    - http://localhost:58000/help — in-app usage guide (how to fill in
      clients, prompt sets, prompts, markets, and read a run)
    - http://localhost:58000/docs — interactive API reference (Swagger)
 
 Every later `docker compose up -d --build` is enough for subsequent runs;
-step 3 only needs re-running after a new migration is added.
+step 3 only needs re-running after a new migration is added, and step 4 only
+once per environment (further accounts are created through `/users` once an
+admin exists).
 
 ## Stop it
 

@@ -14,12 +14,15 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Provider, Run
 from app.templating import get_t, render
 
-router = APIRouter(prefix="/ai-models", tags=["ai_models"])
+# Editor + admin (docs/ROADMAP.md §1 follow-up) — unlike providers.py/users.py, model
+# configuration (pricing, activation) is something an editor can also manage, not admin-only.
+router = APIRouter(prefix="/ai-models", tags=["ai_models"], dependencies=[Depends(require_role("admin", "editor"))])
 
 _CAPABILITY_TIERS = ("flagship", "standard", "economy")
 

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button, pill_badge, text_field, toggle_button %}
+{% block title %}{{ t('user.list_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">{{ t('user.list_title') }}</h1>
+  <a href="/users/new">{{ button(t('common.new')) }}</a>
+</div>
+
+{% if users %}
+<div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        <th class="py-3 px-4 font-medium">{{ t('user.name_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('user.email_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('user.role_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('common.status') }}</th>
+        <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50 align-top">
+        <td class="py-3 px-4 font-medium text-stone-900">{{ u.name }}</td>
+        <td class="py-3 px-4 text-stone-600">{{ u.email }}</td>
+        <td class="py-3 px-4 text-stone-600 capitalize">{{ u.role }}</td>
+        <td class="py-3 px-4">
+          {% if current_user and u.id == current_user.id %}
+          {{ pill_badge(u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+          {% else %}
+          {{ toggle_button('/users/' ~ u.id ~ '/toggle-active', u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+          {% endif %}
+        </td>
+        <td class="py-3 px-4 text-right">
+          <div class="flex items-center justify-end gap-3 flex-wrap">
+            <a href="/users/{{ u.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+            <details class="text-left">
+              <summary class="cursor-pointer text-stone-600 hover:underline list-none inline">{{ t('user.reset_password_button') }}</summary>
+              <form method="post" action="/users/{{ u.id }}/reset-password" class="mt-2 flex items-end gap-2">
+                {{ text_field('password', t('user.password_label'), '', type='password', required=True) }}
+                {{ button(t('common.save'), variant='secondary') }}
+              </form>
+            </details>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="md:hidden space-y-3">
+  {% for u in users %}
+  <div class="border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="flex items-center justify-between gap-2">
+      <div class="font-medium text-stone-900">{{ u.name }}</div>
+      {% if current_user and u.id == current_user.id %}
+      {{ pill_badge(u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+      {% else %}
+      {{ toggle_button('/users/' ~ u.id ~ '/toggle-active', u.is_active, t('user.active_label'), t('user.inactive_label')) }}
+      {% endif %}
+    </div>
+    <div class="text-sm text-stone-500 mt-1">{{ u.email }}</div>
+    <div class="text-xs text-stone-400 mt-1 capitalize">{{ u.role }}</div>
+    <div class="flex items-center gap-3 flex-wrap mt-3">
+      <a href="/users/{{ u.id }}/edit" class="text-stone-600 hover:underline text-sm">{{ t('common.edit') }}</a>
+      <details class="text-left">
+        <summary class="cursor-pointer text-stone-600 hover:underline list-none text-sm inline">{{ t('user.reset_password_button') }}</summary>
+        <form method="post" action="/users/{{ u.id }}/reset-password" class="mt-2 flex items-end gap-2">
+          {{ text_field('password', t('user.password_label'), '', type='password', required=True) }}
+          {{ button(t('common.save'), variant='secondary') }}
+        </form>
+      </details>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('user.empty_state') }}</p>
+{% endif %}
+{% endblock %}

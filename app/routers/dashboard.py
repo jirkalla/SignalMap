@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import Client, DomainClassification, Market, Provider
@@ -279,7 +280,11 @@ def dashboard_domains(
     return [DomainRow(**vars(row)) for row in rows]
 
 
-@router.post("/api/domains/{domain}/classify", response_model=DomainClassifyResponse)
+@router.post(
+    "/api/domains/{domain}/classify",
+    response_model=DomainClassifyResponse,
+    dependencies=[Depends(require_role("admin", "editor"))],
+)
 def classify_domain(
     domain: str,
     request: Request,

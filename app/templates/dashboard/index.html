@@ -124,10 +124,14 @@
                 [[ row.domain ]]
                 <span v-if="row.is_own_domain" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">{{ t('dashboard.own_domain_badge') }}</span>
                 <span v-if="row.domain_type" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-600">[[ domainTypeLabel(row.domain_type) ]]</span>
+                {% if can_edit(current_user) %}
                 <select v-else value="" @change="classifyDomain(row, $event.target.value)" class="ml-1 inline-block rounded-md border border-stone-300 px-1.5 py-0.5 text-xs bg-white text-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
                   <option value="" disabled selected>[[ classifyPlaceholderLabel ]]</option>
                   <option v-for="dt in domainTypes" :key="dt" :value="dt">[[ domainTypeLabel(dt) ]]</option>
                 </select>
+                {% else %}
+                <span v-else class="ml-1 text-stone-400 text-xs">{{ t('dashboard.domain_type_unclassified') }}</span>
+                {% endif %}
               </td>
               <td class="py-2 px-4 text-right">
                 <div class="flex items-center justify-end gap-2">

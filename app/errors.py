@@ -12,7 +12,7 @@ import logging
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -44,16 +44,29 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Attach the shared error-response handlers to the FastAPI app."""
 
     @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=ErrorResponse(error_code=exc.error_code, message=exc.message, detail=exc.detail).model_dump(),
-        )
+    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse | HTMLResponse:
+        """JSON for the dashboard's own /api/* endpoints (a fetch() call needs the structured
+        body to branch on); a small HTML page for every other route, since those are full-page
+        browser navigations where a raw JSON blob is not a real UI (docs/ROADMAP.md §1
+        follow-up — this used to be JSON everywhere, including e.g. a 404 on a nonexistent
+        client, not just the newer 403s from require_role()). Imported here, not at module
+        level — app.templating imports app.auth, which imports AppError from this very module,
+        so a top-level import would be circular; by the time a request actually reaches this
+        handler, that's moot.
+        """
+        if "/api/" in request.url.path:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=ErrorResponse(error_code=exc.error_code, message=exc.message, detail=exc.detail).model_dump(),
+            )
+        from app.templating import render
+
+        return render(request, "error.html", {"status_code": exc.status_code, "message": exc.message}, exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=ErrorResponse(
                 error_code="validation_error",
                 message="The request contains invalid data.",

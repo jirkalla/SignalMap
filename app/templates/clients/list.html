@@ -4,7 +4,9 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-xl font-semibold">{{ t('client.list_title') }}</h1>
+  {% if can_edit(current_user) %}
   <a href="/clients/new">{{ button(t('common.new')) }}</a>
+  {% endif %}
 </div>
 
 {% if clients %}
@@ -24,7 +26,11 @@
         <td class="py-3 px-4"><a href="/clients/{{ client.id }}" class="font-medium text-stone-900 hover:underline">{{ client.name }}</a></td>
         <td class="py-3 px-4 text-stone-600">{{ client.industry or t('common.none') }}</td>
         <td class="py-3 px-4 text-stone-500">{{ client.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-        <td class="py-3 px-4 text-right"><a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a></td>
+        <td class="py-3 px-4 text-right">
+          {% if can_edit(current_user) %}
+          <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

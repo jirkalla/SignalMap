@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import Market, Prompt, PromptSet, Run
@@ -19,6 +20,10 @@ from app.templating import get_t, render
 from app.utils import market_options
 
 router = APIRouter(tags=["prompt-sets"])
+
+# Reused on every create/edit/delete route below (docs/TASKS_PHASE6.md P6-T6) — viewer can read
+# everything on this router, but not change anything.
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 
 def _get_prompt_set_or_404(db: Session, request: Request, prompt_set_id: int) -> PromptSet:
@@ -47,7 +52,7 @@ def _current_prompts(db: Session, prompt_set_id: int) -> list[Prompt]:
     ).all()
 
 
-@router.post("/clients/{client_id}/prompt-sets")
+@router.post("/clients/{client_id}/prompt-sets", dependencies=_editor_or_admin)
 def create_prompt_set(
     request: Request,
     client_id: int,
@@ -79,7 +84,7 @@ def prompt_set_detail(request: Request, prompt_set_id: int, db: Session = Depend
     )
 
 
-@router.get("/prompt-sets/{prompt_set_id}/edit")
+@router.get("/prompt-sets/{prompt_set_id}/edit", dependencies=_editor_or_admin)
 def edit_prompt_set_form(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
     """Render the prompt-set edit form, pre-filled with the current name."""
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
@@ -96,7 +101,7 @@ def edit_prompt_set_form(request: Request, prompt_set_id: int, db: Session = Dep
     )
 
 
-@router.post("/prompt-sets/{prompt_set_id}/edit")
+@router.post("/prompt-sets/{prompt_set_id}/edit", dependencies=_editor_or_admin)
 def update_prompt_set(
     request: Request,
     prompt_set_id: int,
@@ -110,7 +115,7 @@ def update_prompt_set(
     return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)
 
 
-@router.post("/prompt-sets/{prompt_set_id}/delete")
+@router.post("/prompt-sets/{prompt_set_id}/delete", dependencies=_editor_or_admin)
 def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
     """Delete a prompt set and its prompts, unless any of them has a recorded run.
 
@@ -145,7 +150,7 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/prompt-sets/{prompt_set_id}/prompts")
+@router.post("/prompt-sets/{prompt_set_id}/prompts", dependencies=_editor_or_admin)
 def create_prompt(
     request: Request,
     prompt_set_id: int,

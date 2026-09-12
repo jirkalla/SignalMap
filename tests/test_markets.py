@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.models import Client, Market, Prompt, PromptSet
 
 
-def test_invalid_language_code_is_rejected(client: TestClient):
-    response = client.post(
+def test_invalid_language_code_is_rejected(authed_client: TestClient):
+    response = authed_client.post(
         "/markets", data={"code": "xx-ZZ", "language": "English", "country": "", "locale_name": ""}
     )
 
@@ -15,8 +15,8 @@ def test_invalid_language_code_is_rejected(client: TestClient):
     assert "ISO 639-1" in response.text
 
 
-def test_invalid_country_code_is_rejected(client: TestClient):
-    response = client.post(
+def test_invalid_country_code_is_rejected(authed_client: TestClient):
+    response = authed_client.post(
         "/markets", data={"code": "xx-ZZ", "language": "en", "country": "USA", "locale_name": ""}
     )
 
@@ -24,11 +24,11 @@ def test_invalid_country_code_is_rejected(client: TestClient):
     assert "ISO 3166-1" in response.text
 
 
-def test_delete_blocked_when_a_prompt_uses_the_market(client: TestClient, db_session: Session):
+def test_delete_blocked_when_a_prompt_uses_the_market(authed_client: TestClient, db_session: Session):
     market = Market(code="fr-FR", language="fr", country="FR", locale_name="French (France)")
     db_session.add(market)
     db_session.flush()
-    client_row = Client(name="Test Client", slug="test-client")
+    client_row = Client(name="Test Client", slug="test-authed_client")
     db_session.add(client_row)
     db_session.flush()
     prompt_set = PromptSet(client_id=client_row.id, name="Set")
@@ -38,7 +38,7 @@ def test_delete_blocked_when_a_prompt_uses_the_market(client: TestClient, db_ses
     db_session.add(prompt)
     db_session.commit()
 
-    response = client.post(f"/markets/{market.id}/delete", follow_redirects=False)
+    response = authed_client.post(f"/markets/{market.id}/delete", follow_redirects=False)
 
     assert response.status_code == 409
     assert "1 prompt" in response.text

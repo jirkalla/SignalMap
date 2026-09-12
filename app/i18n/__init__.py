@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from fastapi import Request
+
 _I18N_DIR = Path(__file__).parent
 SUPPORTED_LOCALES = ("en", "de")
 DEFAULT_LOCALE = "en"
@@ -64,3 +66,13 @@ def resolve_locale(cookie_value: str | None) -> str:
     if cookie_value in SUPPORTED_LOCALES:
         return cookie_value
     return DEFAULT_LOCALE
+
+
+def get_t(request: Request) -> Callable[[str], str]:
+    """Return the t() translator for the request's active locale.
+
+    Lives here (not app/templating.py, which re-exports it for existing callers) so
+    app/auth.py can use it too without importing app.templating — that module imports
+    app.auth for shared cookie/JWT constants, and importing it back would be circular.
+    """
+    return get_translator(resolve_locale(request.cookies.get(LOCALE_COOKIE_NAME)))

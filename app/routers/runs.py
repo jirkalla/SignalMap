@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import get_adapter, has_adapter
 from app.analysis import get_runner, has_runner
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import (
@@ -37,6 +38,7 @@ from app.models import (
     Run,
     SearchQuery,
     SystemInstructionTemplate,
+    User,
 )
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
@@ -56,6 +58,11 @@ from app.templating import get_t, render
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
+
+# Triggering a run spends real provider API budget; exporting is read-only but still gated
+# (docs/ROADMAP.md §1 "who sees what" — viewer explicitly gets no export). Reused below
+# instead of repeating the same Depends(...) call at each site (docs/TASKS_PHASE6.md P6-T6).
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 ExportFormat = Literal["csv", "xlsx", "json"]
 
@@ -193,7 +200,7 @@ def _run_active_analysis_skills(
     db.commit()
 
 
-@router.post("/prompts/{prompt_id}/runs")
+@router.post("/prompts/{prompt_id}/runs", dependencies=_editor_or_admin)
 def trigger_run(
     request: Request,
     prompt_id: int,
@@ -202,6 +209,7 @@ def trigger_run(
         ..., description="Market to run under — defaults to the prompt's own market but can be overridden per run."
     ),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
     """Run a prompt against the selected model and market, and store the result (FR-7..FR-16).
 
@@ -209,7 +217,10 @@ def trigger_run(
     a failed call is recorded with status='error' and a stored error
     message, never silently dropped. The market used is recorded on the
     run itself, so overriding it for one run never changes the prompt's
-    own market or any other run's history.
+    own market or any other run's history. `triggered_by_user_id` records who
+    ran it (docs/TASKS_PHASE6.md P6-T7) — nullable on the model itself for a
+    future scheduler-triggered run with no human behind it, not relevant here
+    since every manual trigger has a logged-in user.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
@@ -239,6 +250,7 @@ def trigger_run(
         trigger_type="manual",
         status="pending",
         request_payload=request_payload,
+        triggered_by_user_id=user.id,
     )
     db.add(run)
     db.commit()
@@ -423,7 +435,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/runs/{run_id}/export")
+@router.get("/runs/{run_id}/export", dependencies=_editor_or_admin)
 def export_run(
     request: Request,
     run_id: int,
@@ -444,7 +456,7 @@ def export_run(
     return _export_response(runs, "run", str(run_id), format, content)
 
 
-@router.get("/prompts/{prompt_id}/runs/export")
+@router.get("/prompts/{prompt_id}/runs/export", dependencies=_editor_or_admin)
 def export_prompt_runs(
     request: Request,
     prompt_id: int,
@@ -471,7 +483,7 @@ def export_prompt_runs(
     return _export_response(runs, "prompt", str(prompt_id), format, content)
 
 
-@router.get("/clients/{client_id}/runs/export")
+@router.get("/clients/{client_id}/runs/export", dependencies=_editor_or_admin)
 def export_client_runs(
     request: Request,
     client_id: int,

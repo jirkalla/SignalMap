@@ -15,6 +15,7 @@ from app.models.provider import AIModel, Provider
 from app.models.run import Citation, RawResponse, Run, SearchQuery
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
+from app.models.user import User
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "AnalysisResult",
     "TrackedEntity",
     "TrackedEntityAlias",
+    "User",
 ]

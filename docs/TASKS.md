@@ -223,6 +223,56 @@ helper) all fixed and re-verified before the PR was opened.
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE5.md` and
 `docs/PROMPTS_PHASE5.md`.
 
+## Phase 6: Auth + user management ✅ Done (branch not yet merged)
+
+Branch `feature/signalmap-phase6-auth`. Adds fastapi-users cookie-session authentication with
+three roles (admin/editor/viewer), enforced at the route level via `require_role()` — a UI
+element hidden by role elsewhere is convenience only, never a substitute for that check:
+
+- **Login/logout** (P6-T1–T3) — cookie + JWT session, no API tokens in v1. `current_user`
+  injected into every rendered template.
+- **Admin-only user management** (P6-T4) — create/edit/deactivate-reactivate users, reset
+  passwords, from a UI (`/users`). No self-service registration or emailed password reset —
+  admin sets the initial/reset password directly, communicated out of band. A bootstrap script
+  (`scripts/create_admin.py`) creates the first admin account before any UI exists to do it.
+- **Forced password change** (P6-T5) — a new or admin-reset account must set its own password on
+  first login, enforced by ASGI middleware regardless of role or requested path.
+- **Role-based route guards across the whole app** (P6-T6) — every mutating route requires
+  editor/admin; `/providers`/`/users` stay admin-only; `/ai-models`/`/settings`/`/help`/`/findings`
+  were opened to editor (a deviation from the original plan, made explicitly mid-branch — see
+  `docs/ROADMAP.md` §1 "Dodatečná úprava"). Viewer is read-only everywhere: no export, no domain
+  classification, and (added later) no raw provider response on the run detail page.
+- **Audit** (P6-T7) — `Run.triggered_by_user_id` records who triggered each run.
+- **Self-service account page** (`/account`, added mid-branch, not in the original plan) — every
+  role can set its own display name (falls back to initials from the full name when unset) and
+  change its own password (now requiring the current password first — see code review below).
+  Also shows a plain-language table of what each role can/can't do, since viewer especially has
+  no other way to learn why buttons are missing.
+
+Includes a **two-round code-review pass** (security/DRY focus) before merge. First round, over
+the whole branch, found 10 issues: an admin could strip their own admin role with no guard
+(total lockout risk, mirroring a self-deactivation guard that already existed for the sibling
+action); `/change-password` accepted a new password from any active session with no proof of the
+old one (a stolen session cookie alone could take over the account); an invalid `role` reached the
+DB's CHECK constraint unvalidated (raw 500 instead of a structured error, and mislabeled as a
+duplicate-email conflict); the CLI password-reset script reactivated a deactivated account but the
+admin-UI route didn't (undocumented divergence); a stale README/docs reference to a renamed dev
+fixture email; 25 duplicated copies of the same role-check template logic; 4 duplicated copies of
+building a `User` row; and 3 redundant DB round-trips to resolve "who is this" on every rendered
+page. A second, targeted round over the fix itself caught two more real bugs the fix introduced:
+wrong guard ordering (self-role-change check running before role validation, producing a
+misleading error) and the DB-lookup consolidation silently breaking `/health`'s documented
+"no database access" guarantee for any request carrying a session cookie. All fixed and
+re-verified (124/124 tests passing).
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE6.md`,
+`docs/PROMPTS_PHASE6.md`, and `docs/ROADMAP.md` §1.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
-- Authentication (fastapi-users) and multi-tenant scoping by client_id.
+- Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).
+
+See `docs/ROADMAP.md` for the full ordered plan beyond phase 6 — deploy
+hardening, going online, a cost/ops dashboard, a scheduler, brand-attribute
+tagging, sentiment, gap/opportunity score, and the ExpressYourself.AI frontend
+rebrand (design tokens and prototype already agreed, implementation pending).
