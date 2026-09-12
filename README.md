@@ -42,6 +42,24 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
    Prompts for a password interactively (never pass it as a CLI argument).
    The account must change that password on first login.
 
+   Alternative for repeated local resets: fill in `DEV_ADMIN_EMAIL`,
+   `DEV_ADMIN_NAME`, and `DEV_ADMIN_PASSWORD` in `.env`, then run
+   `docker compose exec app python -m scripts.create_admin --from-env` —
+   no interactive prompt, and safe to re-run (it skips silently if the
+   account already exists).
+
+   To also get a test `editor` and a test `viewer` account for exercising
+   role-based behavior, run:
+
+   ```bash
+   docker compose exec app python -m scripts.seed_dev_users
+   ```
+
+   Creates `editor@dev.local` / `viewer@dev.local`, both with the password
+   printed by the script. Local development only — hardcoded, disposable
+   credentials that only ever exist on your own database, and the script
+   refuses to run when `ENVIRONMENT=production`.
+
 5. Open the app:
 
    - http://localhost:58000/login — log in with the account from step 4

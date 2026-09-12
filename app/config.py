@@ -1,6 +1,7 @@
 """Application configuration, loaded from environment variables / .env."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +24,16 @@ class Settings(BaseSettings):
     # defaults to False for local/dev; set COOKIE_SECURE=true once the app is actually served
     # over HTTPS, or logins will silently "not stick" (cookie set, then never sent back).
     cookie_secure: bool = False
+    # Defaults to development (safe default, same philosophy as cookie_secure above) — lets a
+    # script make a real technical decision (e.g. scripts/seed_dev_users.py refusing to run) in
+    # place of a comment nobody reads. Not otherwise read by the app itself.
+    environment: Literal["development", "production"] = "development"
+    # Bootstrap-only: read by `scripts/create_admin.py --from-env`, never by the app itself.
+    # Local dev convenience so a fresh `docker compose up` + one script call gets you a working
+    # admin account without typing a password interactively every time you reset the DB.
+    dev_admin_email: str = ""
+    dev_admin_name: str = ""
+    dev_admin_password: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

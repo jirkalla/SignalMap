@@ -285,6 +285,33 @@ feat(users): add scripts/create_admin.py to bootstrap the first admin account
 
 ---
 
+## P6-T4c — `ENVIRONMENT` setting + `--from-env` bootstrap + dev test users (dodatečně přidáno)
+
+Taky mezera objevená až po P6-T4b, tentokrát z konverzace o tom, jak tohle řeší jiné projekty
+(Django `createsuperuser --noinput`, Rails/Laravel seed scripty). Rozlišuje dvě různé věci, co
+vypadají podobně, ale nemají stejnou povahu:
+
+- **Admin bootstrap** — skutečný operační krok, může běžet i v produkci → env proměnné dávají
+  smysl (`DEV_ADMIN_EMAIL`/`DEV_ADMIN_NAME`/`DEV_ADMIN_PASSWORD`, čteno přes
+  `python -m scripts.create_admin --from-env`, idempotentní na rozdíl od interaktivní cesty).
+- **Testovací editor/viewer účty** — čistě lokální dev fixture, nikdy nic skutečného nechrání
+  (existují jen na jednorázovém lokálním Postgresu) → **natvrdo v kódu**
+  (`scripts/seed_dev_users.py`, `editor@dev.local`/`viewer@dev.local`, pevné heslo), ne přes env
+  — stejný vzor jako Rails/Laravel seed data. Env proměnná na tohle by neřešila žádné skutečné
+  riziko, jen přidávala vyplňování.
+- **`ENVIRONMENT=development/production`** (`app/config.py`, default `development`) — nová
+  appka dosud neměla žádný koncept "jsem v produkci". Umožňuje `seed_dev_users.py` **skutečně
+  technicky odmítnout** běh v produkci (`sys.exit(1)`), ne jen mít varování v docstringu.
+
+Zdokumentováno v `README.md` krok 4 (alternativy k základnímu bootstrapu).
+
+**Expected commit:**
+```
+feat(config): add ENVIRONMENT setting, --from-env admin bootstrap, and dev test-user seeding
+```
+
+---
+
 ## P6-T5 — Vynucená změna hesla po prvním přihlášení
 
 **Target:** nový `app/routers/auth.py` (nebo rozšíření `app/routers/users.py` o `/change-password`),
