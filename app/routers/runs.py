@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import get_adapter, has_adapter
 from app.analysis import get_runner, has_runner
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import (
@@ -38,6 +38,7 @@ from app.models import (
     Run,
     SearchQuery,
     SystemInstructionTemplate,
+    User,
 )
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
@@ -208,6 +209,7 @@ def trigger_run(
         ..., description="Market to run under — defaults to the prompt's own market but can be overridden per run."
     ),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
     """Run a prompt against the selected model and market, and store the result (FR-7..FR-16).
 
@@ -215,7 +217,10 @@ def trigger_run(
     a failed call is recorded with status='error' and a stored error
     message, never silently dropped. The market used is recorded on the
     run itself, so overriding it for one run never changes the prompt's
-    own market or any other run's history.
+    own market or any other run's history. `triggered_by_user_id` records who
+    ran it (docs/TASKS_PHASE6.md P6-T7) — nullable on the model itself for a
+    future scheduler-triggered run with no human behind it, not relevant here
+    since every manual trigger has a logged-in user.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
@@ -245,6 +250,7 @@ def trigger_run(
         trigger_type="manual",
         status="pending",
         request_payload=request_payload,
+        triggered_by_user_id=user.id,
     )
     db.add(run)
     db.commit()

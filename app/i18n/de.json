@@ -261,6 +261,7 @@
   "run.started_label": "Gestartet",
   "run.finished_label": "Beendet",
   "run.latency_label": "Latenz",
+  "run.triggered_by_label": "Ausgelöst von",
   "run.error_label": "Fehler",
   "run.rendered_answer_label": "Aufbereitete Antwort",
   "run.request_sent_label": "Gesendete Anfrage",

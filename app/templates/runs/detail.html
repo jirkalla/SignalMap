@@ -48,6 +48,10 @@
       <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>
       <dd>{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</dd>
     </div>
+    <div class="flex justify-between sm:block">
+      <dt class="text-stone-500">{{ t('run.triggered_by_label') }}</dt>
+      <dd>{{ run.triggered_by.name if run.triggered_by else t('common.none') }}</dd>
+    </div>
   </dl>
 </div>
 
