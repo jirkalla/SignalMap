@@ -9,11 +9,46 @@
 {% endif %}
 
 <form method="post" action="/account" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
-  <p class="text-sm text-stone-500 mb-4">{{ t('account.full_name_label') }} <span class="text-stone-700">{{ user.name }}</span></p>
+  <p class="text-sm text-stone-500 mb-1">{{ t('account.full_name_label') }} <span class="text-stone-700">{{ user.name }}</span></p>
+  <p class="text-sm text-stone-500 mb-4">{{ t('account.your_role_label') }} <span class="text-stone-700">{{ t('account.role_' ~ user.role) }}</span></p>
   {{ text_field('display_name', t('account.display_name_label'), display_name_input if display_name_input is defined else user.display_name, placeholder=t('account.display_name_placeholder')) }}
   <div class="flex items-center gap-3 mt-2">
     {{ button(t('common.save')) }}
     <a href="/change-password" class="text-sm text-stone-500 hover:underline">{{ t('account.change_password_link') }}</a>
   </div>
 </form>
+
+<section class="max-w-lg mt-8">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('account.roles_title') }}</h2>
+  <p class="text-stone-700 mb-4">{{ t('account.roles_body') }}</p>
+  <div class="overflow-x-auto bg-white border border-stone-200 rounded-lg">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-2 px-4 font-medium">{{ t('account.roles_capability_header') }}</th>
+          <th class="py-2 px-4 font-medium text-center">{{ t('account.role_viewer') }}</th>
+          <th class="py-2 px-4 font-medium text-center">{{ t('account.role_editor') }}</th>
+          <th class="py-2 px-4 font-medium text-center">{{ t('account.role_admin') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for label, viewer, editor, admin in [
+          (t('account.cap_view'), true, true, true),
+          (t('account.cap_run_edit'), false, true, true),
+          (t('account.cap_export'), false, true, true),
+          (t('account.cap_domain'), false, true, true),
+          (t('account.cap_config'), false, true, true),
+          (t('account.cap_admin'), false, false, true)
+        ] %}
+        <tr class="border-t border-stone-100">
+          <td class="py-2 px-4">{{ label }}</td>
+          <td class="py-2 px-4 text-center">{{ "✓" if viewer else "—" }}</td>
+          <td class="py-2 px-4 text-center">{{ "✓" if editor else "—" }}</td>
+          <td class="py-2 px-4 text-center">{{ "✓" if admin else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}
