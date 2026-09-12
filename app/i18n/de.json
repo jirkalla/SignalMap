@@ -17,6 +17,10 @@
   "auth.login_button": "Anmelden",
   "auth.invalid_credentials": "E-Mail oder Passwort ist falsch.",
   "auth.logout_button": "Abmelden",
+  "auth.change_password_title": "Passwort ändern",
+  "auth.change_password_required_note": "Bevor es weitergeht, muss ein neues Passwort festgelegt werden.",
+  "auth.new_password_label": "Neues Passwort",
+  "auth.change_password_button": "Passwort speichern",
 
   "user.list_title": "Benutzer",
   "user.create_title": "Neuer Benutzer",

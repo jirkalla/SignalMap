@@ -11,14 +11,16 @@ users.py, added in P6-T4).
 
 from collections.abc import AsyncGenerator
 
+import jwt as pyjwt
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, IntegerIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport, JWTStrategy
 from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users.jwt import decode_jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_async_db
+from app.database import SessionLocal, get_async_db
 from app.errors import AppError
 from app.i18n import get_t
 from app.models import User
@@ -80,6 +82,31 @@ fastapi_users = FastAPIUsers[User, int](get_user_manager, [auth_backend])
 # handler turns that into a redirect to /login for full-page navigations, and leaves it as
 # JSON for the dashboard's own /api/* endpoints (design decision 6).
 current_active_user = fastapi_users.current_user(active=True)
+
+
+def current_user_from_cookie(request: Request) -> User | None:
+    """Best-effort lookup of the logged-in user straight from the session cookie, for the two
+    places that need "who is this" outside FastAPI's own dependency injection: `render()`
+    (app/templating.py, display only — name + logout link in the header) and the
+    must-change-password middleware (app/main.py, which runs before routing/dependency
+    resolution even happens). Never used for authorization itself — that always goes through
+    `current_active_user`/`require_role` as a real dependency. Decodes synchronously via
+    fastapi-users' own `decode_jwt` (a plain function, not the async `JWTStrategy.read_token`),
+    so callers that aren't already inside an async request handler don't need to bridge into one
+    for something this low-stakes. Returns None on any missing/invalid/expired token.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        payload = decode_jwt(token, get_settings().secret_key, JWT_AUDIENCE)
+    except pyjwt.PyJWTError:
+        return None
+    user_id = payload.get("sub")
+    if user_id is None:
+        return None
+    with SessionLocal() as db:
+        return db.get(User, int(user_id))
 
 
 def require_role(*allowed_roles: str):

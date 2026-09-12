@@ -6,12 +6,16 @@ docs/TASKS.md for the full scope, and the signalmap-conventions skill for
 project-wide conventions.
 """
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi_users.password import PasswordHelper
+from sqlalchemy.orm import Session
 
-from app.auth import auth_backend, current_active_user, fastapi_users
+from app.auth import auth_backend, current_active_user, current_user_from_cookie, fastapi_users
+from app.database import get_db
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
+from app.models import User
 from app.routers import (
     ai_models,
     clients,
@@ -28,6 +32,12 @@ from app.routers import (
     users,
 )
 from app.templating import render
+
+# Exempt from the must-change-password redirect below: the login/logout flow itself (or a
+# stuck account could never log out of its own forced state), the change-password page and its
+# own POST target, the locale switch (must keep working everywhere, including here), and the
+# liveness check (no human involved).
+_PASSWORD_CHANGE_EXEMPT_PATHS = {"/login", "/auth/login", "/auth/logout", "/change-password", "/health"}
 
 configure_logging()
 
@@ -56,6 +66,23 @@ async def handle_http_exception(request: Request, exc: HTTPException) -> JSONRes
     if exc.status_code == status.HTTP_401_UNAUTHORIZED and "/api/" not in request.url.path:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.middleware("http")
+async def enforce_password_change(request: Request, call_next):
+    """Redirect to /change-password on every request from a logged-in account that still has
+    `must_change_password=True` — regardless of role or where the request was actually headed
+    (docs/TASKS_PHASE6.md P6-T5). Runs as real ASGI middleware, not a router-level dependency,
+    because it has to apply uniformly across every router (including the admin-only `users`
+    router, set up with its own `require_role` gate) without editing each one individually.
+    `current_user_from_cookie` returns None for an anonymous request, so this is a no-op for
+    visitors who aren't logged in at all — the existing login gate still handles those.
+    """
+    if request.url.path not in _PASSWORD_CHANGE_EXEMPT_PATHS and not request.url.path.startswith("/set-locale"):
+        user = current_user_from_cookie(request)
+        if user is not None and user.must_change_password:
+            return RedirectResponse(url="/change-password", status_code=status.HTTP_303_SEE_OTHER)
+    return await call_next(request)
 
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
@@ -97,6 +124,38 @@ def login_page(request: Request):
     unauthenticated visit would redirect to itself forever.
     """
     return render(request, "auth/login.html")
+
+
+@app.get("/change-password", include_in_schema=False)
+def change_password_form(request: Request, user: User = Depends(current_active_user)):
+    """Render the password-change form. Requires login (any role) — unlike /login, there's no
+    redirect-loop risk here, since an unauthenticated visit is sent to /login, not back to
+    itself.
+    """
+    return render(request, "auth/change_password.html")
+
+
+@app.post("/change-password", include_in_schema=False)
+def change_password(
+    new_password: str = Form(..., min_length=8, description="The account's new password."),
+    current: User = Depends(current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Set a new password for the logged-in account and clear `must_change_password`.
+
+    Requires only being logged in, no specific role — every account goes through this after
+    creation or an admin password reset (app/routers/users.py), regardless of role.
+
+    `current` (from `current_active_user`) is bound to the auth subsystem's async session
+    (app/auth.py) — mutating it and committing `db` (a separate, synchronous session) would
+    silently do nothing, since they aren't the same session. Re-fetching by id through the sync
+    session first avoids that trap; only `current.id` is read off the async-bound object.
+    """
+    user = db.get(User, current.id)
+    user.hashed_password = PasswordHelper().hash(new_password)
+    user.must_change_password = False
+    db.commit()
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/", include_in_schema=False)

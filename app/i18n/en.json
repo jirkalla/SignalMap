@@ -17,6 +17,10 @@
   "auth.login_button": "Log in",
   "auth.invalid_credentials": "Incorrect email or password.",
   "auth.logout_button": "Log out",
+  "auth.change_password_title": "Change your password",
+  "auth.change_password_required_note": "You need to set a new password before continuing.",
+  "auth.new_password_label": "New password",
+  "auth.change_password_button": "Save password",
 
   "user.list_title": "Users",
   "user.create_title": "New user",
