@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.adapters import has_adapter
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
@@ -16,6 +17,10 @@ from app.templating import get_t, render
 from app.utils import market_options
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
+
+# Reused on every edit/delete route below (docs/TASKS_PHASE6.md P6-T6) — viewer can read
+# everything on this router, but not change anything.
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 
 def _get_prompt_or_404(db: Session, request: Request, prompt_id: int) -> Prompt:
@@ -118,7 +123,7 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
     )
 
 
-@router.get("/{prompt_id}/edit")
+@router.get("/{prompt_id}/edit", dependencies=_editor_or_admin)
 def edit_prompt_form(request: Request, prompt_id: int, db: Session = Depends(get_db)):
     """Render the prompt edit form. Saving creates version+1 — this row is never changed."""
     prompt = _get_prompt_or_404(db, request, prompt_id)
@@ -137,7 +142,7 @@ def edit_prompt_form(request: Request, prompt_id: int, db: Session = Depends(get
     )
 
 
-@router.post("/{prompt_id}/edit")
+@router.post("/{prompt_id}/edit", dependencies=_editor_or_admin)
 def update_prompt(
     request: Request,
     prompt_id: int,
@@ -175,7 +180,7 @@ def update_prompt(
     return RedirectResponse(url=f"/prompts/{new_prompt.id}", status_code=303)
 
 
-@router.post("/{prompt_id}/delete")
+@router.post("/{prompt_id}/delete", dependencies=_editor_or_admin)
 def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db)):
     """Delete this prompt's entire version lineage, unless any version has a recorded run.
 

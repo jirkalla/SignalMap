@@ -7,11 +7,12 @@ project-wide conventions.
 """
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.password import PasswordHelper
 from sqlalchemy.orm import Session
 
-from app.auth import auth_backend, current_active_user, current_user_from_cookie, fastapi_users
+from app.auth import auth_backend, current_active_user, current_user_from_cookie, fastapi_users, require_role
 from app.database import get_db
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
@@ -49,6 +50,13 @@ app = FastAPI(
         "and inspect the stored raw answer and citations."
     ),
     version="0.1.0",
+    # The built-in /docs, /redoc, and /openapi.json are unauthenticated by default — disabled
+    # here and replaced below with admin-only versions (docs/TASKS_PHASE6.md follow-up: hiding
+    # the nav link alone left the OpenAPI schema, which exposes every route/model in the app,
+    # reachable by anyone logged in just by typing the URL).
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 register_exception_handlers(app)
@@ -87,10 +95,13 @@ async def enforce_password_change(request: Request, call_next):
 
 app.include_router(fastapi_users.get_auth_router(auth_backend), prefix="/auth", tags=["auth"])
 
-# Already fully self-gated (require_role("admin") at the router level, app/routers/users.py) —
-# unlike the other routers below, admin-only was baked in from this router's first version, not
-# tightened in a later pass (docs/TASKS_PHASE6.md P6-T6).
+# Already fully self-gated (require_role("admin") at the router level) — registered on their
+# own, not with the generic _login_required batch below, so there's exactly one place each
+# expresses its access requirement instead of two overlapping ones (docs/TASKS_PHASE6.md P6-T6).
 app.include_router(users.router)
+app.include_router(providers.router)
+app.include_router(ai_models.router)
+app.include_router(settings.router)
 
 # Every router below requires a logged-in session (any role) except `locale` — the language
 # switch must keep working even on the login page itself, before anyone is authenticated.
@@ -103,13 +114,29 @@ app.include_router(prompt_sets.router, dependencies=_login_required)
 app.include_router(prompts.router, dependencies=_login_required)
 app.include_router(runs.router, dependencies=_login_required)
 app.include_router(markets.router, dependencies=_login_required)
-app.include_router(providers.router, dependencies=_login_required)
-app.include_router(ai_models.router, dependencies=_login_required)
 app.include_router(dashboard.router, dependencies=_login_required)
-app.include_router(settings.router, dependencies=_login_required)
-app.include_router(help.router, dependencies=_login_required)
-app.include_router(findings.router, dependencies=_login_required)
 app.include_router(locale.router)
+
+# Guide and Findings are hidden from viewer (docs/ROADMAP.md §1 follow-up) — not a
+# create/edit/delete distinction like everywhere else in this file, just content viewer doesn't
+# need; still enforced at the route, not just the nav link, for the same reason as /docs below.
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
+app.include_router(help.router, dependencies=_editor_or_admin)
+app.include_router(findings.router, dependencies=_editor_or_admin)
+
+
+@app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(require_role("admin"))])
+def get_openapi_schema():
+    """The raw OpenAPI schema, admin-only — see the FastAPI(...) constructor above for why the
+    built-in unauthenticated one is disabled.
+    """
+    return app.openapi()
+
+
+@app.get("/docs", include_in_schema=False, dependencies=[Depends(require_role("admin"))])
+def get_docs():
+    """Swagger UI, admin-only — see the FastAPI(...) constructor above."""
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Swagger UI")
 
 
 @app.get("/health", tags=["system"])

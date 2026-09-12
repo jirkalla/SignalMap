@@ -10,11 +10,16 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import Client, ClientAlias, Prompt, PromptSet, Run, TrackedEntity, TrackedEntityAlias
 from app.templating import get_t, render
 from app.utils import unique_slugify
+
+# Reused on every create/edit/delete route below (docs/TASKS_PHASE6.md P6-T6) — viewer can read
+# everything on this router, but not change anything.
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -109,7 +114,7 @@ def list_clients(request: Request, db: Session = Depends(get_db)):
     return render(request, "clients/list.html", {"clients": clients})
 
 
-@router.get("/new")
+@router.get("/new", dependencies=_editor_or_admin)
 def new_client_form(request: Request):
     """Render the empty client-creation form."""
     t = get_t(request)
@@ -120,7 +125,7 @@ def new_client_form(request: Request):
     )
 
 
-@router.post("")
+@router.post("", dependencies=_editor_or_admin)
 def create_client(
     name: str = Form(..., description="Client's display name."),
     industry: str = Form("", description="Free-text industry label, e.g. 'Automotive'."),
@@ -159,7 +164,7 @@ def client_detail(request: Request, client_id: int, db: Session = Depends(get_db
     return render(request, "clients/detail.html", {"client": client, "prompt_sets": prompt_sets})
 
 
-@router.get("/{client_id}/edit")
+@router.get("/{client_id}/edit", dependencies=_editor_or_admin)
 def edit_client_form(request: Request, client_id: int, db: Session = Depends(get_db)):
     """Render the client edit form, pre-filled with current values (FR-3)."""
     client = _get_client_or_404(db, request, client_id)
@@ -176,7 +181,7 @@ def edit_client_form(request: Request, client_id: int, db: Session = Depends(get
     )
 
 
-@router.post("/{client_id}/edit")
+@router.post("/{client_id}/edit", dependencies=_editor_or_admin)
 def update_client(
     request: Request,
     client_id: int,
@@ -200,7 +205,7 @@ def update_client(
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/delete")
+@router.post("/{client_id}/delete", dependencies=_editor_or_admin)
 def delete_client(request: Request, client_id: int, db: Session = Depends(get_db)):
     """Delete a client and everything under it, unless any of its runs would be lost.
 
@@ -219,7 +224,7 @@ def delete_client(request: Request, client_id: int, db: Session = Depends(get_db
     return RedirectResponse(url="/clients", status_code=303)
 
 
-@router.post("/{client_id}/aliases")
+@router.post("/{client_id}/aliases", dependencies=_editor_or_admin)
 def create_client_alias(
     request: Request,
     client_id: int,
@@ -258,7 +263,7 @@ def create_client_alias(
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/aliases/{alias_id}/delete")
+@router.post("/{client_id}/aliases/{alias_id}/delete", dependencies=_editor_or_admin)
 def delete_client_alias(request: Request, client_id: int, alias_id: int, db: Session = Depends(get_db)):
     """Delete an alias. Aliases are configuration, not evidence — no in-use check, always allowed."""
     alias = _get_client_alias_or_404(db, request, client_id, alias_id)
@@ -267,7 +272,7 @@ def delete_client_alias(request: Request, client_id: int, alias_id: int, db: Ses
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/tracked-entities")
+@router.post("/{client_id}/tracked-entities", dependencies=_editor_or_admin)
 def create_tracked_entity(
     request: Request,
     client_id: int,
@@ -306,7 +311,7 @@ def create_tracked_entity(
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/tracked-entities/{entity_id}/delete")
+@router.post("/{client_id}/tracked-entities/{entity_id}/delete", dependencies=_editor_or_admin)
 def delete_tracked_entity(request: Request, client_id: int, entity_id: int, db: Session = Depends(get_db)):
     """Delete a tracked entity and its aliases. Configuration, not evidence — no in-use check, always allowed."""
     entity = _get_tracked_entity_or_404(db, request, client_id, entity_id)
@@ -315,7 +320,7 @@ def delete_tracked_entity(request: Request, client_id: int, entity_id: int, db: 
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/tracked-entities/{entity_id}/aliases")
+@router.post("/{client_id}/tracked-entities/{entity_id}/aliases", dependencies=_editor_or_admin)
 def create_tracked_entity_alias(
     request: Request,
     client_id: int,
@@ -349,7 +354,7 @@ def create_tracked_entity_alias(
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 
-@router.post("/{client_id}/tracked-entities/{entity_id}/aliases/{alias_id}/delete")
+@router.post("/{client_id}/tracked-entities/{entity_id}/aliases/{alias_id}/delete", dependencies=_editor_or_admin)
 def delete_tracked_entity_alias(
     request: Request, client_id: int, entity_id: int, alias_id: int, db: Session = Depends(get_db)
 ):

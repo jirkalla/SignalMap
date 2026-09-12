@@ -5,12 +5,16 @@
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
   <h1 class="text-xl font-semibold break-words">{{ client.name }}</h1>
   <div class="flex items-center gap-3 flex-wrap">
+    {% if current_user.role in ('admin', 'editor') %}
     {{ export_button_group('/clients/' ~ client.id ~ '/runs/export', t('client.export_csv'), t('client.export_xlsx'), t('client.export_json')) }}
+    {% endif %}
     <a href="/dashboard?client_id={{ client.id }}" class="inline-flex items-center px-3 py-[5px] rounded-md text-sm font-medium bg-white text-stone-700 border border-stone-300 hover:bg-stone-50 transition shrink-0">{{ t('client.view_in_dashboard') }}</a>
+    {% if current_user.role in ('admin', 'editor') %}
     <div class="flex items-center gap-3 text-sm shrink-0">
       <a href="/clients/{{ client.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
       {{ delete_button('/clients/' ~ client.id ~ '/delete', t('client.delete_confirm'), t('client.delete_button')) }}
     </div>
+    {% endif %}
   </div>
 </div>
 {% if error %}
@@ -29,19 +33,23 @@
     {% for alias in client.aliases %}
     <li class="flex items-center justify-between py-2 text-sm">
       <span>{{ alias.alias }}</span>
+      {% if current_user.role in ('admin', 'editor') %}
       {{ delete_button('/clients/' ~ client.id ~ '/aliases/' ~ alias.id ~ '/delete', t('client.alias_delete_confirm'), t('client.delete_button')) }}
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
   {% else %}
   <p class="text-stone-500 text-sm mb-4">{{ t('client.aliases_empty_state') }}</p>
   {% endif %}
+  {% if current_user.role in ('admin', 'editor') %}
   <form method="post" action="/clients/{{ client.id }}/aliases" class="flex items-end gap-3">
     <div class="flex-1 mb-0">
       {{ text_field('alias', t('client.alias_add_placeholder'), '', required=True) }}
     </div>
     {{ button(t('common.new')) }}
   </form>
+  {% endif %}
 {% endcall %}
 
 <h2 class="text-lg font-semibold mb-3">{{ t('client.tracked_entities_title') }}</h2>
@@ -58,7 +66,9 @@
           <div class="text-amber-600 text-xs mt-0.5">{{ t('client.tracked_entity_short_name_warning') }}</div>
           {% endif %}
         </div>
+        {% if current_user.role in ('admin', 'editor') %}
         {{ delete_button('/clients/' ~ client.id ~ '/tracked-entities/' ~ entity.id ~ '/delete', t('client.tracked_entity_delete_confirm'), t('client.delete_button')) }}
+        {% endif %}
       </div>
       <details class="mt-2">
         <summary class="text-xs text-stone-500 cursor-pointer select-none">{{ t('client.aliases_title') }} ({{ entity.aliases|length }})</summary>
@@ -68,17 +78,21 @@
             {% for alias in entity.aliases %}
             <li class="flex items-center justify-between py-1.5 text-xs">
               <span>{{ alias.alias }}</span>
+              {% if current_user.role in ('admin', 'editor') %}
               {{ delete_button('/clients/' ~ client.id ~ '/tracked-entities/' ~ entity.id ~ '/aliases/' ~ alias.id ~ '/delete', t('client.alias_delete_confirm'), t('client.delete_button')) }}
+              {% endif %}
             </li>
             {% endfor %}
           </ul>
           {% endif %}
+          {% if current_user.role in ('admin', 'editor') %}
           <form method="post" action="/clients/{{ client.id }}/tracked-entities/{{ entity.id }}/aliases" class="flex items-end gap-2">
             <div class="flex-1 mb-0">
               {{ text_field('alias', t('client.alias_add_placeholder'), '', required=True) }}
             </div>
             {{ button(t('common.new')) }}
           </form>
+          {% endif %}
         </div>
       </details>
     </li>
@@ -87,6 +101,7 @@
   {% else %}
   <p class="text-stone-500 text-sm mb-4">{{ t('client.tracked_entities_empty_state') }}</p>
   {% endif %}
+  {% if current_user.role in ('admin', 'editor') %}
   <form method="post" action="/clients/{{ client.id }}/tracked-entities" class="flex items-end gap-3">
     <div class="flex-1 mb-0">
       {{ text_field('name', t('client.tracked_entity_add_placeholder'), '', required=True) }}
@@ -96,16 +111,19 @@
     </div>
     {{ button(t('common.new')) }}
   </form>
+  {% endif %}
 {% endcall %}
 
 <h2 class="text-lg font-semibold mb-3">{{ t('client.prompt_sets_title') }}</h2>
 
+{% if current_user.role in ('admin', 'editor') %}
 <form method="post" action="/clients/{{ client.id }}/prompt-sets" class="max-w-md bg-white border border-stone-200 rounded-lg p-4 mb-6 flex flex-wrap items-end gap-3">
   <div class="flex-1 min-w-[160px] mb-0">
     {{ text_field('name', t('prompt_set.name_label'), '', required=True) }}
   </div>
   {{ button(t('common.new')) }}
 </form>
+{% endif %}
 
 {% if prompt_sets %}
 <div class="grid sm:grid-cols-2 gap-3">

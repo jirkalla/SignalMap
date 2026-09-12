@@ -13,12 +13,18 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import Market, Prompt
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/markets", tags=["markets"])
+
+# Reused on every create/edit/delete route below (docs/TASKS_PHASE6.md P6-T6) — viewer can read
+# everything on this router, but not change anything. Markets were left out of the original
+# P6-T6 scope by omission, not a deliberate exception — closed here per explicit follow-up.
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 _LANGUAGE_RE = re.compile(r"^[a-z]{2}$")
 _COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
@@ -56,7 +62,7 @@ def list_markets(request: Request, db: Session = Depends(get_db)):
     return render(request, "markets/list.html", {"rows": _market_rows(db)})
 
 
-@router.get("/new")
+@router.get("/new", dependencies=_editor_or_admin)
 def new_market_form(request: Request):
     """Render the empty market-creation form."""
     t = get_t(request)
@@ -67,7 +73,7 @@ def new_market_form(request: Request):
     )
 
 
-@router.post("")
+@router.post("", dependencies=_editor_or_admin)
 def create_market(
     request: Request,
     code: str = Form(..., description="Short unique code, e.g. 'de-DE'."),
@@ -106,7 +112,7 @@ def create_market(
     return RedirectResponse(url="/markets", status_code=303)
 
 
-@router.get("/{market_id}/edit")
+@router.get("/{market_id}/edit", dependencies=_editor_or_admin)
 def edit_market_form(request: Request, market_id: int, db: Session = Depends(get_db)):
     """Render the market edit form, pre-filled with current values."""
     market = _get_market_or_404(db, request, market_id)
@@ -118,7 +124,7 @@ def edit_market_form(request: Request, market_id: int, db: Session = Depends(get
     )
 
 
-@router.post("/{market_id}/edit")
+@router.post("/{market_id}/edit", dependencies=_editor_or_admin)
 def update_market(
     request: Request,
     market_id: int,
@@ -164,7 +170,7 @@ def update_market(
     return RedirectResponse(url="/markets", status_code=303)
 
 
-@router.post("/{market_id}/delete")
+@router.post("/{market_id}/delete", dependencies=_editor_or_admin)
 def delete_market(request: Request, market_id: int, db: Session = Depends(get_db)):
     """Delete a market — blocked (inline error, not a raw API error) if any prompt still references it."""
     t = get_t(request)

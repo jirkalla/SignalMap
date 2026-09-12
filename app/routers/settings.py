@@ -17,12 +17,15 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import Provider, SystemInstructionTemplate
 from app.templating import get_t, render
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+# Editor + admin (docs/ROADMAP.md §1 follow-up) — unlike providers.py/users.py, the
+# per-provider system-instruction template is something an editor can also manage, not admin-only.
+router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_role("admin", "editor"))])
 
 # Sensible zero-config default for a provider with no saved row yet (e.g.
 # right after its seed migration, before anyone visits this page) — covers

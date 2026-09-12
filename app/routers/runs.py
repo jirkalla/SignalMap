@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import get_adapter, has_adapter
 from app.analysis import get_runner, has_runner
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import (
@@ -56,6 +57,11 @@ from app.templating import get_t, render
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["runs"])
+
+# Triggering a run spends real provider API budget; exporting is read-only but still gated
+# (docs/ROADMAP.md §1 "Co je vidět komu" — viewer explicitly gets no export). Reused below
+# instead of repeating the same Depends(...) call at each site (docs/TASKS_PHASE6.md P6-T6).
+_editor_or_admin = [Depends(require_role("admin", "editor"))]
 
 ExportFormat = Literal["csv", "xlsx", "json"]
 
@@ -193,7 +199,7 @@ def _run_active_analysis_skills(
     db.commit()
 
 
-@router.post("/prompts/{prompt_id}/runs")
+@router.post("/prompts/{prompt_id}/runs", dependencies=_editor_or_admin)
 def trigger_run(
     request: Request,
     prompt_id: int,
@@ -423,7 +429,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/runs/{run_id}/export")
+@router.get("/runs/{run_id}/export", dependencies=_editor_or_admin)
 def export_run(
     request: Request,
     run_id: int,
@@ -444,7 +450,7 @@ def export_run(
     return _export_response(runs, "run", str(run_id), format, content)
 
 
-@router.get("/prompts/{prompt_id}/runs/export")
+@router.get("/prompts/{prompt_id}/runs/export", dependencies=_editor_or_admin)
 def export_prompt_runs(
     request: Request,
     prompt_id: int,
@@ -471,7 +477,7 @@ def export_prompt_runs(
     return _export_response(runs, "prompt", str(prompt_id), format, content)
 
 
-@router.get("/clients/{client_id}/runs/export")
+@router.get("/clients/{client_id}/runs/export", dependencies=_editor_or_admin)
 def export_client_runs(
     request: Request,
     client_id: int,

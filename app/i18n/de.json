@@ -8,6 +8,7 @@
   "nav.providers": "Anbieter",
   "nav.ai_models": "Modelle",
   "nav.settings": "Einstellungen",
+  "nav.users": "Benutzer",
   "nav.config_menu": "Konfiguration",
   "nav.help_menu": "Hilfe",
 
@@ -322,6 +323,7 @@
   "errors.user_email_duplicate": "Ein Benutzer mit dieser E-Mail existiert bereits.",
   "errors.user_not_found": "Benutzer nicht gefunden.",
   "errors.forbidden": "Dazu hast du keine Berechtigung.",
+  "errors.back_to_clients": "Zurück zu den Klienten",
 
   "dashboard.title": "Dashboard",
   "dashboard.filter_client": "Klient",

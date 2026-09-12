@@ -27,8 +27,8 @@ from app.models import User
 
 _PASSWORD = "DevPass123!"
 _TEST_USERS = [
-    {"email": "editor@dev.local", "name": "Test Editor", "role": "editor"},
-    {"email": "viewer@dev.local", "name": "Test Viewer", "role": "viewer"},
+    {"email": "editor@local.dev", "name": "Test Editor", "role": "editor"},
+    {"email": "viewer@local.dev", "name": "Test Viewer", "role": "viewer"},
 ]
 
 

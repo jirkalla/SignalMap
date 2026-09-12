@@ -33,6 +33,7 @@
         <a href="/clients" class="text-stone-600 hover:text-stone-900">{{ t('nav.clients') }}</a>
         <a href="/dashboard" class="text-stone-600 hover:text-stone-900">{{ t('nav.dashboard') }}</a>
 
+        {% if current_user and current_user.role in ('admin', 'editor') %}
         <div class="relative">
           <button type="button" class="nav-dd-trigger flex items-center gap-1 text-stone-600 hover:text-stone-900" data-dd-target="nav-config-menu" aria-expanded="false" aria-haspopup="true">
             {{ t('nav.config_menu') }}
@@ -40,12 +41,17 @@
           </button>
           <div id="nav-config-menu" class="nav-dd-panel hidden absolute top-full left-1/2 -translate-x-1/2 mt-2 min-w-[160px] bg-white border border-stone-300 rounded-md shadow-md p-1 z-10">
             <a href="/markets" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.markets') }}</a>
-            <a href="/providers" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.providers') }}</a>
             <a href="/ai-models" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.ai_models') }}</a>
             <a href="/settings" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.settings') }}</a>
+            {% if current_user.role == 'admin' %}
+            <a href="/providers" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.providers') }}</a>
+            <a href="/users" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.users') }}</a>
+            {% endif %}
           </div>
         </div>
+        {% endif %}
 
+        {% if current_user and current_user.role in ('admin', 'editor') %}
         <div class="relative">
           <button type="button" class="nav-dd-trigger flex items-center gap-1 text-stone-600 hover:text-stone-900" data-dd-target="nav-help-menu" aria-expanded="false" aria-haspopup="true">
             {{ t('nav.help_menu') }}
@@ -54,9 +60,12 @@
           <div id="nav-help-menu" class="nav-dd-panel hidden absolute top-full left-1/2 -translate-x-1/2 mt-2 min-w-[160px] bg-white border border-stone-300 rounded-md shadow-md p-1 z-10">
             <a href="/help" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.help') }}</a>
             <a href="/findings" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900" title="English-only technical log">Findings</a>
+            {% if current_user.role == 'admin' %}
             <a href="/docs" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.docs') }}</a>
+            {% endif %}
           </div>
         </div>
+        {% endif %}
 
         <span class="flex items-center gap-1 text-stone-400">
           <a href="/set-locale/en?next={{ request.url.path }}" class="hover:text-stone-900 {% if locale == 'en' %}font-semibold text-stone-900{% endif %}">EN</a>

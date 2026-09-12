@@ -4,7 +4,9 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-xl font-semibold">{{ t('market.list_title') }}</h1>
+  {% if current_user.role in ('admin', 'editor') %}
   <a href="/markets/new">{{ button(t('common.new')) }}</a>
+  {% endif %}
 </div>
 
 {% if error %}
@@ -33,8 +35,10 @@
         <td class="py-3 px-4 text-stone-600">{{ market.locale_name or t('common.none') }}</td>
         <td class="py-3 px-4 text-stone-600">{{ prompt_count }}</td>
         <td class="py-3 px-4 text-right whitespace-nowrap">
+          {% if current_user.role in ('admin', 'editor') %}
           <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
           {{ delete_button('/markets/' ~ market.id ~ '/delete', t('market.delete_confirm'), t('market.delete_button'), extra_classes='ml-3' ~ (' opacity-40' if prompt_count else '')) }}
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -50,10 +54,12 @@
       <span class="text-xs text-stone-400">{{ prompt_count }} {{ t('market.prompts_using_label').lower() }}</span>
     </div>
     <div class="text-sm text-stone-500 mt-1">{{ market.locale_name or t('common.none') }}</div>
+    {% if current_user.role in ('admin', 'editor') %}
     <div class="flex gap-4 mt-3 text-sm">
       <a href="/markets/{{ market.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
       {{ delete_button('/markets/' ~ market.id ~ '/delete', t('market.delete_confirm'), t('market.delete_button')) }}
     </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>

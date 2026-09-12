@@ -13,12 +13,16 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Provider
 from app.templating import get_t, render
 
-router = APIRouter(prefix="/providers", tags=["providers"])
+# Admin-only end to end (docs/TASKS_PHASE6.md P6-T6) — even read access, unlike the
+# create/edit/delete-only gating on clients/prompts/runs, since provider configuration isn't
+# something an editor/viewer needs to see, let alone change.
+router = APIRouter(prefix="/providers", tags=["providers"], dependencies=[Depends(require_role("admin"))])
 
 
 def _provider_rows(db: Session) -> list[tuple[Provider, int]]:
