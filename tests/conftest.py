@@ -21,7 +21,7 @@ from app.adapters import register_adapter
 from app.config import get_settings
 from app.database import get_async_db, get_db
 from app.main import app
-from app.models import AIModel, AnalysisSkill, Base, Client, Market, Prompt, Provider, PromptSet, User
+from app.models import AIModel, AnalysisSkill, Base, Client, Market, Persona, Prompt, Provider, PromptSet, User
 from app.models.user import build_user
 from tests.fake_adapter import FakeAdapter
 
@@ -73,14 +73,15 @@ def _patch_auth_session_local(monkeypatch):
 
 @pytest.fixture(scope="session", autouse=True)
 def _fake_adapter_registered():
-    """Swap both real adapters for FakeAdapter for the whole test session.
+    """Swap every real adapter for FakeAdapter for the whole test session.
 
-    Never calls the real Google or Anthropic API — see
+    Never calls the real Google, Anthropic, or OpenAI API — see
     app/adapters/__init__.py's register_adapter(), the test seam this
     relies on.
     """
     register_adapter("google_gemini", FakeAdapter)
     register_adapter("anthropic", FakeAdapter)
+    register_adapter("openai", FakeAdapter)
 
 
 @pytest.fixture(autouse=True)
@@ -190,19 +191,25 @@ def viewer_client(client: TestClient, viewer_user: User) -> TestClient:
 
 @pytest.fixture
 def seed(db_session: Session) -> dict:
-    """Minimal rows every prompt/run/admin test needs: one market, both providers with one model
-    each, and the mention_visibility/competitive_visibility analysis skills.
+    """Minimal rows every prompt/run/admin test needs: one market, all three providers with one
+    model each, one default Persona, and the mention_visibility/competitive_visibility analysis
+    skills.
 
-    Both providers are seeded (not just google_gemini) so provider/ai-model
-    admin tests, and a run against either provider, all have real FK targets
-    without each test building its own — see P2-T6. Both analysis skills are
-    seeded here too (not just by migrations 0011/0017) because the test database
+    All three providers are seeded (not just google_gemini) so provider/ai-model
+    admin tests, and a run against any provider, all have real FK targets
+    without each test building its own — see P2-T6 (Anthropic), CPH-T8 (OpenAI). Both analysis
+    skills are seeded here too (not just by migrations 0011/0017) because the test database
     is built via Base.metadata.create_all, never via Alembic — without this,
-    _run_active_analysis_skills would silently find zero active skills.
+    _run_active_analysis_skills would silently find zero active skills. The default Persona is
+    likewise required here, not just by migration 0021 — `runs.persona_id` is NOT NULL
+    (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T5), so `sample_prompt`/`trigger_run`/any direct
+    `Run(...)` construction across the test suite needs one to reference.
     """
     market = Market(code="en-US", language="en", country="US", locale_name="English (United States)")
     provider = Provider(code="google_gemini", name="Google Gemini")
     anthropic_provider = Provider(code="anthropic", name="Anthropic Claude")
+    openai_provider = Provider(code="openai", name="OpenAI ChatGPT")
+    persona = Persona(label="person", is_default=True)
     analysis_skill = AnalysisSkill(
         key="mention_visibility",
         name="Mention & Visibility Detection",
@@ -217,7 +224,9 @@ def seed(db_session: Session) -> dict:
         execution_type="rule_based",
         is_active=True,
     )
-    db_session.add_all([market, provider, anthropic_provider, analysis_skill, competitive_visibility_skill])
+    db_session.add_all(
+        [market, provider, anthropic_provider, openai_provider, persona, analysis_skill, competitive_visibility_skill]
+    )
     db_session.flush()
     model = AIModel(
         provider_id=provider.id,
@@ -231,13 +240,22 @@ def seed(db_session: Session) -> dict:
         capability_tier="economy",
         is_active=True,
     )
-    db_session.add_all([model, anthropic_model])
+    openai_model = AIModel(
+        provider_id=openai_provider.id,
+        model_name="gpt-test-model",
+        capability_tier="standard",
+        is_active=True,
+    )
+    db_session.add_all([model, anthropic_model, openai_model])
     db_session.commit()
     db_session.refresh(market)
     db_session.refresh(provider)
     db_session.refresh(model)
     db_session.refresh(anthropic_provider)
     db_session.refresh(anthropic_model)
+    db_session.refresh(openai_provider)
+    db_session.refresh(openai_model)
+    db_session.refresh(persona)
     db_session.refresh(analysis_skill)
     db_session.refresh(competitive_visibility_skill)
     return {
@@ -246,6 +264,9 @@ def seed(db_session: Session) -> dict:
         "model": model,
         "anthropic_provider": anthropic_provider,
         "anthropic_model": anthropic_model,
+        "openai_provider": openai_provider,
+        "openai_model": openai_model,
+        "persona": persona,
         "analysis_skill": analysis_skill,
         "competitive_visibility_skill": competitive_visibility_skill,
     }

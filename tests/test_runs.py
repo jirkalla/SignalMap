@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterCitation, RawResponsePayload
-from app.models import AnalysisResult, Citation, Prompt, RawResponse, Run, SearchQuery
+from app.models import AnalysisResult, Citation, Persona, Prompt, RawResponse, Run, SearchQuery
 from tests.fake_adapter import FakeAdapter
 
 
@@ -22,7 +22,7 @@ def test_successful_run_stores_run_raw_response_and_citations(authed_client: Tes
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 
@@ -58,7 +58,7 @@ def test_successful_run_stores_and_displays_search_queries_in_order(
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
     run_id = int(response.headers["location"].rsplit("/", 1)[-1])
@@ -93,7 +93,7 @@ def test_successful_run_without_search_queries_shows_empty_state(
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
     run_id = int(response.headers["location"].rsplit("/", 1)[-1])
@@ -112,7 +112,7 @@ def test_failed_run_records_error_status_and_message(authed_client: TestClient, 
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 
@@ -141,7 +141,7 @@ def test_successful_run_against_the_anthropic_model(authed_client: TestClient, d
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 
@@ -163,7 +163,7 @@ def test_failed_run_against_the_anthropic_model_records_error(authed_client: Tes
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 
@@ -173,6 +173,89 @@ def test_failed_run_against_the_anthropic_model_records_error(authed_client: Tes
     run = db_session.get(Run, run_id)
     assert run.status == "error"
     assert run.error_message == "Country code XX is not supported."
+
+
+def test_successful_run_against_the_openai_model(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    """Same flow as the Gemini/Anthropic tests above, against seed['openai_model'] — proves the
+
+    run path is provider-agnostic for the third provider too (CPH-T7), still via FakeAdapter,
+    never the real OpenAI API.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"output": [{"type": "message", "content": [{"type": "output_text", "text": "Acme is reliable."}]}]},
+        rendered_text="Acme is reliable.",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 8, "output_tokens": 4},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["openai_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    run = db_session.get(Run, run_id)
+    assert run.status == "success"
+    assert run.model_id == seed["openai_model"].id
+
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    assert raw_response is not None
+    assert raw_response.rendered_text == "Acme is reliable."
+    assert raw_response.has_citations is False
+
+
+def test_failed_run_against_the_openai_model_records_error(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    FakeAdapter.error_to_raise = RuntimeError("Incorrect API key provided.")
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["openai_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    run = db_session.get(Run, run_id)
+    assert run.status == "error"
+    assert run.error_message == "Incorrect API key provided."
+
+
+def test_run_with_overridden_persona_records_it_in_request_payload(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T5 — a run explicitly triggered with a
+    non-default persona records that persona's label in request_payload, not the default's.
+    """
+    manager_persona = Persona(label="manager", is_default=False)
+    db_session.add(manager_persona)
+    db_session.commit()
+    db_session.refresh(manager_persona)
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme is known for reliability."},
+        rendered_text="Acme is known for reliability.",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": manager_persona.id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    run = db_session.get(Run, run_id)
+    assert run.persona_id == manager_persona.id
+    assert run.request_payload["persona"] == "manager"
 
 
 def test_successful_run_stores_a_mention_visibility_analysis_result(
@@ -198,7 +281,7 @@ def test_successful_run_stores_a_mention_visibility_analysis_result(
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
     run_id = int(response.headers["location"].rsplit("/", 1)[-1])
@@ -238,7 +321,7 @@ def test_successful_run_also_stores_a_competitive_visibility_analysis_result(
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
     run_id = int(response.headers["location"].rsplit("/", 1)[-1])
@@ -286,7 +369,7 @@ def test_analysis_engine_failure_never_fails_the_run(
 
     response = authed_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 
@@ -305,7 +388,7 @@ def test_viewer_cannot_trigger_a_run(viewer_client: TestClient, seed, sample_pro
     """
     response = viewer_client.post(
         f"/prompts/{sample_prompt.id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
 

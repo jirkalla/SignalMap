@@ -5,20 +5,23 @@ default (partial unique index, migration 0021); this router enforces that by alw
 the previous default before setting a new one, in the same transaction, whenever a submit would
 otherwise leave two rows (or zero rows) with `is_default = True`.
 
-The run-usage delete/list guard this router will eventually need (blocking delete, and showing a
-run count, for a persona actually used by a Run) is added in CPH-T5, once `runs.persona_id`
-exists — nothing references a persona yet, so only the is_default guard applies today.
+Delete is blocked both when a persona is the current default, and (since `runs.persona_id`,
+migration 0022) when any `Run` references it — `runs.persona_id`'s foreign key has no `ON
+DELETE` behavior (unlike e.g. `citations.raw_response_id`'s CASCADE), so without this app-level
+check a delete attempt against an in-use persona would surface as a raw, unhandled
+IntegrityError instead of a clean structured error, same evidence-retention policy as
+`markets`/`ai_models` delete.
 """
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import Persona
+from app.models import Persona, Run
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/personas", tags=["personas"])
@@ -35,6 +38,14 @@ def _get_persona_or_404(db: Session, request: Request, persona_id: int) -> Perso
 
 def _persona_rows(db: Session) -> list[Persona]:
     return db.scalars(select(Persona).order_by(Persona.label)).all()
+
+
+def _persona_run_count(db: Session, persona_id: int) -> int:
+    """How many runs exist against this one persona — the delete-block check (same pattern as
+
+    app/routers/markets.py's in-use check for Prompt.market_id).
+    """
+    return db.scalar(select(func.count(Run.id)).where(Run.persona_id == persona_id)) or 0
 
 
 def _clear_current_default(db: Session, except_id: int | None) -> None:
@@ -187,10 +198,8 @@ def update_persona(
 @router.post("/{persona_id}/delete", dependencies=_editor_or_admin)
 def delete_persona(request: Request, persona_id: int, db: Session = Depends(get_db)):
     """Delete a persona — blocked (inline error, not a raw API error) if it is the current
-    default (the table must never end up with zero default personas).
-
-    The run-usage guard (blocking delete of a persona referenced by any `Run`) is added in
-    CPH-T5, once `runs.persona_id` exists.
+    default (the table must never end up with zero default personas), or if any `Run`
+    references it (evidence retention — a run's recorded persona must never become dangling).
     """
     t = get_t(request)
     persona = _get_persona_or_404(db, request, persona_id)
@@ -199,6 +208,14 @@ def delete_persona(request: Request, persona_id: int, db: Session = Depends(get_
             request,
             "personas/list.html",
             {"rows": _persona_rows(db), "error": t("errors.persona_is_default")},
+            status_code=409,
+        )
+    run_count = _persona_run_count(db, persona_id)
+    if run_count:
+        return render(
+            request,
+            "personas/list.html",
+            {"rows": _persona_rows(db), "error": t("errors.persona_in_use").format(count=run_count)},
             status_code=409,
         )
     db.delete(persona)
