@@ -10,6 +10,7 @@ from app.models.client import Client
 from app.models.client_alias import ClientAlias
 from app.models.domain_classification import DomainClassification
 from app.models.market import Market
+from app.models.persona import Persona
 from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, AIModelPriceHistory, Provider
 from app.models.run import Citation, RawResponse, Run, SearchQuery
@@ -23,6 +24,7 @@ __all__ = [
     "ClientAlias",
     "DomainClassification",
     "Market",
+    "Persona",
     "PromptSet",
     "Prompt",
     "Provider",
