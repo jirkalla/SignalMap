@@ -7,6 +7,7 @@ Client/Prompt/PromptSet (HD-T4): `runs.model_id` has no ondelete, so a model
 referenced by any Run can only be deactivated, never deleted.
 """
 
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -57,6 +58,19 @@ def _model_run_count(db: Session, model_id: int) -> int:
 def _provider_options(db: Session) -> list[tuple[int, str]]:
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
     return [(p.id, p.name) for p in providers]
+
+
+def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceHistory, datetime | None]]:
+    """Pair each of `model`'s price history rows (already newest-first via the relationship's
+    own `order_by`) with its computed validity end.
+
+    `ai_model_price_history` stores only `effective_from` (see migration 0020's docstring for
+    why) — a row's "valid until" is always the next-newer row's `effective_from`, or `None`
+    (still in effect today) for the newest row. Computed here over the already-loaded list, not
+    a second query.
+    """
+    history = model.price_history
+    return [(row, history[i - 1].effective_from if i > 0 else None) for i, row in enumerate(history)]
 
 
 def _model_to_form_state(model: AIModel) -> dict:
@@ -295,7 +309,10 @@ def create_ai_model(
 
 @router.get("/{model_id}/edit")
 def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(get_db)):
-    """Render the model edit form, pre-filled with current values, including read-only created_at."""
+    """Render the model edit form, pre-filled with current values, including read-only created_at
+    and its full price history (oldest changes at the bottom, each paired with the date range it
+    was actually in effect).
+    """
     model = _get_model_or_404(db, request, model_id)
     t = get_t(request)
     return render(
@@ -307,6 +324,7 @@ def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(ge
             "cancel_url": "/ai-models",
             "model": _model_to_form_state(model),
             "providers": _provider_options(db),
+            "price_history": _price_history_rows(model),
         },
     )
 
