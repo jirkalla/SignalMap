@@ -5,7 +5,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Market
+from app.models import Market, Persona
 
 
 def market_options(db: Session) -> list[tuple[int, str]]:
@@ -16,6 +16,20 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     """
     markets = db.scalars(select(Market).order_by(Market.code)).all()
     return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
+
+
+def persona_options(db: Session) -> list[tuple[int, str]]:
+    """(id, label) pairs for every persona, sorted by label — shared by the run-trigger form
+    (app/templates/prompts/detail.html)."""
+    personas = db.scalars(select(Persona).order_by(Persona.label)).all()
+    return [(p.id, p.label) for p in personas]
+
+
+def default_persona_id(db: Session) -> int:
+    """The id of the persona currently marked `is_default` — used to pre-select the run-trigger
+    form's persona <select>. Always exists: `personas` can never end up with zero default rows
+    (app/routers/personas.py enforces that on both delete and edit)."""
+    return db.scalar(select(Persona.id).where(Persona.is_default.is_(True)))
 
 
 def normalize_domain(domain: str) -> str:

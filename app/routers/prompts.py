@@ -14,7 +14,7 @@ from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
 from app.templating import get_t, render
-from app.utils import market_options
+from app.utils import default_persona_id, market_options, persona_options
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -117,6 +117,8 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
             "prompt": prompt,
             "model_groups": model_groups,
             "markets": market_options(db),
+            "personas": persona_options(db),
+            "default_persona_id": default_persona_id(db),
             "runs": runs,
             "versions": versions if len(versions) > 1 else [],
         },
@@ -205,6 +207,8 @@ def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db
                 "prompt": prompt,
                 "model_groups": model_groups,
                 "markets": market_options(db),
+                "personas": persona_options(db),
+                "default_persona_id": default_persona_id(db),
                 "runs": runs,
                 "versions": versions if len(versions) > 1 else [],
                 "error": t("errors.prompt_in_use").format(count=run_count),

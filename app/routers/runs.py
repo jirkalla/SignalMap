@@ -33,6 +33,7 @@ from app.models import (
     Citation,
     Client,
     Market,
+    Persona,
     Provider,
     RawResponse,
     Run,
@@ -106,13 +107,12 @@ def _export_response(runs: list[Run], scope: str, identifier: str, format: Expor
     )
 
 
-def _market_system_instruction(db: Session, provider: Provider, market: Market) -> str | None:
-    """Build a locale-framing hint from a prompt's market, using `provider`'s
+def _build_system_instruction(db: Session, provider: Provider, market: Market, persona: Persona) -> str | None:
+    """Build a locale-framing, persona-framing hint from a run's market and persona, using
 
-    editable template (see /settings and app/models/settings.py). No saved
-    row yet -> the built-in DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE (app.routers.
-    settings). A row with an empty template -> None, meaning no
-    system_instruction is sent for this provider at all.
+    `provider`'s editable template (see /settings and app/models/settings.py). No saved row yet
+    -> the built-in DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE (app.routers.settings). A row with an
+    empty template -> None, meaning no system_instruction is sent for this provider at all.
 
     This is a text-only hint for the answer's *language* — every provider
     gets it, since none expose a real "respond in language X" API
@@ -124,6 +124,11 @@ def _market_system_instruction(db: Session, provider: Provider, market: Market) 
     caller passing `market_country` separately), so its saved template
     should be trimmed to language-only — see docs/TASKS_PHASE2.md P2-T4
     follow-up for why keeping both wouldn't be wrong, just redundant.
+
+    `persona.label` (e.g. "person", "manager", "politician" — app/models/persona.py) is passed
+    as the `{persona}` placeholder — a saved template that doesn't reference it (like Anthropic's
+    trimmed one above) simply ignores this kwarg, since `str.format()` never errors on an unused
+    one.
     """
     row = db.scalar(select(SystemInstructionTemplate).where(SystemInstructionTemplate.provider_id == provider.id))
     if row is None:
@@ -138,6 +143,7 @@ def _market_system_instruction(db: Session, provider: Provider, market: Market) 
         market_language=market.language,
         market_country=market.country or "",
         market_locale_name=market.locale_name or market.code,
+        persona=persona.label,
     )
 
 
@@ -208,17 +214,22 @@ def trigger_run(
     market_id: int = Form(
         ..., description="Market to run under — defaults to the prompt's own market but can be overridden per run."
     ),
+    persona_id: int = Form(
+        ...,
+        description="Persona to frame the question as — defaults to the default persona but can be overridden per run.",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(current_active_user),
 ):
-    """Run a prompt against the selected model and market, and store the result (FR-7..FR-16).
+    """Run a prompt against the selected model, market, and persona, and store the result (FR-7..FR-16).
 
     Always creates a Run row, whether the provider call succeeds or fails —
     a failed call is recorded with status='error' and a stored error
-    message, never silently dropped. The market used is recorded on the
-    run itself, so overriding it for one run never changes the prompt's
-    own market or any other run's history. `triggered_by_user_id` records who
-    ran it (docs/TASKS_PHASE6.md P6-T7) — nullable on the model itself for a
+    message, never silently dropped. The market and persona used are
+    recorded on the run itself, so overriding either for one run never
+    changes the prompt's own market, the default persona, or any other
+    run's history. `triggered_by_user_id` records who ran it
+    (docs/TASKS_PHASE6.md P6-T7) — nullable on the model itself for a
     future scheduler-triggered run with no human behind it, not relevant here
     since every manual trigger has a logged-in user.
     """
@@ -235,18 +246,24 @@ def trigger_run(
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
 
-    system_instruction = _market_system_instruction(db, model.provider, market)
+    persona = db.get(Persona, persona_id)
+    if persona is None:
+        raise AppError("persona_not_found", t("errors.persona_not_found"), status_code=400)
+
+    system_instruction = _build_system_instruction(db, model.provider, market, persona)
     request_payload = {
         "model": model.model_name,
         "prompt_text": prompt.text,
         "system_instruction": system_instruction,
         "market_country": market.country,
+        "persona": persona.label,
     }
 
     run = Run(
         prompt_id=prompt.id,
         model_id=model.id,
         market_id=market.id,
+        persona_id=persona.id,
         trigger_type="manual",
         status="pending",
         request_payload=request_payload,

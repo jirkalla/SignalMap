@@ -69,10 +69,14 @@
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_field('market_id', t('prompt.market_label'), markets, selected=prompt.market_id, required=True) }}
   </div>
+  <div class="flex-1 min-w-[200px] mb-0">
+    {{ select_field('persona_id', t('prompt.persona_label'), personas, selected=default_persona_id, required=True) }}
+  </div>
   {{ button(t('prompt.trigger_run'), disabled=not model_groups) }}
 </form>
 <div class="-mt-6 mb-8 space-y-1">
   <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
+  <p class="text-xs text-stone-400">{{ t('prompt.persona_override_hint') }}</p>
   {% if not model_groups %}
   <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
   {% endif %}

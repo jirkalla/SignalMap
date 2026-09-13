@@ -19,6 +19,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.market import Market
+    from app.models.persona import Persona
     from app.models.prompt import Prompt
     from app.models.provider import AIModel
     from app.models.user import User
@@ -33,6 +34,14 @@ class Run(Base):
     run itself rather than inferred from `prompt.market`, so historical
     runs stay accurate even if that ever diverges.
 
+    `persona_id` is the same kind of per-run override, for who the
+    system_instruction template frames the asker as (app/models/persona.py)
+    — defaults to whichever persona is currently marked `is_default` at
+    trigger time, but can be swapped per run (e.g. to compare how the same
+    prompt is answered when framed as a "manager" vs. a "politician"), and
+    is likewise recorded on the run itself so historical runs stay accurate
+    even if the default persona changes later.
+
     `request_payload` records exactly what was sent to the provider (model,
     prompt text, system instruction), set before the adapter is called so
     it's present whether the run succeeds or fails.
@@ -44,6 +53,7 @@ class Run(Base):
     prompt_id: Mapped[int] = mapped_column(ForeignKey("prompts.id"), nullable=False)
     model_id: Mapped[int] = mapped_column(ForeignKey("ai_models.id"), nullable=False)
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id"), nullable=False)
+    persona_id: Mapped[int] = mapped_column(ForeignKey("personas.id"), nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual", server_default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -58,6 +68,7 @@ class Run(Base):
     prompt: Mapped["Prompt"] = relationship(back_populates="runs")
     model: Mapped["AIModel"] = relationship()
     market: Mapped["Market"] = relationship()
+    persona: Mapped["Persona"] = relationship()
     triggered_by: Mapped["User | None"] = relationship()
     raw_response: Mapped["RawResponse | None"] = relationship(
         back_populates="run", uselist=False, cascade="all, delete-orphan"
