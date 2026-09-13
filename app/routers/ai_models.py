@@ -60,6 +60,23 @@ def _provider_options(db: Session) -> list[tuple[int, str]]:
     return [(p.id, p.name) for p in providers]
 
 
+def _record_price_history(db: Session, model: AIModel, user: User) -> None:
+    """Append one AIModelPriceHistory row capturing `model`'s current price.
+
+    Call only after `model.cost_per_1k_*_usd` already holds the value that should be recorded —
+    unconditionally on creation, or only when the price actually changed on edit (see
+    create_ai_model/update_ai_model, the only two callers, for the two conditions).
+    """
+    db.add(
+        AIModelPriceHistory(
+            ai_model_id=model.id,
+            cost_per_1k_input_usd=model.cost_per_1k_input_usd,
+            cost_per_1k_output_usd=model.cost_per_1k_output_usd,
+            changed_by_user_id=user.id,
+        )
+    )
+
+
 def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceHistory, datetime | None]]:
     """Pair each of `model`'s price history rows (already newest-first via the relationship's
     own `order_by`) with its computed validity end.
@@ -295,14 +312,7 @@ def create_ai_model(
     )
     db.add(model)
     db.flush()  # need model.id before the history row can reference it
-    db.add(
-        AIModelPriceHistory(
-            ai_model_id=model.id,
-            cost_per_1k_input_usd=model.cost_per_1k_input_usd,
-            cost_per_1k_output_usd=model.cost_per_1k_output_usd,
-            changed_by_user_id=user.id,
-        )
-    )
+    _record_price_history(db, model, user)
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
@@ -418,14 +428,7 @@ def update_ai_model(
     model.supports_web_search = supports_web_search
     model.notes = notes or None
     if price_changed:
-        db.add(
-            AIModelPriceHistory(
-                ai_model_id=model.id,
-                cost_per_1k_input_usd=parsed["cost_in"],
-                cost_per_1k_output_usd=parsed["cost_out"],
-                changed_by_user_id=user.id,
-            )
-        )
+        _record_price_history(db, model, user)
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
