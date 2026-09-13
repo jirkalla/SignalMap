@@ -1,41 +1,90 @@
+name: signalmap
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:18
-    container_name: signalmap_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: signalmap
       POSTGRES_USER: signalmap_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
-    ports:
-      - "55432:5432"        # host:container
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
-      # postgres:18+ images store the cluster under a version-specific
-      # subdirectory of /var/lib/postgresql itself, not .../data directly —
-      # mounting at .../data (the pre-18 convention) fails at startup.
+      # PostgreSQL 18 stores its versioned data directory beneath this path.
       - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *logging
 
   app:
-    build: .
-    container_name: signalmap_app
+    build:
+      context: .
+      dockerfile: dockerfile
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Generate a hex password as documented; no URL escaping is then needed.
+      DATABASE_URL: postgresql+psycopg://signalmap_user:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/signalmap
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-}
+      DEV_ADMIN_NAME: ${DEV_ADMIN_NAME:-}
+      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - postgres
-    env_file:
-      - .env
+      app:
+        condition: service_healthy
     ports:
-      - "58000:8000"         # host:container
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-58000}:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-58443}:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     volumes:
-      - .:/code
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # --reload-include is needed because uvicorn's default reload watcher
-    # only tracks .py files - without it, editing app/i18n/*.json requires
-    # a manual restart to be picked up.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-include "*.json"
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+configs:
+  caddyfile:
+    content: |
+      ${SITE_ADDRESS:-:80} {
+        encode gzip
+        reverse_proxy app:8000
+      }
 
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
