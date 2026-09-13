@@ -271,7 +271,8 @@ Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE6.md`,
 
 ## ChatGPT adapter + persona placeholder + AI-model price history
 
-Branch `feature/signalmap-chatgpt-persona-pricehistory` (not yet merged). Bundles three
+Branch `feature/signalmap-chatgpt-persona-pricehistory`, merged 2026-09-13
+([PR #10](https://github.com/jirkalla/SignalMap/pull/10)). Bundles three
 independent additions plus one small follow-up fix, per
 `docs/TASKS_CHATGPT_PERSONA_PRICING.md` — none of them depend on running live in production,
 same reasoning as `docs/TASKS_PHASE5.md` for why one branch, not four:
