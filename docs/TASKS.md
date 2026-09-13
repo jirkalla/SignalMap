@@ -269,6 +269,36 @@ re-verified (124/124 tests passing).
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE6.md`,
 `docs/PROMPTS_PHASE6.md`, and `docs/ROADMAP.md` §1.
 
+## ChatGPT adapter + persona placeholder + AI-model price history
+
+Branch `feature/signalmap-chatgpt-persona-pricehistory` (not yet merged). Bundles three
+independent additions plus one small follow-up fix, per
+`docs/TASKS_CHATGPT_PERSONA_PRICING.md` — none of them depend on running live in production,
+same reasoning as `docs/TASKS_PHASE5.md` for why one branch, not four:
+
+- **Third AI provider — OpenAI ChatGPT** — same adapter pattern as Gemini/Anthropic (fázi 1/2),
+  Responses API with the `web_search` tool and real `user_location` geo-targeting (parity with
+  Anthropic, not just Gemini's text-only hint).
+- **Persona placeholder in the system-instruction template** — the previously hardcoded "The
+  person asking..." (`app/routers/settings.py`) becomes a data-driven `{persona}` placeholder
+  with full CRUD (`/personas`), selectable per run (same pattern as the existing market
+  override on `Run`).
+- **AI-model price history** — new `ai_model_price_history` table records every price change
+  instead of silently overwriting it, with a viewable "valid from–until" history on
+  `/ai-models/{id}/edit`.
+- **Duplicate-run guard** — `trigger_run` rejects a second submission on the same prompt while
+  one is still `status='pending'`, plus an immediate client-side button-disable (the run-trigger
+  form gives no other feedback while blocking synchronously on a slow provider call).
+
+A focused security review (SQL injection/XSS/authorization/format-string-injection) found no
+qualifying new vulnerabilities in the branch. A DRY pass found and fixed one duplication: a
+shared `_record_price_history()` helper (`app/routers/ai_models.py`) replacing two copies of the
+same `AIModelPriceHistory` insert. Also hardened `scripts/create_admin.py --from-env` to refuse
+running when `ENVIRONMENT=production`, matching `scripts/seed_dev_users.py`'s existing guard.
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_CHATGPT_PERSONA_PRICING.md`
+and `docs/PROMPTS_CHATGPT_PERSONA_PRICING.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

@@ -31,11 +31,17 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 # right after its seed migration, before anyone visits this page) — covers
 # both language and location-simulation, for a provider with no real
 # geographic API targeting of its own. See app/routers/runs.py's
-# _market_system_instruction for where this is actually applied, and
+# _build_system_instruction for where this is actually applied, and
 # _rows() below for why it's shown here rather than hidden behind a blank
 # textarea (the UI must always show what's really being sent).
+#
+# {persona} (app/models/persona.py, CPH-T3-T5) replaces what used to be the
+# hardcoded word "person" — .format() ignores unused kwargs, so a saved
+# template that doesn't reference {persona} at all (e.g. Anthropic's
+# trimmed language-only template) keeps working unchanged; this default
+# just uses the placeholder like any other saved template could.
 DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE = (
-    "The person asking this question is located in {market_locale_name} and writing in "
+    "The {persona} asking this question is located in {market_locale_name} and writing in "
     "{market_language}. Answer in {market_language}, using regional context and examples "
     "relevant there where applicable."
 )
@@ -45,6 +51,7 @@ _DRY_RUN_VALUES = {
     "market_language": "cs",
     "market_country": "CZ",
     "market_locale_name": "Czech (Czech Republic)",
+    "persona": "person",
 }
 
 
@@ -65,7 +72,7 @@ def _rows(db: Session) -> list[tuple[Provider, str, bool]]:
     whether that text is a saved row or just the shown-but-unsaved default.
 
     A provider with no saved row shows DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
-    here, not a blank box — that default is what _market_system_instruction
+    here, not a blank box — that default is what _build_system_instruction
     (app/routers/runs.py) silently falls back to for such a provider, and
     this page must never show something different from what a run actually
     sends. A saved row with empty text still shows blank (that's the

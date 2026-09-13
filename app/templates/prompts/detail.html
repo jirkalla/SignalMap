@@ -46,7 +46,8 @@
 {% endif %}
 
 {% if can_edit(current_user) %}
-<form method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3">
+<form id="run-trigger-form" method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3"
+      data-pending-label="{{ t('prompt.trigger_run_pending') }}">
   <div class="flex-1 min-w-[200px] mb-0">
     <label for="model_id" class="block text-sm font-medium text-stone-700 mb-1">{{ t('prompt.select_model') }} *</label>
     <select id="model_id" name="model_id" required {% if not model_groups %}disabled{% endif %}
@@ -69,10 +70,14 @@
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_field('market_id', t('prompt.market_label'), markets, selected=prompt.market_id, required=True) }}
   </div>
+  <div class="flex-1 min-w-[200px] mb-0">
+    {{ select_field('persona_id', t('prompt.persona_label'), personas, selected=default_persona_id, required=True) }}
+  </div>
   {{ button(t('prompt.trigger_run'), disabled=not model_groups) }}
 </form>
 <div class="-mt-6 mb-8 space-y-1">
   <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
+  <p class="text-xs text-stone-400">{{ t('prompt.persona_override_hint') }}</p>
   {% if not model_groups %}
   <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
   {% endif %}
@@ -93,6 +98,24 @@
     }
     select.addEventListener('change', updateBadge);
     updateBadge();
+  })();
+
+  // Immediately disable the run-trigger button on submit (docs/TASKS_CHATGPT_PERSONA_
+  // PRICING.md CPH-T9) — trigger_run blocks synchronously on the provider call (5-28s
+  // observed against real providers) with no other visual feedback, so a double-click
+  // could otherwise fire a second, real, paid run before the first request even returns.
+  // The label is read from a data-attribute (like base.html's data-confirm), not
+  // interpolated into an inline string, for the same reason: an apostrophe in the
+  // translated text would otherwise break a naive inline handler.
+  (function () {
+    var form = document.getElementById('run-trigger-form');
+    if (!form) return;
+    form.addEventListener('submit', function () {
+      var submitButton = form.querySelector('button[type="submit"]');
+      if (!submitButton) return;
+      submitButton.disabled = true;
+      submitButton.textContent = form.getAttribute('data-pending-label');
+    });
   })();
 </script>
 

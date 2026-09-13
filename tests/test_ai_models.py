@@ -54,6 +54,33 @@ def test_create_list_edit_flow(authed_client: TestClient, db_session: Session, s
     assert "Renamed Model" in authed_client.get("/ai-models").text
 
 
+def test_price_history_is_visible_on_the_edit_form(authed_client: TestClient, db_session: Session, seed: dict):
+    """docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T2 — the edit form's price-history section
+    shows every recorded price, not just the creation-time row.
+    """
+    model = seed["model"]
+
+    edit_response = authed_client.get(f"/ai-models/{model.id}/edit")
+    assert edit_response.status_code == 200
+    assert "Price history" in edit_response.text
+
+    authed_client.post(
+        f"/ai-models/{model.id}/edit",
+        data={
+            "provider_id": model.provider_id,
+            "model_name": model.model_name,
+            "capability_tier": model.capability_tier,
+            "cost_per_million_input_usd": "9.00",
+            "cost_per_million_output_usd": "45.00",
+            "notes": "",
+        },
+        follow_redirects=False,
+    )
+
+    edit_response = authed_client.get(f"/ai-models/{model.id}/edit")
+    assert "$9.00 / $45.00 per 1M" in edit_response.text
+
+
 def test_duplicate_model_name_under_same_provider_is_rejected(authed_client: TestClient, seed: dict):
     response = authed_client.post(
         "/ai-models",
@@ -108,7 +135,13 @@ def test_delete_blocked_when_a_run_exists_against_the_model(authed_client: TestC
     prompt = Prompt(prompt_set_id=prompt_set.id, text="Q?", market_id=seed["market"].id)
     db_session.add(prompt)
     db_session.flush()
-    run = Run(prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id, status="success")
+    run = Run(
+        prompt_id=prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="success",
+    )
     db_session.add(run)
     db_session.commit()
 

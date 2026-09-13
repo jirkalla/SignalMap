@@ -65,3 +65,30 @@ class AIModel(Base):
     )
 
     provider: Mapped["Provider"] = relationship(back_populates="ai_models")
+    price_history: Mapped[list["AIModelPriceHistory"]] = relationship(
+        back_populates="ai_model",
+        order_by="AIModelPriceHistory.effective_from.desc()",
+        cascade="all, delete-orphan",
+    )
+
+
+class AIModelPriceHistory(Base):
+    """One recorded price for an `AIModel`, effective from a point in time onward.
+
+    Append-only — a new row is added only when `AIModel.cost_per_1k_*_usd` actually changes
+    (`app/routers/ai_models.py`), never edited or deleted afterwards. Only `effective_from` is
+    stored; a row's validity end is always the next row's `effective_from` for the same model
+    (or "now" for the latest row) — computed where needed, not stored, so there is no second
+    value that could drift out of sync with it (see migration 0020's docstring).
+    """
+
+    __tablename__ = "ai_model_price_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ai_model_id: Mapped[int] = mapped_column(ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False)
+    cost_per_1k_input_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
+    cost_per_1k_output_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    changed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    ai_model: Mapped["AIModel"] = relationship(back_populates="price_history")
