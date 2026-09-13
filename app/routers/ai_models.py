@@ -14,10 +14,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Provider, Run
+from app.models import AIModel, AIModelPriceHistory, Provider, Run, User
 from app.templating import get_t, render
 
 # Editor + admin (docs/ROADMAP.md §1 follow-up) — unlike providers.py/users.py, model
@@ -213,8 +213,14 @@ def create_ai_model(
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes, e.g. pricing source and verification date."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Create a new model under a provider. Model rows are pure data — no adapter change is required."""
+    """Create a new model under a provider. Model rows are pure data — no adapter change is required.
+
+    Writes the model's first `AIModelPriceHistory` row (its initial price, whatever that is —
+    including both `NULL`) in the same commit, so every model's price timeline starts at its
+    own creation, never at the moment someone first edits its price.
+    """
     t = get_t(request)
     model_name = model_name.strip()
     display_name = display_name.strip()
@@ -274,6 +280,15 @@ def create_ai_model(
         notes=notes or None,
     )
     db.add(model)
+    db.flush()  # need model.id before the history row can reference it
+    db.add(
+        AIModelPriceHistory(
+            ai_model_id=model.id,
+            cost_per_1k_input_usd=model.cost_per_1k_input_usd,
+            cost_per_1k_output_usd=model.cost_per_1k_output_usd,
+            changed_by_user_id=user.id,
+        )
+    )
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
@@ -312,8 +327,14 @@ def update_ai_model(
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id)."""
+    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id).
+
+    Writes a new `AIModelPriceHistory` row only when the price actually changes (either
+    `cost_per_1k_input_usd` or `cost_per_1k_output_usd` differs from what's saved) — editing an
+    unrelated field like `notes` never adds one.
+    """
     t = get_t(request)
     model = _get_model_or_404(db, request, model_id)
     model_name = model_name.strip()
@@ -363,6 +384,10 @@ def update_ai_model(
             status_code=409,
         )
 
+    price_changed = (
+        parsed["cost_in"] != model.cost_per_1k_input_usd or parsed["cost_out"] != model.cost_per_1k_output_usd
+    )
+
     model.provider_id = provider_id
     model.model_name = model_name
     model.display_name = display_name or None
@@ -374,6 +399,15 @@ def update_ai_model(
     model.is_free = is_free
     model.supports_web_search = supports_web_search
     model.notes = notes or None
+    if price_changed:
+        db.add(
+            AIModelPriceHistory(
+                ai_model_id=model.id,
+                cost_per_1k_input_usd=parsed["cost_in"],
+                cost_per_1k_output_usd=parsed["cost_out"],
+                changed_by_user_id=user.id,
+            )
+        )
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
