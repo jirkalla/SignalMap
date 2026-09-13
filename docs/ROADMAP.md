@@ -328,13 +328,47 @@ i v HTML šabloně i ve Vue3 dashboard islandu.
       ze screenshotu, ne potvrzené obchodní rozhodnutí (doména, ochranná
       známka nekontrolované)
 
-## 10. Multi-tenancy
+## 10. Client-scoped access (dřív "Multi-tenancy")
 
-Izolace dat po organizacích (ne po rolích — role řeší "co smí dělat", tohle
-řeší "co vidí"). Dává smysl, až appku bude reálně používat víc oddělených
-organizací na jedné instanci — pro současný malý tým s auth (#1) to zatím
-stačí. Až přijde na řadu: `org_id` FK na `User` + tenant-scoping dependency
-navrstvená nad `require_role` (viz #1 rozšiřitelnost).
+Izolace dat po klientech (ne po rolích — role řeší "co smí dělat", tohle
+řeší "která data vidí"). **Ne** izolace mezi několika oddělenými
+organizacemi sdílejícími jednu instanci (dřívější `org_id` skica níž byla
+špatný tvar problému) — jde o to, že jeden interní `editor`/`viewer` účet
+(account manager) má být omezený na podmnožinu existujících `Client` řádků,
+které reálně spravuje, zatímco `admin` a dnešní neomezené účty vidí
+všechno stejně jako teď. Design probraný a kriticky zhodnocený v konverzaci
+2026-09-13 (porovnáno i s alternativou "feature/module entitlements" —
+viz "Mimo tuhle roadmapu" níže, ta je odložená zcela).
+
+### Návrh (odsouhlaseno v konverzaci, čeká na vlastní branch)
+
+- **M2M tabulka `user_clients`** (`user_id`, `client_id`), ne jeden
+  `client_id` sloupec na `User` — člověk typicky spravuje portfolio
+  klientů, ne přesně jednoho (stejný pattern jako agenturní nástroje typu
+  HubSpot/Sprout Social client-access). Levné teď, drahé dodělávat později.
+- **`users.client_scoped: bool NOT NULL DEFAULT FALSE`** — explicitní
+  fail-closed přepínač, stejná disciplína jako `AIModel.is_free`
+  ("explicit fact, not derived"). `FALSE` (default i pro všechny dnešní
+  účty) = vidí vše jako dnes, nulová změna chování při migraci. `TRUE` a
+  prázdné `user_clients` = vidí **nic**, ne vše — nikdy neodvozovat "je
+  omezený" z toho, že mu prostě ještě nikdo nic nepřiřadil (fail-open by
+  byla tichá díra, OWASP API3 Broken Object Level Authorization).
+- **`admin` je vždy neomezený**, bez ohledu na flag — scoping se týká jen
+  `editor`/`viewer`.
+- **Jedna centrální dependency** (`get_accessible_client_ids(user) ->
+  set[int] | None`, `None` = neomezený) používaná všude, kde appka čte
+  cokoliv navěšené na `Client` — `clients.py`, `prompt_sets.py`,
+  `prompts.py`, `runs.py` (list/detail/trigger/**export**), `dashboard.py`.
+  Přímý lookup mimo scope → **404**, ne 403 (scoped uživatel nemá jak
+  ověřit, že klient vůbec existuje).
+- **Odhad náročnosti:** srovnatelné s fází 6 (auth), možná větší — dotýká
+  se min. 5 routerů + jejich šablon (cross-linky musí dál dávat smysl pro
+  scoped uživatele). Vyžaduje vlastní izolační testovou sadu (stejný
+  precedent jako fáze 4's "cross-client data-isolation regression test") —
+  ne volitelné, chybějící filtr na jediném místě = přímý únik dat klienta.
+- Až se na tohle dojde: vlastní `docs/TASKS_CLIENT_SCOPING.md`/
+  `docs/PROMPTS_CLIENT_SCOPING.md`, stejný formát jako fáze 2–6, ne
+  přílepek k jiné branch.
 
 ## Mimo tuhle roadmapu, zaznamenáno pro pořádek
 
@@ -348,6 +382,33 @@ novou funkcionalitu:
   promptů × více modelů), místo dnešního jednoho runu (prompt × model ×
   market) najednou. Největší architektonická změna z celé diskuze — vlastní
   budoucí fáze, ne součást žádného kroku výše.
+
+Z konverzace o client-scoped access (2026-09-13, viz #10 výše) vyplynula
+ještě jedna myšlenka, porovnaná a **vědomě odložená celá**, ne jen
+naplánovaná na později:
+
+- **Feature/module entitlements** — místo/vedle role/client-scope mít
+  jednotlivé schopnosti (zobrazení raw JSON, export raw JSON, konkrétní
+  dashboard sekce, ...) jako samostatně přiřaditelné/do budoucna placené
+  moduly per uživatel. Jiná osa než client-scoping (#10 — "která data",
+  tohle je "která schopnost") a jiná než role (bundle výchozích schopností,
+  tohle je per-user override). Reálný precedent z praxe: Stripe
+  Entitlements API, LaunchDarkly feature flags, Salesforce Permission Sets
+  — všechny to řeší jako samostatnou vrstvu nad rolí.
+
+  **Vědomě nestavěno teď** — žádný externí ani placený uživatel dnes
+  neexistuje, generická grant-tabulka/admin UI by řešila hypotetickou
+  potřebu (přesně to, co `AI_INSTRUCTIONS.md` §5 zakazuje — "don't design
+  for hypothetical future requirements"). Místo toho jen jedno pravidlo do
+  budoucna: každé nové "kdo tohle smí" rozhodnutí patří do vlastní
+  pojmenované `can_*()` funkce (přesně vzor `can_edit()` v
+  `app/templating.py`, které samo vzniklo z code review nálezu — ~25
+  roztroušených `role in (...)` kontrol sjednocených do jednoho místa),
+  nikdy zpátky jako inline `role in (...)` v šabloně/routeru. Díky tomu je
+  pozdější přechod "role rozhoduje" → "entitlement rozhoduje" jen lokální
+  úprava těla jedné funkce, ne refaktor napříč appkou. Skutečnou
+  grant-tabulku a admin UI stavět, až bude reálný obchodní důvod (externí
+  uživatel, placený tier) — ne dřív.
 
 ---
 
@@ -364,4 +425,4 @@ novou funkcionalitu:
 | 7 | Sentiment | Odemčeno, neimplementováno |
 | 8 | Gap/opportunity score | Čeká na 7 |
 | 9 | Frontend rebrand | Design hotový, implementace čeká |
-| 10 | Multi-tenancy | Čeká na 1, mimo dohled |
+| 10 | Client-scoped access | Navrženo v konverzaci (2026-09-13), čeká na vlastní branch |
