@@ -45,7 +45,7 @@ def _trigger_run(authed_client: TestClient, prompt_id: int, seed: dict, *, paylo
     )
     response = authed_client.post(
         f"/prompts/{prompt_id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id},
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
         follow_redirects=False,
     )
     assert response.status_code == 303

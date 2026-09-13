@@ -41,7 +41,13 @@ def test_delete_blocked_when_a_run_exists_under_the_client(authed_client: TestCl
     prompt = Prompt(prompt_set_id=prompt_set.id, text="Q?", market_id=seed["market"].id)
     db_session.add(prompt)
     db_session.flush()
-    run = Run(prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id, status="success")
+    run = Run(
+        prompt_id=prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="success",
+    )
     db_session.add(run)
     db_session.commit()
 

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button, delete_button, pill_badge %}
+{% block title %}{{ t('persona.list_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">{{ t('persona.list_title') }}</h1>
+  {% if can_edit(current_user) %}
+  <a href="/personas/new">{{ button(t('common.new')) }}</a>
+  {% endif %}
+</div>
+
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+{% if rows %}
+<div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        <th class="py-3 px-4 font-medium">{{ t('persona.label_field') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('persona.is_default_field') }}</th>
+        <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for persona in rows %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50">
+        <td class="py-3 px-4 text-stone-900">{{ persona.label }}</td>
+        <td class="py-3 px-4">{% if persona.is_default %}{{ pill_badge(True, t('persona.is_default_badge'), '') }}{% endif %}</td>
+        <td class="py-3 px-4 text-right whitespace-nowrap">
+          {% if can_edit(current_user) %}
+          <a href="/personas/{{ persona.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+          {{ delete_button('/personas/' ~ persona.id ~ '/delete', t('persona.delete_confirm'), t('persona.delete_button'), extra_classes='ml-3' ~ (' opacity-40' if persona.is_default else '')) }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="md:hidden space-y-3">
+  {% for persona in rows %}
+  <div class="border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="flex items-center justify-between">
+      <span class="text-sm font-medium text-stone-900">{{ persona.label }}</span>
+      {% if persona.is_default %}{{ pill_badge(True, t('persona.is_default_badge'), '') }}{% endif %}
+    </div>
+    {% if can_edit(current_user) %}
+    <div class="flex gap-4 mt-3 text-sm">
+      <a href="/personas/{{ persona.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+      {{ delete_button('/personas/' ~ persona.id ~ '/delete', t('persona.delete_confirm'), t('persona.delete_button')) }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500">{{ t('persona.empty_state') }}</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import text_field, checkbox_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
+
+{% if error %}
+<div class="max-w-lg bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="{{ action }}" class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
+  {{ text_field('label', t('persona.label_field'), persona.label if persona else '', required=True, placeholder=t('persona.label_placeholder')) }}
+  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('persona.label_hint') }}</p>
+  {{ checkbox_field('is_default', t('persona.is_default_field'), checked=(persona.is_default if persona else False)) }}
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

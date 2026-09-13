@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AnalysisResult, Citation, Client, Market, Prompt, PromptSet, RawResponse, Run
+from app.models import AnalysisResult, Citation, Client, Market, Persona, Prompt, PromptSet, RawResponse, Run
 
 # Two runs in this week, a third two weeks later — 2026-01-12 (the week between them) has no
 # runs at all, so it exercises the timeseries "gap weeks are 0, not missing" guarantee.
@@ -51,8 +51,20 @@ def _make_run(
 ) -> Run:
     """One Run, plus (for a successful run) its RawResponse/Citations/AnalysisResult — the direct-ORM
     equivalent of what trigger_run builds, but with a caller-chosen started_at and citation set.
+
+    `persona_id` is looked up here (the default persona, seeded by the shared `seed` fixture)
+    rather than added as a parameter every one of this helper's ~28 call sites would need to pass
+    — dashboard aggregation doesn't care which persona a run used, so the default is fine.
     """
-    run = Run(prompt_id=prompt.id, model_id=model_id, market_id=market_id, status=status, started_at=started_at)
+    persona_id = db_session.scalar(select(Persona.id).where(Persona.is_default.is_(True)))
+    run = Run(
+        prompt_id=prompt.id,
+        model_id=model_id,
+        market_id=market_id,
+        persona_id=persona_id,
+        status=status,
+        started_at=started_at,
+    )
     db_session.add(run)
     db_session.flush()
 
@@ -235,7 +247,8 @@ def test_only_successful_runs_are_counted(authed_client: TestClient, db_session:
     _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id,
               started_at=WEEK_1, citation_domains=("wikipedia.org",))
     error_run = Run(prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id,
-                     status="error", started_at=WEEK_1, error_message="simulated provider failure")
+                     persona_id=seed["persona"].id, status="error", started_at=WEEK_1,
+                     error_message="simulated provider failure")
     db_session.add(error_run)
     db_session.commit()
 

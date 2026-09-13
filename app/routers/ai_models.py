@@ -7,6 +7,7 @@ Client/Prompt/PromptSet (HD-T4): `runs.model_id` has no ondelete, so a model
 referenced by any Run can only be deactivated, never deleted.
 """
 
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -14,10 +15,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Provider, Run
+from app.models import AIModel, AIModelPriceHistory, Provider, Run, User
 from app.templating import get_t, render
 
 # Editor + admin (docs/ROADMAP.md §1 follow-up) — unlike providers.py/users.py, model
@@ -57,6 +58,36 @@ def _model_run_count(db: Session, model_id: int) -> int:
 def _provider_options(db: Session) -> list[tuple[int, str]]:
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
     return [(p.id, p.name) for p in providers]
+
+
+def _record_price_history(db: Session, model: AIModel, user: User) -> None:
+    """Append one AIModelPriceHistory row capturing `model`'s current price.
+
+    Call only after `model.cost_per_1k_*_usd` already holds the value that should be recorded —
+    unconditionally on creation, or only when the price actually changed on edit (see
+    create_ai_model/update_ai_model, the only two callers, for the two conditions).
+    """
+    db.add(
+        AIModelPriceHistory(
+            ai_model_id=model.id,
+            cost_per_1k_input_usd=model.cost_per_1k_input_usd,
+            cost_per_1k_output_usd=model.cost_per_1k_output_usd,
+            changed_by_user_id=user.id,
+        )
+    )
+
+
+def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceHistory, datetime | None]]:
+    """Pair each of `model`'s price history rows (already newest-first via the relationship's
+    own `order_by`) with its computed validity end.
+
+    `ai_model_price_history` stores only `effective_from` (see migration 0020's docstring for
+    why) — a row's "valid until" is always the next-newer row's `effective_from`, or `None`
+    (still in effect today) for the newest row. Computed here over the already-loaded list, not
+    a second query.
+    """
+    history = model.price_history
+    return [(row, history[i - 1].effective_from if i > 0 else None) for i, row in enumerate(history)]
 
 
 def _model_to_form_state(model: AIModel) -> dict:
@@ -213,8 +244,14 @@ def create_ai_model(
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes, e.g. pricing source and verification date."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Create a new model under a provider. Model rows are pure data — no adapter change is required."""
+    """Create a new model under a provider. Model rows are pure data — no adapter change is required.
+
+    Writes the model's first `AIModelPriceHistory` row (its initial price, whatever that is —
+    including both `NULL`) in the same commit, so every model's price timeline starts at its
+    own creation, never at the moment someone first edits its price.
+    """
     t = get_t(request)
     model_name = model_name.strip()
     display_name = display_name.strip()
@@ -274,13 +311,18 @@ def create_ai_model(
         notes=notes or None,
     )
     db.add(model)
+    db.flush()  # need model.id before the history row can reference it
+    _record_price_history(db, model, user)
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
 
 @router.get("/{model_id}/edit")
 def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(get_db)):
-    """Render the model edit form, pre-filled with current values, including read-only created_at."""
+    """Render the model edit form, pre-filled with current values, including read-only created_at
+    and its full price history (oldest changes at the bottom, each paired with the date range it
+    was actually in effect).
+    """
     model = _get_model_or_404(db, request, model_id)
     t = get_t(request)
     return render(
@@ -292,6 +334,7 @@ def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(ge
             "cancel_url": "/ai-models",
             "model": _model_to_form_state(model),
             "providers": _provider_options(db),
+            "price_history": _price_history_rows(model),
         },
     )
 
@@ -312,8 +355,14 @@ def update_ai_model(
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id)."""
+    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id).
+
+    Writes a new `AIModelPriceHistory` row only when the price actually changes (either
+    `cost_per_1k_input_usd` or `cost_per_1k_output_usd` differs from what's saved) — editing an
+    unrelated field like `notes` never adds one.
+    """
     t = get_t(request)
     model = _get_model_or_404(db, request, model_id)
     model_name = model_name.strip()
@@ -363,6 +412,10 @@ def update_ai_model(
             status_code=409,
         )
 
+    price_changed = (
+        parsed["cost_in"] != model.cost_per_1k_input_usd or parsed["cost_out"] != model.cost_per_1k_output_usd
+    )
+
     model.provider_id = provider_id
     model.model_name = model_name
     model.display_name = display_name or None
@@ -374,6 +427,8 @@ def update_ai_model(
     model.is_free = is_free
     model.supports_web_search = supports_web_search
     model.notes = notes or None
+    if price_changed:
+        _record_price_history(db, model, user)
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
