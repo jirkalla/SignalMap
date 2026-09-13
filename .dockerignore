@@ -1,0 +1,14 @@
+# Only runtime sources enter the build context. Secrets, git, and backups stay out.
+*
+!dockerfile
+!requirements.txt
+!app/
+!app/**
+!alembic/
+!alembic/**
+!scripts/
+!scripts/**
+!alembic.ini
+!schema_phase1.sql
+**/__pycache__/
+**/*.py[cod]
