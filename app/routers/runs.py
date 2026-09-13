@@ -232,9 +232,22 @@ def trigger_run(
     (docs/TASKS_PHASE6.md P6-T7) — nullable on the model itself for a
     future scheduler-triggered run with no human behind it, not relevant here
     since every manual trigger has a logged-in user.
+
+    Rejects triggering a second run on the same prompt while one is already
+    `pending` (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9) — this endpoint
+    blocks synchronously on the provider call (5-28s observed against real
+    providers), with no visual feedback beyond the run-trigger form's own
+    JS button-disable, so a double-click or a second browser tab could
+    otherwise fire a second, real, paid run against the exact same prompt.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
+
+    pending_run = db.scalar(
+        select(Run.id).where(Run.prompt_id == prompt_id, Run.status == "pending").limit(1)
+    )
+    if pending_run is not None:
+        raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409)
 
     model = db.get(AIModel, model_id)
     if model is None:

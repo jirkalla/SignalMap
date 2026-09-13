@@ -9,6 +9,73 @@ from app.models import AnalysisResult, Citation, Persona, Prompt, RawResponse, R
 from tests.fake_adapter import FakeAdapter
 
 
+def test_trigger_run_rejected_while_one_is_already_pending(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9 — a second trigger on the same prompt is
+    rejected (409), not silently started, while a Run for it is still status='pending'.
+    """
+    pending = Run(
+        prompt_id=sample_prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="pending",
+    )
+    db_session.add(pending)
+    db_session.commit()
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    runs = db_session.scalars(select(Run).where(Run.prompt_id == sample_prompt.id)).all()
+    assert len(runs) == 1  # only the pre-seeded pending run — no second Run was created
+    assert runs[0].id == pending.id
+
+
+def test_trigger_run_succeeds_again_once_the_previous_one_finished(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """The pending-run guard must not permanently lock a prompt — once a run's status has moved
+    past 'pending' (success or error), triggering another must work normally.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "first"},
+        rendered_text="first",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 1, "output_tokens": 1},
+    )
+    first_response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    assert first_response.status_code == 303
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "second"},
+        rendered_text="second",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 1, "output_tokens": 1},
+    )
+    second_response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    assert second_response.status_code == 303
+
+    runs = db_session.scalars(select(Run).where(Run.prompt_id == sample_prompt.id)).all()
+    assert len(runs) == 2
+    assert all(r.status == "success" for r in runs)
+
+
 def test_successful_run_stores_run_raw_response_and_citations(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Acme is known for reliability."},
