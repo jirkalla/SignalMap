@@ -104,18 +104,25 @@ def create_prompt_set(
 
 
 @router.get("/prompt-sets/{prompt_set_id}")
-def prompt_set_detail(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
+def prompt_set_detail(
+    request: Request,
+    prompt_set_id: int,
+    imported: int | None = Query(None, description="Number of prompts just created by a bulk import — shows a summary banner."),
+    db: Session = Depends(get_db),
+):
     """Show one prompt set: its current-version prompts (FR-6) and the add-prompt form.
 
     Superseded versions (see app/models/prompt.py) are omitted here — reach
-    them via the "version history" on a current prompt's detail page.
+    them via the "version history" on a current prompt's detail page. `imported` is set by
+    `import_prompts_confirm`'s redirect (BIM-T6) to show how many prompts the bulk import just
+    created — absent on every other way of reaching this page.
     """
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
     prompts = _current_prompts(db, prompt_set_id)
     return render(
         request,
         "prompt_sets/detail.html",
-        {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options(db)},
+        {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options(db), "imported": imported},
     )
 
 
@@ -174,6 +181,7 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
                 "prompts": _current_prompts(db, prompt_set_id),
                 "markets": market_options(db),
                 "error": t("errors.prompt_set_in_use").format(count=run_count),
+                "imported": None,
             },
             status_code=409,
         )
@@ -335,3 +343,52 @@ def import_prompts_preview(
             "error_count": sum(1 for r in rows if r.status == "error"),
         },
     )
+
+
+@router.post("/prompt-sets/{prompt_set_id}/prompts/import/confirm", dependencies=_editor_or_admin)
+async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
+    """Create `Prompt` rows from the bulk-import preview's checked rows (BIM-T6).
+
+    The preview screen (BIM-T5) posts a variable number of rows as indexed fields
+    (`rows-0-text`, `rows-1-text`, ...) rather than a fixed set of `Form(...)` parameters, so
+    this reads `request.form()` directly and discovers which row indices exist from the
+    `-text` keys actually present. `market_id` is **re-resolved against the database**, never
+    trusted from the resubmitted form value — the browser round-trip in between is not a
+    security boundary (design decision 12). Only rows with `include=true` become `Prompt`
+    rows, always at version 1, via the same construction `create_prompt` uses. A row missing
+    text or a valid market is silently skipped rather than erroring the whole confirm — the
+    preview screen is what already told the user which rows would import cleanly.
+    """
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    form = await request.form()
+
+    row_indices = sorted(
+        {int(key.split("-", 2)[1]) for key in form.keys() if key.startswith("rows-") and key.endswith("-text")}
+    )
+
+    imported = 0
+    for i in row_indices:
+        if form.get(f"rows-{i}-include") != "true":
+            continue
+        text = str(form.get(f"rows-{i}-text") or "").strip()
+        if not text:
+            continue
+        market_id_raw = form.get(f"rows-{i}-market_id")
+        market = db.get(Market, int(market_id_raw)) if market_id_raw else None
+        if market is None:
+            continue
+        topic = str(form.get(f"rows-{i}-topic") or "").strip() or None
+        is_active = form.get(f"rows-{i}-is_active") == "true"
+        db.add(
+            Prompt(
+                prompt_set_id=prompt_set.id,
+                text=text,
+                market_id=market.id,
+                topic=topic,
+                is_active=is_active,
+            )
+        )
+        imported += 1
+
+    db.commit()
+    return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}?imported={imported}", status_code=303)

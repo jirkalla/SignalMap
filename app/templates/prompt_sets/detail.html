@@ -17,6 +17,9 @@
 {% if error %}
 <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
 {% endif %}
+{% if imported is not none %}
+<div class="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-md px-4 py-3 mb-4">{{ t('prompt_import.import_success').format(count=imported) }}</div>
+{% endif %}
 
 {% if can_edit(current_user) %}
 <div class="flex items-center justify-between mb-3">

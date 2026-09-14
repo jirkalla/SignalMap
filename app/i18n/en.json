@@ -272,6 +272,7 @@
   "prompt_import.status_duplicate": "Duplicate",
   "prompt_import.status_error": "Error",
   "prompt_import.confirm_button": "Import selected",
+  "prompt_import.import_success": "{count} prompt(s) imported.",
 
   "prompt.title": "Prompts",
   "prompt.create_title": "New prompt",
