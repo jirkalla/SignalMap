@@ -12,8 +12,13 @@ from tests.fake_adapter import FakeAdapter
 def test_trigger_run_rejected_while_one_is_already_pending(
     authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
-    """docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9 — a second trigger on the same prompt is
-    rejected (409), not silently started, while a Run for it is still status='pending'.
+    """docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9 — a second trigger on the same prompt AND
+    model is rejected (409), not silently started, while a Run for it is still status='pending'.
+
+    No-regression check for docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T1: the guard's WHERE
+    clause was widened to also match on model_id (see the sibling test below for the case that
+    change was meant to unblock), but triggering the *same* model twice must still 409 exactly
+    as before.
     """
     pending = Run(
         prompt_id=sample_prompt.id,
@@ -35,6 +40,48 @@ def test_trigger_run_rejected_while_one_is_already_pending(
     runs = db_session.scalars(select(Run).where(Run.prompt_id == sample_prompt.id)).all()
     assert len(runs) == 1  # only the pre-seeded pending run — no second Run was created
     assert runs[0].id == pending.id
+
+
+def test_trigger_run_allowed_for_different_model_while_another_is_pending(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T1 — the pending-run guard is scoped to
+    (prompt_id, model_id), not prompt_id alone, so triggering a *different* model for the same
+    prompt must succeed even while another model's Run is still 'pending' — this is what lets
+    BIM-T2's multi-model checkboxes fire several models in parallel without tripping the guard
+    on each other.
+    """
+    pending = Run(
+        prompt_id=sample_prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="pending",
+    )
+    db_session.add(pending)
+    db_session.commit()
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "from another model"},
+        rendered_text="from another model",
+        has_citations=False,
+        citations=[],
+        token_usage={"input_tokens": 1, "output_tokens": 1},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={
+            "model_id": seed["anthropic_model"].id,
+            "market_id": seed["market"].id,
+            "persona_id": seed["persona"].id,
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    runs = db_session.scalars(select(Run).where(Run.prompt_id == sample_prompt.id)).all()
+    assert len(runs) == 2  # the pre-seeded pending run plus the new one on the other model
+    assert {r.model_id for r in runs} == {seed["model"].id, seed["anthropic_model"].id}
 
 
 def test_trigger_run_succeeds_again_once_the_previous_one_finished(
