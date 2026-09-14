@@ -133,6 +133,22 @@
       document.querySelectorAll('.nav-dd-panel').forEach(function (panel) { panel.classList.add('hidden'); });
       document.querySelectorAll('.nav-dd-trigger').forEach(function (btn) { btn.setAttribute('aria-expanded', 'false'); });
     });
+
+    // Server renders every timestamp as UTC text inside a <time datetime="...">
+    // element (see partials/macros.html local_time()) so the page stays usable
+    // without JS. Here we rewrite that text to the viewer's own browser
+    // timezone — deliberately not a fixed server-side zone, since users may be
+    // outside Central Europe. Re-run after every HTMX swap, not just on load,
+    // since swapped-in fragments carry their own untouched <time> elements.
+    function localizeTimes(root) {
+      root.querySelectorAll('[data-local-time]').forEach(function (el) {
+        var d = new Date(el.getAttribute('datetime'));
+        if (isNaN(d)) return;
+        el.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(d);
+      });
+    }
+    localizeTimes(document);
+    document.addEventListener('htmx:afterSettle', function (event) { localizeTimes(event.target); });
   </script>
 </body>
 </html>
