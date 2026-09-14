@@ -233,18 +233,25 @@ def trigger_run(
     future scheduler-triggered run with no human behind it, not relevant here
     since every manual trigger has a logged-in user.
 
-    Rejects triggering a second run on the same prompt while one is already
-    `pending` (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9) — this endpoint
-    blocks synchronously on the provider call (5-28s observed against real
+    Rejects triggering a second run on the same prompt **and model**
+    combination while one is already `pending`
+    (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9,
+    docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T1) — this endpoint blocks
+    synchronously on the provider call (5-28s observed against real
     providers), with no visual feedback beyond the run-trigger form's own
     JS button-disable, so a double-click or a second browser tab could
-    otherwise fire a second, real, paid run against the exact same prompt.
+    otherwise fire a second, real, paid run against the exact same prompt
+    and model. Scoped to `model_id` (not just `prompt_id`) so that
+    triggering several different models for the same prompt at once
+    (BIM-T2) can run concurrently instead of blocking each other.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
 
     pending_run = db.scalar(
-        select(Run.id).where(Run.prompt_id == prompt_id, Run.status == "pending").limit(1)
+        select(Run.id)
+        .where(Run.prompt_id == prompt_id, Run.model_id == model_id, Run.status == "pending")
+        .limit(1)
     )
     if pending_run is not None:
         raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409)
