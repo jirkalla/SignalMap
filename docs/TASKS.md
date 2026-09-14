@@ -302,7 +302,8 @@ and `docs/PROMPTS_CHATGPT_PERSONA_PRICING.md`.
 
 ## Local timezone display fix
 
-Branch `feature/signalmap-local-time-display` (2026-09-14). Fixes a bug found during manual
+Branch `feature/signalmap-local-time-display`, merged 2026-09-14
+([PR #11](https://github.com/jirkalla/SignalMap/pull/11)). Fixes a bug found during manual
 production verification: every displayed timestamp (`.strftime()` on the stored UTC value,
 14 occurrences across 7 templates) was rendered as-is with no timezone conversion — a run
 showed 2 hours off from the real local time (UTC vs. CEST). Not one of the five roadmap
