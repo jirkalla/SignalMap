@@ -384,6 +384,8 @@ Po dokončení:
 feat(prompts): commit bulk-import preview selections as new prompts
 ```
 
+### DONE — commit 7ed633a
+
 ---
 ---
 
@@ -416,3 +418,5 @@ Po dokončení:
 ```
 test: cover bulk prompt import parsing, validation, and confirm flow
 ```
+
+### DONE — written 2026-09-14, not yet committed

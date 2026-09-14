@@ -139,8 +139,8 @@ migraci + úpravu `/ai-models` formuláře, nezávislou na zbytku týhle branch 
 | BIM-T3 | Testy: multi-model run | ✅ |
 | BIM-T4 | Bulk import: parsing/validace service (CSV/XLSX/JSON) | ✅ |
 | BIM-T5 | Bulk import: upload formulář + preview route/šablona | ✅ |
-| BIM-T6 | Bulk import: confirm/commit route + i18n | ⏳ |
-| BIM-T7 | Testy: bulk import | ⏳ |
+| BIM-T6 | Bulk import: confirm/commit route + i18n | ✅ |
+| BIM-T7 | Testy: bulk import | ✅ |
 | BIM-T8 | CSV: delimiter sniffing + kontrola počtu polí na řádek | ✅ |
 | BIM-T9 | Stažitelná import šablona (CSV + XLSX + JSON) | ✅ |
 
