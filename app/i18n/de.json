@@ -271,6 +271,9 @@
   "prompt_import.status_new": "Neu",
   "prompt_import.status_duplicate": "Duplikat",
   "prompt_import.status_error": "Fehler",
+  "prompt_import.row_error_text_required": "Der Prompt-Text ist erforderlich.",
+  "prompt_import.row_error_unknown_market_code": "Unbekannter Marktcode '{market_code}'.",
+  "prompt_import.row_error_field_count_mismatch": "Die Zeile hat {actual} Feld(er), die Kopfzeile aber {expected} — prüfe auf ein nicht in Anführungszeichen gesetztes Komma/Semikolon im Text oder einen Wert in der falschen Spalte.",
   "prompt_import.confirm_button": "Auswahl importieren",
   "prompt_import.import_success": "{count} Prompt(s) importiert.",
 
@@ -376,6 +379,7 @@
   "errors.run_not_found": "Lauf nicht gefunden.",
   "errors.run_already_pending": "Für diesen Prompt läuft bereits ein Lauf — bitte warten, bis dieser abgeschlossen ist, bevor ein weiterer gestartet wird.",
   "errors.prompt_inactive": "Dieser Prompt ist inaktiv und kann nicht ausgeführt werden. Bearbeite ihn und aktiviere zuerst \"Aktiv\".",
+  "errors.model_inactive": "Dieses Modell ist inaktiv und kann nicht für einen neuen Lauf verwendet werden. Wähle ein aktives Modell oder aktiviere es unter Modelle.",
   "errors.model_not_found": "Modell nicht gefunden.",
   "errors.provider_not_supported": "Dieser Anbieter wird noch nicht unterstützt.",
   "errors.provider_call_failed": "Der Aufruf beim Anbieter ist fehlgeschlagen.",

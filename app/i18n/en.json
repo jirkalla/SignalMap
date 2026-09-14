@@ -271,6 +271,9 @@
   "prompt_import.status_new": "New",
   "prompt_import.status_duplicate": "Duplicate",
   "prompt_import.status_error": "Error",
+  "prompt_import.row_error_text_required": "Prompt text is required.",
+  "prompt_import.row_error_unknown_market_code": "Unknown market code '{market_code}'.",
+  "prompt_import.row_error_field_count_mismatch": "Row has {actual} field(s) but the header has {expected} — check for an unquoted comma/semicolon inside a text value, or a value in the wrong column.",
   "prompt_import.confirm_button": "Import selected",
   "prompt_import.import_success": "{count} prompt(s) imported.",
 
@@ -376,6 +379,7 @@
   "errors.run_not_found": "Run not found.",
   "errors.run_already_pending": "A run is already in progress for this prompt — wait for it to finish before starting another.",
   "errors.prompt_inactive": "This prompt is inactive and can't be run. Edit it and check \"Active\" first.",
+  "errors.model_inactive": "This model is inactive and can't be used for a new run. Choose an active model, or reactivate it in Models.",
   "errors.model_not_found": "Model not found.",
   "errors.provider_not_supported": "This provider is not supported yet.",
   "errors.provider_call_failed": "The provider call failed.",

@@ -11,7 +11,7 @@ which are only ever inserted once and never updated afterwards.
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,9 +45,25 @@ class Run(Base):
     `request_payload` records exactly what was sent to the provider (model,
     prompt text, system instruction), set before the adapter is called so
     it's present whether the run succeeds or fails.
+
+    The partial unique index below backstops the "one pending run per
+    prompt+model" check in app/routers/runs.py against a TOCTOU race
+    (two concurrent triggers both passing the SELECT check before either
+    INSERTs) — mirrored here at the ORM level, matching alembic migration
+    0024, so `Base.metadata.create_all()` (what the test suite uses) creates
+    the same constraint the migration creates against the real database.
     """
 
     __tablename__ = "runs"
+    __table_args__ = (
+        Index(
+            "idx_runs_one_pending_per_prompt_model",
+            "prompt_id",
+            "model_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[int] = mapped_column(ForeignKey("prompts.id"), nullable=False)

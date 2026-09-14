@@ -2,10 +2,11 @@
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterCitation, RawResponsePayload
-from app.models import AnalysisResult, Citation, Persona, Prompt, RawResponse, Run, SearchQuery
+from app.models import AIModel, AnalysisResult, Citation, Persona, Prompt, RawResponse, Run, SearchQuery
 from tests.fake_adapter import FakeAdapter
 
 
@@ -27,6 +28,65 @@ def test_trigger_run_rejected_for_inactive_prompt(
 
     assert response.status_code == 409
     assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
+
+
+def test_trigger_run_rejected_for_inactive_model(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """Code-review fix (2026-09-14) — `trigger_run` used to check `has_adapter(...)` for the
+    submitted model but never `model.is_active`, so a model an admin deactivated (e.g. to stop
+    further spend) could still be triggered by anyone who had its id. No Run row is created.
+    """
+    seed["model"].is_active = False
+    db_session.commit()
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
+
+
+def test_pending_run_unique_index_rejects_a_second_pending_row(
+    db_session: Session, seed, sample_prompt: Prompt
+):
+    """Code-review fix (2026-09-14), migration 0024 — `trigger_run`'s pending-run guard is a
+    plain SELECT-then-INSERT with a TOCTOU race window; this partial unique index is the
+    database-level backstop. Bypasses the application guard entirely (two direct ORM inserts)
+    to prove the constraint itself — not `trigger_run`'s catch of it — is what closes the race.
+    """
+    first = Run(
+        prompt_id=sample_prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="pending",
+    )
+    db_session.add(first)
+    db_session.commit()
+
+    second = Run(
+        prompt_id=sample_prompt.id,
+        model_id=seed["model"].id,
+        market_id=seed["market"].id,
+        persona_id=seed["persona"].id,
+        status="pending",
+    )
+    db_session.add(second)
+    try:
+        db_session.commit()
+        assert False, "expected IntegrityError from idx_runs_one_pending_per_prompt_model"
+    except IntegrityError:
+        db_session.rollback()
+
+    remaining_pending_id = db_session.scalar(
+        select(Run.id)
+        .where(Run.prompt_id == sample_prompt.id, Run.model_id == seed["model"].id, Run.status == "pending")
+    )
+    assert remaining_pending_id == first.id
 
 
 def test_trigger_run_rejected_while_one_is_already_pending(
