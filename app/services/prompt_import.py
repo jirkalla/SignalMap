@@ -102,6 +102,13 @@ def parse_csv(file: bytes) -> list[ParsedPromptRow]:
     mangling accented characters (design decision 9). A fully blank line anywhere in the file is
     skipped, not treated as a row with an empty (error) `text` — the same "blank rows don't
     count" behavior `parse_xlsx` needs for its own format.
+
+    The delimiter is auto-detected (design decision 15) rather than assumed to be a comma —
+    German-locale Excel commonly exports "CSV" with a semicolon instead (comma is the decimal
+    separator there). A row whose field count doesn't match the header (design decision 16,
+    e.g. an unquoted comma/semicolon inside a `text` value throwing off the split) is flagged
+    `status="error"` with the mismatch explained, instead of being silently split into the
+    wrong columns — this is what a hand-typed, incorrectly-quoted CSV row used to do.
     """
     try:
         text_content = file.decode("utf-8-sig")
@@ -111,23 +118,39 @@ def parse_csv(file: bytes) -> list[ParsedPromptRow]:
         except UnicodeDecodeError as exc:
             raise PromptImportError("import_parse_failed") from exc
 
-    reader = csv.DictReader(io.StringIO(text_content))
-    if reader.fieldnames is None:
+    dialect = _detect_csv_dialect(text_content)
+    reader = csv.reader(io.StringIO(text_content), dialect=dialect)
+    try:
+        header = next(reader)
+    except StopIteration:
         raise PromptImportError("import_no_rows_found")
-    field_map = {(name or "").strip().lower(): name for name in reader.fieldnames}
+    field_map = {(name or "").strip().lower(): idx for idx, name in enumerate(header)}
     if "text" not in field_map:
         raise PromptImportError("import_parse_failed")
 
-    def cell(raw_row: dict, key: str) -> str | None:
+    def cell(raw_row: list[str], key: str) -> str | None:
         if key not in field_map:
             return None
-        value = raw_row.get(field_map[key])
-        return value.strip() if isinstance(value, str) else None
+        idx = field_map[key]
+        return raw_row[idx].strip() if idx < len(raw_row) else None
 
     rows: list[ParsedPromptRow] = []
     for raw_row in reader:
-        if all((v or "").strip() == "" for v in raw_row.values()):
+        if all((v or "").strip() == "" for v in raw_row):
             continue  # fully blank line — skip, not an error
+        if len(raw_row) != len(header):
+            rows.append(
+                ParsedPromptRow(
+                    row_number=len(rows) + 1,
+                    text="",
+                    status="error",
+                    error_message=(
+                        f"Row has {len(raw_row)} field(s) but the header has {len(header)} — "
+                        "check for an unquoted comma/semicolon inside a text value."
+                    ),
+                )
+            )
+            continue
         rows.append(
             ParsedPromptRow(
                 row_number=len(rows) + 1,
@@ -140,6 +163,21 @@ def parse_csv(file: bytes) -> list[ParsedPromptRow]:
     if not rows:
         raise PromptImportError("import_no_rows_found")
     return rows
+
+
+def _detect_csv_dialect(text_content: str) -> type[csv.Dialect]:
+    """Sniff the delimiter/quoting of an uploaded CSV from its first ~4096 characters
+    (design decision 15).
+
+    Restricted to `,`/`;`/tab candidates — `Sniffer` given free rein sometimes misreads a
+    punctuation mark inside ordinary prose as the delimiter. Falls back to the standard
+    comma-delimited `excel` dialect (today's behavior) when the sample is too ambiguous to
+    call, rather than raising over what is, at worst, a return to the previous behavior.
+    """
+    try:
+        return csv.Sniffer().sniff(text_content[:4096], delimiters=",;\t")
+    except csv.Error:
+        return csv.excel
 
 
 def parse_xlsx(file: bytes) -> list[ParsedPromptRow]:
@@ -238,7 +276,10 @@ def validate_and_check_duplicates(
     against both the current-version prompts already in this prompt set (scoped to the same
     market) and every earlier row in this same batch with the same market — what to *do* with a
     duplicate (skip it, import anyway) is left to the caller's preview screen (BIM-T5), not
-    decided here.
+    decided here. A row the parser already flagged `"error"` (BIM-T8's mismatched-field-count
+    check) is left untouched — its `text` is meaningless (spliced from the wrong columns), so
+    there's nothing to validate, and re-processing it here would overwrite that specific
+    diagnostic with the generic "Prompt text is required." message.
     """
     market_cache: dict[str, Market | None] = {}
 
@@ -264,6 +305,9 @@ def validate_and_check_duplicates(
     seen_in_batch: dict[int, set[str]] = {}
 
     for row in rows:
+        if row.status == "error":
+            continue  # already flagged by the parser (e.g. mismatched field count) — leave as-is
+
         if not row.text:
             row.status = "error"
             row.error_message = "Prompt text is required."

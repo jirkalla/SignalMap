@@ -5,8 +5,14 @@ detail route (app/routers/prompts.py) since editing creates a new version
 rather than changing anything here.
 """
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+import csv
+import io
+import json
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import RedirectResponse, Response
+from openpyxl import Workbook
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,8 +22,37 @@ from app.errors import AppError
 from app.models import Market, Prompt, PromptSet, Run
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _delete_prompt_lineage
+from app.services.prompt_import import (
+    MAX_IMPORT_FILE_BYTES,
+    MAX_IMPORT_ROWS,
+    PromptImportError,
+    parse_csv,
+    parse_json,
+    parse_xlsx,
+    validate_and_check_duplicates,
+)
 from app.templating import get_t, render
 from app.utils import market_options
+
+_IMPORT_PARSERS = {"csv": parse_csv, "xlsx": parse_xlsx, "json": parse_json}
+
+# One example row, shared by all three template formats (BIM-T9) — always the same shape
+# parse_csv/parse_xlsx/parse_json expect, generated through the same libraries they're read
+# with, never hand-typed. The JSON variant keeps real types (bool, not the string "true") since
+# JSON has no CSV/XLSX-style string-only cell ambiguity to begin with.
+_TEMPLATE_HEADER = ["text", "market_code", "topic", "is_active"]
+_TEMPLATE_EXAMPLE_ROW = [
+    "What are the most sustainable construction companies in Europe?",
+    "en-US",
+    "Sustainability",
+    "true",
+]
+_TEMPLATE_EXAMPLE_JSON_ROW = {
+    "text": "What are the most sustainable construction companies in Europe?",
+    "market_code": "en-US",
+    "topic": "Sustainability",
+    "is_active": True,
+}
 
 router = APIRouter(tags=["prompt-sets"])
 
@@ -177,3 +212,126 @@ def create_prompt(
     db.commit()
     db.refresh(prompt)
     return RedirectResponse(url=f"/prompt-sets/{prompt_set_id}", status_code=303)
+
+
+@router.get("/prompt-sets/{prompt_set_id}/prompts/import/template", dependencies=_editor_or_admin)
+def import_template(
+    request: Request,
+    prompt_set_id: int,
+    format: Literal["csv", "xlsx", "json"] = Query("csv", description="Template file format to download."),
+    db: Session = Depends(get_db),
+):
+    """Download a correctly-formatted CSV/XLSX/JSON template for bulk prompt import (BIM-T9).
+
+    Built through the same `csv.writer`/`openpyxl`/`json` machinery the app already parses
+    with, so it's guaranteed well-formed — the cheapest way to avoid the class of
+    hand-typed-CSV mistakes (unquoted commas, wrong delimiter) BIM-T8's sniffing/row-shape
+    checks exist to catch after the fact. Nothing is persisted; the file is built in memory per
+    request. JSON is included alongside CSV/XLSX for parity with the app's existing three-format
+    export pattern (`export_button_group`), even though JSON's structure can't suffer the same
+    delimiter/quoting ambiguity CSV can.
+    """
+    _get_prompt_set_or_404(db, request, prompt_set_id)
+    if format == "xlsx":
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(_TEMPLATE_HEADER)
+        sheet.append(_TEMPLATE_EXAMPLE_ROW)
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        content: bytes = buffer.getvalue()
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "prompt_import_template.xlsx"
+    elif format == "json":
+        content = json.dumps([_TEMPLATE_EXAMPLE_JSON_ROW], indent=2, ensure_ascii=False).encode("utf-8")
+        media_type = "application/json"
+        filename = "prompt_import_template.json"
+    else:
+        text_buffer = io.StringIO()
+        csv.writer(text_buffer).writerows([_TEMPLATE_HEADER, _TEMPLATE_EXAMPLE_ROW])
+        content = text_buffer.getvalue().encode("utf-8-sig")
+        media_type = "text/csv"
+        filename = "prompt_import_template.csv"
+    return Response(
+        content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.get("/prompt-sets/{prompt_set_id}/prompts/import", dependencies=_editor_or_admin)
+def import_prompts_form(request: Request, prompt_set_id: int, db: Session = Depends(get_db)):
+    """Render the bulk prompt import upload form (docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T5).
+
+    Lets an editor/admin pick a CSV/XLSX/JSON file plus a default market applied to any row
+    that doesn't specify its own `market_code` column — nothing is parsed or saved until the
+    file is submitted to the preview step below.
+    """
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    return render(
+        request,
+        "prompt_sets/import.html",
+        {"prompt_set": prompt_set, "markets": market_options(db)},
+    )
+
+
+@router.post("/prompt-sets/{prompt_set_id}/prompts/import/preview", dependencies=_editor_or_admin)
+def import_prompts_preview(
+    request: Request,
+    prompt_set_id: int,
+    file: UploadFile = File(..., description="CSV, XLSX, or JSON file with one prompt per row."),
+    default_market_id: int = Form(
+        ..., description="Market applied to any row that doesn't specify its own market_code."
+    ),
+    db: Session = Depends(get_db),
+):
+    """Parse an uploaded bulk-import file and show a preview of what would be created (BIM-T5).
+
+    Validates rows and flags duplicates but writes nothing to the database — only the confirm
+    step (BIM-T6) actually creates `Prompt` rows, and only for whichever rows are left checked
+    on the preview screen. File size and row-count limits are enforced here (design decision
+    13), before/after calling into `app.services.prompt_import`'s pure parsing functions, which
+    know nothing about those limits themselves.
+    """
+    t = get_t(request)
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+    market = db.get(Market, default_market_id)
+    if market is None:
+        raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
+
+    filename = file.filename or ""
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    parser = _IMPORT_PARSERS.get(extension)
+    if parser is None:
+        raise AppError("import_parse_failed", t("errors.import_parse_failed"), status_code=400)
+
+    content = file.file.read()
+    if len(content) > MAX_IMPORT_FILE_BYTES:
+        raise AppError(
+            "import_file_too_large",
+            t("errors.import_file_too_large").format(max_mb=MAX_IMPORT_FILE_BYTES // 1_000_000),
+            status_code=400,
+        )
+
+    try:
+        rows = parser(content)
+    except PromptImportError as exc:
+        raise AppError(exc.error_code, t(f"errors.{exc.error_code}"), status_code=400) from exc
+
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise AppError(
+            "import_too_many_rows", t("errors.import_too_many_rows").format(max_rows=MAX_IMPORT_ROWS), status_code=400
+        )
+
+    rows = validate_and_check_duplicates(rows, db, prompt_set_id, market.id)
+
+    return render(
+        request,
+        "prompt_sets/import_preview.html",
+        {
+            "prompt_set": prompt_set,
+            "rows": rows,
+            "markets": market_options(db),
+            "new_count": sum(1 for r in rows if r.status == "new"),
+            "duplicate_count": sum(1 for r in rows if r.status == "duplicate"),
+            "error_count": sum(1 for r in rows if r.status == "error"),
+        },
+    )
