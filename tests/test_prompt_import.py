@@ -1,14 +1,20 @@
-"""Bulk prompt import: CSV robustness and the downloadable template (docs/TASKS_BULK_IMPORT_
-MULTI_MODEL.md BIM-T8/BIM-T9). Founded here per BIM-T8; BIM-T7 extends this same file with
-parsing/validation/duplicate/confirm-flow coverage for BIM-T4/T5/T6.
+"""Bulk prompt import: parsing/validation/duplicates/confirm flow (BIM-T4/T5/T6) plus the CSV
+robustness and downloadable template layered on top (BIM-T8/BIM-T9) — docs/TASKS_BULK_IMPORT_
+MULTI_MODEL.md. Founded in BIM-T8; this file is extended, not recreated, by BIM-T7.
 """
+
+import io
+import json
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Prompt
+from app.models import Market, Prompt
 from app.services.prompt_import import (
+    ParsedPromptRow,
     PromptImportError,
     parse_csv,
     parse_json,
@@ -103,3 +109,165 @@ def test_import_template_json_roundtrips(authed_client: TestClient, sample_promp
     assert rows[0].text
     assert rows[0].is_active is True
     assert rows[0].status == "new"
+
+
+# ---------------------------------------------------------------------------
+# BIM-T7 — parsing/validation/duplicates/confirm flow (BIM-T4/T5/T6)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_csv_xlsx_json_agree_on_the_same_content():
+    """docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T7 — the three formats are interchangeable
+    inputs to the same pipeline, so identical content must parse to identical `ParsedPromptRow`
+    data regardless of which one was uploaded.
+    """
+    csv_content = "text,market_code,topic,is_active\nHello world?,de-DE,Greeting,true\n".encode("utf-8-sig")
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["text", "market_code", "topic", "is_active"])
+    sheet.append(["Hello world?", "de-DE", "Greeting", "true"])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    xlsx_content = buffer.getvalue()
+
+    json_content = json.dumps(
+        [{"text": "Hello world?", "market_code": "de-DE", "topic": "Greeting", "is_active": True}]
+    ).encode("utf-8")
+
+    for rows in (parse_csv(csv_content), parse_xlsx(xlsx_content), parse_json(json_content)):
+        assert len(rows) == 1
+        assert rows[0].text == "Hello world?"
+        assert rows[0].market_code == "de-DE"
+        assert rows[0].topic == "Greeting"
+        assert rows[0].is_active is True
+
+
+def test_parse_csv_handles_bom_and_cp1252():
+    """utf-8-sig (BOM) is tried first; cp1252 (common for German-locale Excel exports) is the
+    fallback — neither should crash or mangle the accented character.
+    """
+    bom_rows = parse_csv("text\nCafé?\n".encode("utf-8-sig"))
+    assert bom_rows[0].text == "Café?"
+
+    cp1252_rows = parse_csv("text\nCafé?\n".encode("cp1252"))
+    assert cp1252_rows[0].text == "Café?"
+
+
+def test_validate_flags_unknown_market_code(db_session: Session, seed, sample_prompt: Prompt):
+    rows = [ParsedPromptRow(row_number=1, text="Hello?", market_code="xx-XX")]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].status == "error"
+
+
+def test_validate_flags_empty_text(db_session: Session, seed, sample_prompt: Prompt):
+    rows = [ParsedPromptRow(row_number=1, text="")]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].status == "error"
+
+
+def test_validate_fills_default_market_when_missing(db_session: Session, seed, sample_prompt: Prompt):
+    rows = [ParsedPromptRow(row_number=1, text="Hello?", market_code=None)]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].market_id == seed["market"].id
+    assert rows[0].status == "new"
+
+
+def test_validate_detects_duplicate_against_existing_prompt(db_session: Session, seed, sample_prompt: Prompt):
+    """`sample_prompt` (conftest.py) is `"What is this test about?"` in `seed["market"]` —
+    uploading the same text for the same market must be flagged, not silently created again.
+    """
+    rows = [ParsedPromptRow(row_number=1, text="What is this test about?", market_code=None)]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].status == "duplicate"
+
+
+def test_validate_same_text_different_market_is_new(db_session: Session, seed, sample_prompt: Prompt):
+    """Market is part of the duplicate key (design decision 10) — the same question text
+    targeting a different market is a legitimate, separate prompt, not a duplicate.
+    """
+    other_market = Market(code="de-DE", language="de", country="DE")
+    db_session.add(other_market)
+    db_session.commit()
+
+    rows = [ParsedPromptRow(row_number=1, text="What is this test about?", market_code="de-DE")]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].status == "new"
+
+
+def test_validate_duplicate_within_same_batch(db_session: Session, seed, sample_prompt: Prompt):
+    rows = [
+        ParsedPromptRow(row_number=1, text="Brand new question?", market_code=None),
+        ParsedPromptRow(row_number=2, text="Brand new question?", market_code=None),
+    ]
+    validate_and_check_duplicates(rows, db_session, sample_prompt.prompt_set_id, seed["market"].id)
+    assert rows[0].status == "new"
+    assert rows[1].status == "duplicate"
+
+
+def test_bulk_import_confirm_saves_only_included_rows(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """End-to-end: upload -> preview -> confirm. Only the row submitted with `include=true`
+    becomes a `Prompt`; the other (left unchecked, so its `include` field is simply absent from
+    the form — matching what an unchecked HTML checkbox actually submits) does not.
+    """
+    csv_content = (
+        "text,market_code,topic,is_active\n"
+        "Brand new prompt one?,,Topic A,true\n"
+        "Brand new prompt two?,,Topic B,true\n"
+    ).encode("utf-8-sig")
+
+    preview_response = authed_client.post(
+        f"/prompt-sets/{sample_prompt.prompt_set_id}/prompts/import/preview",
+        data={"default_market_id": seed["market"].id},
+        files={"file": ("prompts.csv", csv_content, "text/csv")},
+    )
+    assert preview_response.status_code == 200
+
+    confirm_response = authed_client.post(
+        f"/prompt-sets/{sample_prompt.prompt_set_id}/prompts/import/confirm",
+        data={
+            "rows-0-text": "Brand new prompt one?",
+            "rows-0-market_id": str(seed["market"].id),
+            "rows-0-topic": "Topic A",
+            "rows-0-is_active": "true",
+            "rows-0-include": "true",
+            "rows-1-text": "Brand new prompt two?",
+            "rows-1-market_id": str(seed["market"].id),
+            "rows-1-topic": "Topic B",
+            # rows-1-include intentionally omitted — an unchecked checkbox submits nothing.
+        },
+        follow_redirects=False,
+    )
+    assert confirm_response.status_code == 303
+
+    texts = set(
+        db_session.scalars(
+            select(Prompt.text).where(
+                Prompt.prompt_set_id == sample_prompt.prompt_set_id, Prompt.is_current_version.is_(True)
+            )
+        ).all()
+    )
+    assert "Brand new prompt one?" in texts
+    assert "Brand new prompt two?" not in texts
+
+
+def test_bulk_import_confirm_never_saves_a_row_with_an_invalid_market_even_if_included(
+    authed_client: TestClient, db_session: Session, sample_prompt: Prompt
+):
+    """Design decision 12 — the confirm route re-validates `market_id` itself rather than
+    trusting the resubmitted form; a tampered/stale `market_id` must never create a `Prompt`,
+    even with `include=true`.
+    """
+    response = authed_client.post(
+        f"/prompt-sets/{sample_prompt.prompt_set_id}/prompts/import/confirm",
+        data={
+            "rows-0-text": "Should never be saved",
+            "rows-0-market_id": "999999",
+            "rows-0-include": "true",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert db_session.scalar(select(Prompt).where(Prompt.text == "Should never be saved")) is None
