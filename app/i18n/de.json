@@ -220,6 +220,7 @@
   "common.yes": "Ja",
   "common.no": "Nein",
   "common.none": "—",
+  "common.utc_suffix": "UTC",
   "common.description": "Beschreibung",
 
   "client.list_title": "Klienten",

@@ -130,7 +130,7 @@
   {% for ps in prompt_sets %}
   <a href="/prompt-sets/{{ ps.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white hover:border-stone-400">
     <div class="font-medium">{{ ps.name }}</div>
-    <div class="text-xs text-stone-400 mt-1">{{ local_time(ps.created_at, seconds=False) }}</div>
+    <div class="text-xs text-stone-400 mt-1">{{ local_time(ps.created_at, t('common.utc_suffix'), seconds=False) }}</div>
   </a>
   {% endfor %}
 </div>

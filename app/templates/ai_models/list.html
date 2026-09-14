@@ -42,7 +42,7 @@
         <td class="py-3 px-4">
           {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
         </td>
-        <td class="py-3 px-4 text-xs text-stone-400 whitespace-nowrap">{{ local_time(model.updated_at, seconds=False) }}</td>
+        <td class="py-3 px-4 text-xs text-stone-400 whitespace-nowrap">{{ local_time(model.updated_at, t('common.utc_suffix'), seconds=False) }}</td>
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
           {{ delete_button('/ai-models/' ~ model.id ~ '/delete', t('ai_model.delete_confirm'), t('ai_model.delete_button'), extra_classes='ml-3' ~ (' opacity-40' if run_count else '')) }}
@@ -68,7 +68,7 @@
     </div>
     <div class="flex items-center justify-between mt-3">
       {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
-      <span class="text-xs text-stone-400">{{ local_time(model.updated_at, seconds=False) }}</span>
+      <span class="text-xs text-stone-400">{{ local_time(model.updated_at, t('common.utc_suffix'), seconds=False) }}</span>
     </div>
     <div class="flex gap-4 mt-3 text-sm">
       <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
