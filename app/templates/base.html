@@ -69,9 +69,9 @@
         {% endif %}
 
         <span class="flex items-center gap-1 text-stone-400">
-          <a href="/set-locale/en?next={{ request.url.path }}" class="hover:text-stone-900 {% if locale == 'en' %}font-semibold text-stone-900{% endif %}">EN</a>
+          <a href="/set-locale/en?next={{ locale_next }}" class="hover:text-stone-900 {% if locale == 'en' %}font-semibold text-stone-900{% endif %}">EN</a>
           <span>/</span>
-          <a href="/set-locale/de?next={{ request.url.path }}" class="hover:text-stone-900 {% if locale == 'de' %}font-semibold text-stone-900{% endif %}">DE</a>
+          <a href="/set-locale/de?next={{ locale_next }}" class="hover:text-stone-900 {% if locale == 'de' %}font-semibold text-stone-900{% endif %}">DE</a>
         </span>
 
         {% if current_user %}
