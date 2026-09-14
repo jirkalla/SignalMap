@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button %}
+{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button, local_time %}
 {% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
@@ -33,7 +33,7 @@
   {{ textarea_field('notes', t('ai_model.notes_label'), model.notes if model else '', rows=2) }}
 
   {% if model and model.created_at %}
-  <p class="text-xs text-stone-400 mb-4">{{ t('ai_model.created_at_label') }}: {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+  <p class="text-xs text-stone-400 mb-4">{{ t('ai_model.created_at_label') }}: {{ local_time(model.created_at, seconds=False) }}</p>
   {% endif %}
 
   {% if model %}
@@ -51,8 +51,8 @@
       <tbody>
         {% for row, valid_until in price_history %}
         <tr class="border-t border-stone-100">
-          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ row.effective_from.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ valid_until.strftime('%Y-%m-%d %H:%M') if valid_until else t('ai_model.price_history_current_label') }}</td>
+          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(row.effective_from, seconds=False) }}</td>
+          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(valid_until, seconds=False) if valid_until else t('ai_model.price_history_current_label') }}</td>
           <td class="py-1 text-stone-600">
             {%- if row.cost_per_1k_input_usd is not none and row.cost_per_1k_output_usd is not none -%}
             ${{ '%.2f'|format(row.cost_per_1k_input_usd * 1000) }} / ${{ '%.2f'|format(row.cost_per_1k_output_usd * 1000) }} {{ t('ai_model.cost_per_million_suffix') }}

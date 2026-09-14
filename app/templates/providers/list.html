@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import button %}
+{% from "partials/macros.html" import button, local_time %}
 {% block title %}{{ t('provider.list_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <h1 class="text-xl font-semibold mb-6">{{ t('provider.list_title') }}</h1>
@@ -28,7 +28,7 @@
             <input type="text" name="name" value="{{ provider.name }}" required
                    class="rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
             <span class="text-stone-500">{{ active_model_count }} {{ t('provider.model_count_label').lower() }}</span>
-            <span class="text-xs text-stone-400">{{ provider.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span class="text-xs text-stone-400">{{ local_time(provider.updated_at, seconds=False) }}</span>
             {{ button(t('common.save'), variant='secondary') }}
           </form>
         </td>
@@ -47,7 +47,7 @@
              class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
       <div class="flex items-center justify-between text-xs text-stone-500">
         <span>{{ active_model_count }} {{ t('provider.model_count_label').lower() }}</span>
-        <span>{{ provider.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        <span>{{ local_time(provider.updated_at, seconds=False) }}</span>
       </div>
       {{ button(t('common.save'), variant='secondary') }}
     </form>
