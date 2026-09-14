@@ -9,6 +9,26 @@ from app.models import AnalysisResult, Citation, Persona, Prompt, RawResponse, R
 from tests.fake_adapter import FakeAdapter
 
 
+def test_trigger_run_rejected_for_inactive_prompt(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """`Prompt.is_active` documents itself as "offer this prompt for new runs or not" but was
+    never actually enforced anywhere — this is the fix. An inactive prompt is rejected (409)
+    before any adapter call, and no Run row is created.
+    """
+    sample_prompt.is_active = False
+    db_session.commit()
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
+
+
 def test_trigger_run_rejected_while_one_is_already_pending(
     authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):

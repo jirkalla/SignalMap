@@ -223,6 +223,13 @@ def trigger_run(
 ):
     """Run a prompt against the selected model, market, and persona, and store the result (FR-7..FR-16).
 
+    Rejects an inactive prompt outright (409) — `Prompt.is_active` (docs/app/models/prompt.py)
+    has always documented itself as "offer this prompt for new runs or not", but nothing
+    actually enforced that until now; this mirrors how `_runnable_model_groups` already keeps
+    an inactive `AIModel` out of the dropdown, and `_run_active_analysis_skills` skips an
+    inactive `AnalysisSkill` — `Prompt.is_active` was the one such flag in the app that was
+    purely cosmetic.
+
     Always creates a Run row, whether the provider call succeeds or fails —
     a failed call is recorded with status='error' and a stored error
     message, never silently dropped. The market and persona used are
@@ -247,6 +254,9 @@ def trigger_run(
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
+
+    if not prompt.is_active:
+        raise AppError("prompt_inactive", t("errors.prompt_inactive"), status_code=409)
 
     pending_run = db.scalar(
         select(Run.id)

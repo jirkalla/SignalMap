@@ -46,6 +46,9 @@
 {% endif %}
 
 {% if can_edit(current_user) %}
+{% if not prompt.is_active %}
+<div class="bg-stone-100 border border-stone-200 rounded-lg p-4 mb-8 text-sm text-stone-500">{{ t('prompt.inactive_run_blocked_hint') }}</div>
+{% else %}
 <form id="run-trigger-form" method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3"
       data-pending-label="{{ t('prompt.trigger_run_pending') }}">
   <div class="flex-[2] min-w-[280px] mb-0">
@@ -97,6 +100,7 @@
   <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
   {% endif %}
 </div>
+{% endif %}
 {% endif %}
 
 <script>
