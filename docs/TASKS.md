@@ -300,6 +300,23 @@ running when `ENVIRONMENT=production`, matching `scripts/seed_dev_users.py`'s ex
 Full task breakdown, design decisions, and rationale: `docs/TASKS_CHATGPT_PERSONA_PRICING.md`
 and `docs/PROMPTS_CHATGPT_PERSONA_PRICING.md`.
 
+## Local timezone display fix
+
+Branch `feature/signalmap-local-time-display` (2026-09-14). Fixes a bug found during manual
+production verification: every displayed timestamp (`.strftime()` on the stored UTC value,
+14 occurrences across 7 templates) was rendered as-is with no timezone conversion — a run
+showed 2 hours off from the real local time (UTC vs. CEST). Not one of the five roadmap
+phases; no new database/backend logic — conversion is purely client-side (viewer's own
+browser timezone via `Intl.DateTimeFormat`, not a fixed server zone), with a server-rendered
+UTC `<time>` fallback for when JS fails.
+
+A DRY-focused code review found the new `local_time()` macro hardcoded the "UTC" suffix in
+English instead of routing it through `t()` — fixed by adding a `common.utc_suffix` i18n key
+and passing it in from every call site.
+
+Full task breakdown and design decisions: `docs/TASKS_LOCAL_TIME.md` and
+`docs/PROMPTS_LOCAL_TIME.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

@@ -131,6 +131,12 @@
 </div>
 {% endmacro %}
 
+{% macro local_time(dt, utc_label, seconds=True) %}
+{%- if dt -%}
+<time datetime="{{ dt.isoformat() }}" data-local-time>{{ dt.strftime('%Y-%m-%d %H:%M:%S' if seconds else '%Y-%m-%d %H:%M') }} {{ utc_label }}</time>
+{%- endif -%}
+{% endmacro %}
+
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
 {# Plain <a href> links, never hx-get — a file download needs a real browser
    navigation, not an HTMX-swapped fragment. id_prefix is only needed on a

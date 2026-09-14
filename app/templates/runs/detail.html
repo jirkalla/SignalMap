@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list %}
+{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list, local_time %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -38,11 +38,11 @@
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.started_label') }}</dt>
-      <dd>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+      <dd>{{ local_time(run.started_at, t('common.utc_suffix')) }}</dd>
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.finished_label') }}</dt>
-      <dd>{{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') if run.finished_at else t('common.none') }}</dd>
+      <dd>{{ local_time(run.finished_at, t('common.utc_suffix')) if run.finished_at else t('common.none') }}</dd>
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>

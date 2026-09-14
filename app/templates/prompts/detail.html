@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge, export_button_group %}
+{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge, export_button_group, local_time %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -181,7 +181,7 @@
           {{ run.market.code }}
           {% if run.market_id != prompt.market_id %}<span class="text-amber-700">*</span>{% endif %}
         </td>
-        <td class="py-3 px-4 text-stone-500">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td class="py-3 px-4 text-stone-500">{{ local_time(run.started_at, t('common.utc_suffix')) }}</td>
         <td class="py-3 px-4">{{ status_badge(run.status) }}</td>
         <td class="py-3 px-4 text-stone-500">{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</td>
         <td class="py-3 px-4 text-right"><a href="/runs/{{ run.id }}" class="text-stone-600 hover:underline">{{ t('run.view') }}</a></td>
@@ -198,7 +198,7 @@
       {{ status_badge(run.status) }}
     </div>
     <div class="text-xs text-stone-400 mt-2">
-      {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }} · {{ run.market.code }}{% if run.market_id != prompt.market_id %} <span class="text-amber-700">({{ t('run.market_overridden') }})</span>{% endif %}
+      {{ local_time(run.started_at, t('common.utc_suffix')) }} · {{ run.market.code }}{% if run.market_id != prompt.market_id %} <span class="text-amber-700">({{ t('run.market_overridden') }})</span>{% endif %}
     </div>
   </a>
   {% endfor %}
