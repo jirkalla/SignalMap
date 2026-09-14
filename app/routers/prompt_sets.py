@@ -87,6 +87,26 @@ def _current_prompts(db: Session, prompt_set_id: int) -> list[Prompt]:
     ).all()
 
 
+def _prompt_set_detail_context(
+    db: Session, prompt_set: PromptSet, prompts: list[Prompt], *, imported: int | None = None, error: str | None = None
+) -> dict:
+    """Shared render context for `prompt_sets/detail.html`, built by both `prompt_set_detail`
+    and `delete_prompt_set`'s blocked-delete re-render — factored out so the two never drift on
+    which keys the template expects (the search/filter bar's `distinct_topics`/`distinct_markets`
+    in particular; a template that references them unconditionally would hit Jinja's default
+    `Undefined` on any render call that forgot to pass them).
+    """
+    return {
+        "prompt_set": prompt_set,
+        "prompts": prompts,
+        "markets": market_options(db),
+        "imported": imported,
+        "error": error,
+        "distinct_topics": sorted({p.topic for p in prompts if p.topic}),
+        "distinct_markets": sorted({p.market.code for p in prompts}),
+    }
+
+
 @router.post("/clients/{client_id}/prompt-sets", dependencies=_editor_or_admin)
 def create_prompt_set(
     request: Request,
@@ -122,7 +142,7 @@ def prompt_set_detail(
     return render(
         request,
         "prompt_sets/detail.html",
-        {"prompt_set": prompt_set, "prompts": prompts, "markets": market_options(db), "imported": imported},
+        _prompt_set_detail_context(db, prompt_set, prompts, imported=imported),
     )
 
 
@@ -176,13 +196,12 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
         return render(
             request,
             "prompt_sets/detail.html",
-            {
-                "prompt_set": prompt_set,
-                "prompts": _current_prompts(db, prompt_set_id),
-                "markets": market_options(db),
-                "error": t("errors.prompt_set_in_use").format(count=run_count),
-                "imported": None,
-            },
+            _prompt_set_detail_context(
+                db,
+                prompt_set,
+                _current_prompts(db, prompt_set_id),
+                error=t("errors.prompt_set_in_use").format(count=run_count),
+            ),
             status_code=409,
         )
     client_id = prompt_set.client_id
