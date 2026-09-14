@@ -39,7 +39,7 @@
           </td>
           <td class="py-2 px-3 max-w-[24rem]">
             <span class="block truncate" title="{{ row.text }}">{{ row.text or t('prompt_import.status_error') }}</span>
-            {% if row.error_message %}<span class="block text-xs text-red-700 mt-0.5">{{ row.error_message }}</span>{% endif %}
+            {% if row.error_code %}<span class="block text-xs text-red-700 mt-0.5">{{ t('prompt_import.row_error_' ~ row.error_code).format(**row.error_context) }}</span>{% endif %}
           </td>
           <td class="py-2 px-3 min-w-[10rem]">
             <select name="rows-{{ loop.index0 }}-market_id" class="{{ select_class }}">

@@ -26,6 +26,7 @@ from app.services.prompt_import import (
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_ROWS,
     PromptImportError,
+    normalize_prompt_text,
     parse_csv,
     parse_json,
     parse_xlsx,
@@ -105,6 +106,22 @@ def _prompt_set_detail_context(
         "distinct_topics": sorted({p.topic for p in prompts if p.topic}),
         "distinct_markets": sorted({p.market.code for p in prompts}),
     }
+
+
+def _build_prompt(prompt_set_id: int, text: str, market_id: int, topic: str | None, is_active: bool) -> Prompt:
+    """Shared `Prompt` construction for `create_prompt` and `import_prompts_confirm`
+    (code-review fix, 2026-09-14) — both used to build this independently, and confirm's
+    docstring claimed reuse that didn't actually exist. Always version 1 (the model's own
+    default); `topic` tolerates `None` (confirm reads it from a possibly-absent form field,
+    unlike `create_prompt`'s `Form("", ...)` default).
+    """
+    return Prompt(
+        prompt_set_id=prompt_set_id,
+        text=text.strip(),
+        market_id=market_id,
+        topic=(topic or "").strip() or None,
+        is_active=is_active,
+    )
 
 
 @router.post("/clients/{client_id}/prompt-sets", dependencies=_editor_or_admin)
@@ -228,13 +245,7 @@ def create_prompt(
     market = db.get(Market, market_id)
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
-    prompt = Prompt(
-        prompt_set_id=prompt_set.id,
-        text=text.strip(),
-        market_id=market.id,
-        topic=topic.strip() or None,
-        is_active=is_active,
-    )
+    prompt = _build_prompt(prompt_set.id, text, market.id, topic, is_active)
     db.add(prompt)
     db.commit()
     db.refresh(prompt)
@@ -314,9 +325,13 @@ def import_prompts_preview(
 
     Validates rows and flags duplicates but writes nothing to the database — only the confirm
     step (BIM-T6) actually creates `Prompt` rows, and only for whichever rows are left checked
-    on the preview screen. File size and row-count limits are enforced here (design decision
-    13), before/after calling into `app.services.prompt_import`'s pure parsing functions, which
-    know nothing about those limits themselves.
+    on the preview screen. File size is enforced here via a bounded read (code-review fix,
+    2026-09-14: `file.file.read()` used to read the whole upload into memory before the size
+    check ran; `read(MAX_IMPORT_FILE_BYTES + 1)` now never materializes more than one byte past
+    the limit, regardless of how large the real upload is). Row-count is enforced by the parsers
+    themselves now, not here (see `app.services.prompt_import`'s module docstring) — a
+    `PromptImportError("import_too_many_rows")` raised mid-parse is caught by the same
+    `except PromptImportError` below as every other file-level parsing error.
     """
     t = get_t(request)
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
@@ -330,7 +345,7 @@ def import_prompts_preview(
     if parser is None:
         raise AppError("import_parse_failed", t("errors.import_parse_failed"), status_code=400)
 
-    content = file.file.read()
+    content = file.file.read(MAX_IMPORT_FILE_BYTES + 1)
     if len(content) > MAX_IMPORT_FILE_BYTES:
         raise AppError(
             "import_file_too_large",
@@ -341,12 +356,9 @@ def import_prompts_preview(
     try:
         rows = parser(content)
     except PromptImportError as exc:
-        raise AppError(exc.error_code, t(f"errors.{exc.error_code}"), status_code=400) from exc
-
-    if len(rows) > MAX_IMPORT_ROWS:
         raise AppError(
-            "import_too_many_rows", t("errors.import_too_many_rows").format(max_rows=MAX_IMPORT_ROWS), status_code=400
-        )
+            exc.error_code, t(f"errors.{exc.error_code}").format(max_rows=MAX_IMPORT_ROWS), status_code=400
+        ) from exc
 
     rows = validate_and_check_duplicates(rows, db, prompt_set_id, market.id)
 
@@ -374,16 +386,55 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
     `-text` keys actually present. `market_id` is **re-resolved against the database**, never
     trusted from the resubmitted form value — the browser round-trip in between is not a
     security boundary (design decision 12). Only rows with `include=true` become `Prompt`
-    rows, always at version 1, via the same construction `create_prompt` uses. A row missing
-    text or a valid market is silently skipped rather than erroring the whole confirm — the
-    preview screen is what already told the user which rows would import cleanly.
+    rows, always at version 1, via `_build_prompt` — the same helper `create_prompt` uses
+    (code-review fix, 2026-09-14: this docstring used to claim that reuse without it actually
+    existing). A row missing text or a valid market is silently skipped rather than erroring
+    the whole confirm — the preview screen is what already told the user which rows would
+    import cleanly.
+
+    Three more code-review fixes, 2026-09-14: (1) a malformed `rows-{i}-*` field name/value
+    (e.g. a non-numeric index or market id) no longer crashes the whole request with an
+    unhandled 500 — it's skipped like any other invalid row, matching this docstring's own
+    "silently skipped" claim, which the unguarded `int()` calls used to contradict. (2) The
+    number of rows is capped at `MAX_IMPORT_ROWS`, same as the preview step — previously this
+    route had no limit at all, so posting directly here (bypassing preview) could create an
+    unbounded number of `Prompt` rows in one request. (3) Duplicate detection is re-run against
+    the database's current state at confirm time (via `normalize_prompt_text`, the same
+    normalization `validate_and_check_duplicates` uses for preview), not just trusted from the
+    preview snapshot — a row that became a duplicate in the time between preview and confirm
+    (e.g. a concurrent import) is skipped rather than creating a second copy.
     """
+    t = get_t(request)
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
     form = await request.form()
 
-    row_indices = sorted(
-        {int(key.split("-", 2)[1]) for key in form.keys() if key.startswith("rows-") and key.endswith("-text")}
-    )
+    row_indices: set[int] = set()
+    for key in form.keys():
+        if key.startswith("rows-") and key.endswith("-text"):
+            try:
+                row_indices.add(int(key.split("-", 2)[1]))
+            except ValueError:
+                continue  # malformed field name — ignore rather than crash the whole request
+    row_indices = sorted(row_indices)
+
+    if len(row_indices) > MAX_IMPORT_ROWS:
+        raise AppError(
+            "import_too_many_rows", t("errors.import_too_many_rows").format(max_rows=MAX_IMPORT_ROWS), status_code=400
+        )
+
+    existing_texts_by_market: dict[int, set[str]] = {}
+
+    def existing_texts(market_id: int) -> set[str]:
+        if market_id not in existing_texts_by_market:
+            texts = db.scalars(
+                select(Prompt.text).where(
+                    Prompt.prompt_set_id == prompt_set.id,
+                    Prompt.market_id == market_id,
+                    Prompt.is_current_version.is_(True),
+                )
+            ).all()
+            existing_texts_by_market[market_id] = {normalize_prompt_text(text) for text in texts}
+        return existing_texts_by_market[market_id]
 
     imported = 0
     for i in row_indices:
@@ -393,20 +444,24 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
         if not text:
             continue
         market_id_raw = form.get(f"rows-{i}-market_id")
-        market = db.get(Market, int(market_id_raw)) if market_id_raw else None
+        market = None
+        if market_id_raw:
+            try:
+                market = db.get(Market, int(market_id_raw))
+            except ValueError:
+                market = None
         if market is None:
             continue
-        topic = str(form.get(f"rows-{i}-topic") or "").strip() or None
+
+        normalized = normalize_prompt_text(text)
+        seen = existing_texts(market.id)
+        if normalized in seen:
+            continue  # duplicate against the DB's current state, or against an earlier row in this same confirm
+        seen.add(normalized)
+
+        topic = form.get(f"rows-{i}-topic")
         is_active = form.get(f"rows-{i}-is_active") == "true"
-        db.add(
-            Prompt(
-                prompt_set_id=prompt_set.id,
-                text=text,
-                market_id=market.id,
-                topic=topic,
-                is_active=is_active,
-            )
-        )
+        db.add(_build_prompt(prompt_set.id, text, market.id, topic, is_active))
         imported += 1
 
     db.commit()
