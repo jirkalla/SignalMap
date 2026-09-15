@@ -15,6 +15,8 @@ from fastapi.responses import RedirectResponse, Response
 from openpyxl import Workbook
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import FormData
 
 from app.auth import require_role
 from app.database import get_db
@@ -427,10 +429,29 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
     actually close. (6) The duplicate-lookup cache/query is now `build_existing_texts_lookup`
     (app/services/prompt_import.py), the same helper `validate_and_check_duplicates` uses for
     preview, instead of a second hand-copied closure that could silently drift out of sync with it.
+
+    This route is `async def` — the only one in this router — solely because reading the
+    dynamic `rows-{i}-*` field names requires `await request.form()`; nothing else here is
+    async. Everything after that `await` runs in a threadpool via `run_in_threadpool` (code-
+    review fix, 2026-09-15), not inline on the event loop: an `async def` route is dispatched
+    directly on the single event loop (unlike a plain `def` route, which Starlette threadpools
+    automatically), so the blocking sync `Session` calls this route makes (`db.get`, `db.commit`)
+    used to stall every other concurrent request on that worker for the duration of a large
+    confirm — the only route in the app actually doing that, and a direct contradiction of the
+    sync/async split documented in app/database.py.
     """
     t = get_t(request)
-    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
     form = await request.form()
+    return await run_in_threadpool(_confirm_import_rows, request, prompt_set_id, db, form, t)
+
+
+def _confirm_import_rows(
+    request: Request, prompt_set_id: int, db: Session, form: FormData, t
+) -> RedirectResponse:
+    """The synchronous body of `import_prompts_confirm`, run in a threadpool by its caller so its
+    blocking `Session` calls never run on the event loop (see that docstring for why).
+    """
+    prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
 
     row_indices: set[int] = set()
     for key in form.keys():
