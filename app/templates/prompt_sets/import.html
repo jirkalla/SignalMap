@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import select_field, button, export_button_group %}
+{% block title %}{{ t('prompt_import.title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/clients/{{ prompt_set.client_id }}" class="hover:underline">{{ prompt_set.client.name }}</a>
+  <span class="mx-1">/</span>
+  <a href="/prompt-sets/{{ prompt_set.id }}" class="hover:underline">{{ prompt_set.name }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-6">{{ t('prompt_import.title') }}</h1>
+
+<form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts/import/preview" enctype="multipart/form-data"
+      class="max-w-lg bg-white border border-stone-200 rounded-lg p-6">
+  <div class="mb-4">
+    <label for="file" class="block text-sm font-medium text-stone-700 mb-1">{{ t('prompt_import.file_label') }} *</label>
+    <input type="file" id="file" name="file" accept=".csv,.xlsx,.json" required
+           class="w-full text-sm text-stone-700 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-stone-100 file:text-stone-700 file:text-sm hover:file:bg-stone-200">
+    <p class="text-xs text-stone-400 mt-1">{{ t('prompt_import.file_hint') }}</p>
+    <p class="text-xs text-stone-400 mt-1">{{ t('prompt_import.column_count_hint') }}</p>
+    <div class="flex items-center gap-2 mt-3">
+      <span class="text-xs text-stone-500">{{ t('prompt_import.download_template_label') }}</span>
+      {{ export_button_group('/prompt-sets/' ~ prompt_set.id ~ '/prompts/import/template', t('prompt.export_csv'), t('prompt.export_xlsx'), t('prompt.export_json')) }}
+    </div>
+  </div>
+  {{ select_field('default_market_id', t('prompt_import.default_market_label'), markets, required=True) }}
+  <div class="flex items-center gap-3 mt-2">
+    {{ button(t('prompt_import.upload_button')) }}
+    <a href="/prompt-sets/{{ prompt_set.id }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import status_badge %}
+{% block title %}{{ t('prompt_import.title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/clients/{{ prompt_set.client_id }}" class="hover:underline">{{ prompt_set.client.name }}</a>
+  <span class="mx-1">/</span>
+  <a href="/prompt-sets/{{ prompt_set.id }}" class="hover:underline">{{ prompt_set.name }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-2">{{ t('prompt_import.preview_title') }}</h1>
+<p class="text-sm text-stone-500 mb-6">
+  {{ t('prompt_import.preview_summary').format(new=new_count, duplicate=duplicate_count, error=error_count) }}
+</p>
+
+{% set select_class = 'rounded-md border border-stone-300 px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500' %}
+{% set input_class = 'w-full rounded-md border border-stone-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500' %}
+{% set checkbox_class = 'rounded border-stone-300 text-stone-700 focus:ring-stone-500 disabled:opacity-40' %}
+
+<form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts/import/confirm">
+  <div class="overflow-x-auto bg-white border border-stone-200 rounded-lg mb-6">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-3 px-3 font-medium">{{ t('prompt_import.include_label') }}</th>
+          <th class="py-3 px-3 font-medium">{{ t('prompt.text_label') }}</th>
+          <th class="py-3 px-3 font-medium">{{ t('prompt.market_label') }}</th>
+          <th class="py-3 px-3 font-medium">{{ t('prompt.topic_label') }}</th>
+          <th class="py-3 px-3 font-medium">{{ t('prompt.active_label') }}</th>
+          <th class="py-3 px-3 font-medium">{{ t('common.status') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="border-t border-stone-100 align-top">
+          <td class="py-2 px-3">
+            <input type="hidden" name="rows-{{ loop.index0 }}-text" value="{{ row.text }}">
+            <input type="hidden" name="rows-{{ loop.index0 }}-status" value="{{ row.status }}">
+            <input type="checkbox" name="rows-{{ loop.index0 }}-include" value="true"
+                   {% if row.status == 'new' %}checked{% endif %} {% if row.status == 'error' %}disabled{% endif %}
+                   class="{{ checkbox_class }}">
+          </td>
+          <td class="py-2 px-3 max-w-[24rem]">
+            <span class="block truncate" title="{{ row.text }}">{{ row.text or t('prompt_import.status_error') }}</span>
+            {% if row.error_code %}<span class="block text-xs text-red-700 mt-0.5">{{ t('prompt_import.row_error_' ~ row.error_code).format(**row.error_context) }}</span>{% endif %}
+          </td>
+          <td class="py-2 px-3 min-w-[10rem]">
+            <select name="rows-{{ loop.index0 }}-market_id" class="{{ select_class }}">
+              {% for value, text in markets %}
+              <option value="{{ value }}" {% if value == row.market_id %}selected{% endif %}>{{ text }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="py-2 px-3 min-w-[10rem]">
+            <input type="text" name="rows-{{ loop.index0 }}-topic" value="{{ row.topic or '' }}" class="{{ input_class }}">
+          </td>
+          <td class="py-2 px-3">
+            <input type="checkbox" name="rows-{{ loop.index0 }}-is_active" value="true" {% if row.is_active %}checked{% endif %}
+                   class="{{ checkbox_class }}">
+          </td>
+          <td class="py-2 px-3">
+            {{ status_badge(row.status, t('prompt_import.status_' ~ row.status)) }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="flex items-center gap-3">
+    <button type="submit" {% if not rows %}disabled{% endif %}
+            class="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+      {{ t('prompt_import.confirm_button') }}
+    </button>
+    <a href="/prompt-sets/{{ prompt_set.id }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+{% endblock %}

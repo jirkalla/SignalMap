@@ -5,6 +5,7 @@ never have to wire that up individually.
 """
 
 import json
+from urllib.parse import urlparse
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
@@ -67,6 +68,29 @@ def _tojson_filter(value: object) -> Markup:
 templates.env.filters["tojson"] = _tojson_filter
 
 
+def _locale_switch_next(request: Request) -> str:
+    """The path the base.html EN/DE locale links should return to after `/set-locale/{locale}`.
+
+    On a GET page this is just `request.url.path` (unchanged behavior) — that same URL can be
+    GET-ed again after the locale cookie is set. But several routers render a template directly
+    from a POST handler (a form re-shown with validation errors, a delete blocked by a foreign
+    key, the bulk-import preview) rather than redirecting first — `request.url.path` there is a
+    POST-only route, so following it with `/set-locale`'s GET redirect 405s (found manually,
+    2026-09-14, on the bulk-import preview page, though the same route shape affects ~13 other
+    POST-rendered pages across the app). The `Referer` header is the page the browser was
+    actually on before it submitted that POST — a GET-safe fallback — with `/clients` as the
+    last resort when there's no referer at all (e.g. a direct POST from a non-browser client).
+    """
+    if request.method == "GET":
+        return request.url.path
+    referer = request.headers.get("referer")
+    if referer:
+        path = urlparse(referer).path
+        if path:
+            return path
+    return "/clients"
+
+
 def render(request: Request, template_name: str, context: dict | None = None, status_code: int = 200):
     """Render a Jinja2 template with `request`, `locale`, `t()`, and `current_user` already in context.
 
@@ -87,6 +111,7 @@ def render(request: Request, template_name: str, context: dict | None = None, st
         "t": get_translator(locale),
         "locale": locale,
         "current_user": current_user,
+        "locale_next": _locale_switch_next(request),
     }
     if context:
         ctx.update(context)

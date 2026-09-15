@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, button, status_badge, delete_button, cost_badge, export_button_group, local_time %}
+{% from "partials/macros.html" import select_field, status_badge, delete_button, cost_badge, export_button_group, local_time %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -46,26 +46,42 @@
 {% endif %}
 
 {% if can_edit(current_user) %}
+{% if not prompt.is_active %}
+<div class="bg-stone-100 border border-stone-200 rounded-lg p-4 mb-8 text-sm text-stone-500">{{ t('prompt.inactive_run_blocked_hint') }}</div>
+{% else %}
 <form id="run-trigger-form" method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3"
       data-pending-label="{{ t('prompt.trigger_run_pending') }}">
-  <div class="flex-1 min-w-[200px] mb-0">
-    <label for="model_id" class="block text-sm font-medium text-stone-700 mb-1">{{ t('prompt.select_model') }} *</label>
-    <select id="model_id" name="model_id" required {% if not model_groups %}disabled{% endif %}
-            class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500 disabled:bg-stone-100 disabled:text-stone-400">
+  <div class="flex-[2] min-w-[280px] mb-0">
+    <div class="flex items-center justify-between mb-1">
+      <span class="block text-sm font-medium text-stone-700">{{ t('prompt.select_model') }} *</span>
+      {% if model_groups %}
+      <label class="flex items-center gap-1.5 text-xs text-stone-500">
+        <input type="checkbox" id="select-all-models" class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+        {{ t('prompt.select_all_models') }}
+      </label>
+      {% endif %}
+    </div>
+    <div id="model-checkboxes" class="w-full rounded-md border border-stone-300 px-3 py-2 max-h-56 overflow-y-auto {% if not model_groups %}bg-stone-100{% endif %}">
       {% for group_label, models in model_groups %}
-      <optgroup label="{{ group_label }}">
+      <div class="{% if not loop.first %}mt-2{% endif %}">
+        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-1">{{ group_label }}</p>
         {% for model in models %}
-        <option value="{{ model.id }}">{{ model.display_name or model.model_name }}</option>
+        <label class="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-sm text-stone-700">
+          <input type="checkbox" name="model_ids" value="{{ model.id }}" data-model-checkbox
+                 class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+          <span class="flex-1 min-w-[120px]">{{ model.display_name or model.model_name }}</span>
+          <span class="shrink-0 ml-auto">{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</span>
+          <span data-model-status="{{ model.id }}" class="text-xs w-4 text-center shrink-0"></span>
+        </label>
         {% endfor %}
-      </optgroup>
+      </div>
       {% endfor %}
-    </select>
-    <div id="model-badge-display" class="mt-2"></div>
-    {% for group_label, models in model_groups %}
-      {% for model in models %}
-      <div data-model-badge="{{ model.id }}" hidden>{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</div>
-      {% endfor %}
-    {% endfor %}
+    </div>
+    <p id="model-selection-error" class="text-sm text-red-700 mt-1" hidden>{{ t('prompt.select_at_least_one_model') }}</p>
+    <div class="mt-2">
+      <p class="text-xs text-stone-400 mb-1">{{ t('prompt.selected_models_label') }} (<span id="selected-count">0</span>)</p>
+      <div id="selected-chips" class="flex flex-wrap gap-1.5"></div>
+    </div>
   </div>
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_field('market_id', t('prompt.market_label'), markets, selected=prompt.market_id, required=True) }}
@@ -73,7 +89,9 @@
   <div class="flex-1 min-w-[200px] mb-0">
     {{ select_field('persona_id', t('prompt.persona_label'), personas, selected=default_persona_id, required=True) }}
   </div>
-  {{ button(t('prompt.trigger_run'), disabled=not model_groups) }}
+  <button type="submit" id="run-trigger-submit" disabled
+          data-default-label="{{ t('prompt.trigger_run') }}" data-count-label="{{ t('prompt.trigger_runs_count') }}"
+          class="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition disabled:opacity-40 disabled:cursor-not-allowed">{{ t('prompt.trigger_run') }}</button>
 </form>
 <div class="-mt-6 mb-8 space-y-1">
   <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
@@ -83,38 +101,111 @@
   {% endif %}
 </div>
 {% endif %}
+{% endif %}
 
 <script>
-  // Live cost_badge under the model dropdown — mirrors the same markup
-  // /ai-models renders (partials/macros.html's cost_badge), just shown/hidden
-  // per selection since a native <option> can't carry HTML/color itself.
+  // Model checkboxes (BIM-T2): each row already carries its own cost_badge inline
+  // (server-rendered), so this only maintains the "selected models" chip summary below
+  // the box and the submit-button label/disabled state, driven by how many models are
+  // currently checked. Chips are built with textContent, never innerHTML, so a model's
+  // admin-entered display_name can never be interpreted as markup. The button label
+  // template ("Run selected models ({count})") is read from a data-attribute and the
+  // "{count}" placeholder substituted in JS, same reasoning as the pending-label
+  // data-attribute below: an apostrophe in the translated text would otherwise break a
+  // naive inline string.
   (function () {
-    var select = document.getElementById('model_id');
-    var display = document.getElementById('model-badge-display');
-    if (!select || !display) return;
-    function updateBadge() {
-      var badge = document.querySelector('[data-model-badge="' + select.value + '"]');
-      display.innerHTML = badge ? badge.innerHTML : '';
+    var form = document.getElementById('run-trigger-form');
+    var checkboxes = form ? form.querySelectorAll('[data-model-checkbox]') : [];
+    var selectedCount = document.getElementById('selected-count');
+    var selectedChips = document.getElementById('selected-chips');
+    var submitButton = document.getElementById('run-trigger-submit');
+    var selectAll = document.getElementById('select-all-models');
+    if (!form || !checkboxes.length || !submitButton) return;
+
+    function checkedCheckboxes() {
+      return Array.prototype.filter.call(checkboxes, function (cb) { return cb.checked; });
     }
-    select.addEventListener('change', updateBadge);
-    updateBadge();
+
+    function updateUI() {
+      var checked = checkedCheckboxes();
+      selectedCount.textContent = checked.length;
+      selectedChips.innerHTML = '';
+      checked.forEach(function (cb) {
+        var chip = document.createElement('span');
+        chip.className = 'inline-block px-2.5 py-0.5 rounded-full text-xs bg-stone-100 text-stone-700 border border-stone-200';
+        chip.textContent = cb.closest('label').querySelector('.flex-1').textContent;
+        selectedChips.appendChild(chip);
+      });
+      if (checked.length === 0) {
+        submitButton.disabled = true;
+        submitButton.textContent = submitButton.getAttribute('data-default-label');
+      } else {
+        submitButton.disabled = false;
+        submitButton.textContent = submitButton.getAttribute('data-count-label').replace('{count}', checked.length);
+      }
+      if (selectAll) selectAll.checked = checked.length === checkboxes.length;
+    }
+
+    Array.prototype.forEach.call(checkboxes, function (cb) { cb.addEventListener('change', updateUI); });
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        Array.prototype.forEach.call(checkboxes, function (cb) { cb.checked = selectAll.checked; });
+        updateUI();
+      });
+    }
+    updateUI();
   })();
 
-  // Immediately disable the run-trigger button on submit (docs/TASKS_CHATGPT_PERSONA_
-  // PRICING.md CPH-T9) — trigger_run blocks synchronously on the provider call (5-28s
-  // observed against real providers) with no other visual feedback, so a double-click
-  // could otherwise fire a second, real, paid run before the first request even returns.
-  // The label is read from a data-attribute (like base.html's data-confirm), not
-  // interpolated into an inline string, for the same reason: an apostrophe in the
-  // translated text would otherwise break a naive inline handler.
+  // Multi-model run trigger (BIM-T2) — fires one POST per checked model in parallel
+  // against the existing single-model POST /prompts/{id}/runs route (no new endpoint;
+  // see docs/TASKS_BULK_IMPORT_MULTI_MODEL.md design decisions 1/4/5), waits for all of
+  // them, then reloads so the run-history list below shows every new run. Each request's
+  // ✅/❌ indicator reflects the HTTP request outcome only (did the server accept and
+  // process it) — a run that itself finished with status='error' (a provider failure)
+  // still shows ✅ here and is visible as an error badge in the run history after reload,
+  // same distinction the guard fix in BIM-T1 relies on.
   (function () {
     var form = document.getElementById('run-trigger-form');
     if (!form) return;
-    form.addEventListener('submit', function () {
-      var submitButton = form.querySelector('button[type="submit"]');
-      if (!submitButton) return;
+    var submitButton = document.getElementById('run-trigger-submit');
+    var errorBox = document.getElementById('model-selection-error');
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var checked = Array.prototype.filter.call(form.querySelectorAll('[data-model-checkbox]'), function (cb) {
+        return cb.checked;
+      });
+      if (checked.length === 0) {
+        if (errorBox) errorBox.hidden = false;
+        return;
+      }
+      if (errorBox) errorBox.hidden = true;
+
       submitButton.disabled = true;
       submitButton.textContent = form.getAttribute('data-pending-label');
+
+      var marketId = form.querySelector('[name="market_id"]').value;
+      var personaId = form.querySelector('[name="persona_id"]').value;
+
+      var requests = checked.map(function (checkbox) {
+        var statusEl = form.querySelector('[data-model-status="' + checkbox.value + '"]');
+        if (statusEl) statusEl.textContent = '⏳';
+        var body = new FormData();
+        body.append('model_id', checkbox.value);
+        body.append('market_id', marketId);
+        body.append('persona_id', personaId);
+        return fetch(form.action, { method: 'POST', body: body })
+          .then(function (response) {
+            if (statusEl) statusEl.textContent = response.ok ? '✅' : '❌';
+          })
+          .catch(function () {
+            if (statusEl) statusEl.textContent = '❌';
+          });
+      });
+
+      Promise.all(requests).then(function () {
+        window.location.reload();
+      });
     });
   })();
 </script>

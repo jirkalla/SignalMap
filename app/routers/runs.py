@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from markupsafe import Markup, escape
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import get_adapter, has_adapter
@@ -223,6 +224,16 @@ def trigger_run(
 ):
     """Run a prompt against the selected model, market, and persona, and store the result (FR-7..FR-16).
 
+    Rejects an inactive prompt or an inactive model outright (409). `Prompt.is_active`
+    (app/models/prompt.py) has always documented itself as "offer this prompt for new runs or
+    not", but nothing actually enforced that until now. `AIModel.is_active` had the identical
+    gap: `_runnable_model_groups` (app/routers/prompts.py) keeps an inactive model out of the
+    run-trigger dropdown, but that's UI-only filtering — this handler never checked the
+    submitted `model_id`'s own `is_active` flag server-side, so a deactivated model (e.g. one an
+    admin turned off via /ai-models to stop further spend) could still be triggered by anyone
+    who still had its id. Both flags are now enforced here, matching how
+    `_run_active_analysis_skills` already skips an inactive `AnalysisSkill`.
+
     Always creates a Run row, whether the provider call succeeds or fails —
     a failed call is recorded with status='error' and a stored error
     message, never silently dropped. The market and persona used are
@@ -233,18 +244,33 @@ def trigger_run(
     future scheduler-triggered run with no human behind it, not relevant here
     since every manual trigger has a logged-in user.
 
-    Rejects triggering a second run on the same prompt while one is already
-    `pending` (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9) — this endpoint
-    blocks synchronously on the provider call (5-28s observed against real
+    Rejects triggering a second run on the same prompt **and model**
+    combination while one is already `pending`
+    (docs/TASKS_CHATGPT_PERSONA_PRICING.md CPH-T9,
+    docs/TASKS_BULK_IMPORT_MULTI_MODEL.md BIM-T1) — this endpoint blocks
+    synchronously on the provider call (5-28s observed against real
     providers), with no visual feedback beyond the run-trigger form's own
     JS button-disable, so a double-click or a second browser tab could
-    otherwise fire a second, real, paid run against the exact same prompt.
+    otherwise fire a second, real, paid run against the exact same prompt
+    and model. Scoped to `model_id` (not just `prompt_id`) so that
+    triggering several different models for the same prompt at once
+    (BIM-T2) can run concurrently instead of blocking each other. The
+    `SELECT`-then-`INSERT` guard alone has a TOCTOU race window for two
+    genuinely concurrent requests; migration 0024's partial unique index
+    (`idx_runs_one_pending_per_prompt_model`) closes that at the database
+    level, and the `IntegrityError` it can raise on commit is caught below
+    and converted to the same 409.
     """
     t = get_t(request)
     prompt = _get_prompt_or_404(db, request, prompt_id)
 
+    if not prompt.is_active:
+        raise AppError("prompt_inactive", t("errors.prompt_inactive"), status_code=409)
+
     pending_run = db.scalar(
-        select(Run.id).where(Run.prompt_id == prompt_id, Run.status == "pending").limit(1)
+        select(Run.id)
+        .where(Run.prompt_id == prompt_id, Run.model_id == model_id, Run.status == "pending")
+        .limit(1)
     )
     if pending_run is not None:
         raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409)
@@ -252,6 +278,8 @@ def trigger_run(
     model = db.get(AIModel, model_id)
     if model is None:
         raise AppError("model_not_found", t("errors.model_not_found"), status_code=400)
+    if not model.is_active:
+        raise AppError("model_inactive", t("errors.model_inactive"), status_code=409)
     if not has_adapter(model.provider.code):
         raise AppError("provider_not_supported", t("errors.provider_not_supported"), status_code=400)
 
@@ -283,7 +311,25 @@ def trigger_run(
         triggered_by_user_id=user.id,
     )
     db.add(run)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Backstop for the race the plain pending_run SELECT above can't fully close (BIM
+        # code-review finding, migration 0024's idx_runs_one_pending_per_prompt_model): a
+        # second request for the same prompt+model that passed the SELECT before this one
+        # committed hits the partial unique index instead, converted to the same 409 a
+        # non-racy duplicate submission already gets. Scoped to that ONE constraint by name
+        # (code-review fix, 2026-09-15) — a bare `except IntegrityError` here also caught an
+        # unrelated FK violation (e.g. the model/market/persona row being deleted by someone
+        # else between this handler's own db.get() checks and this commit) and misreported it
+        # as "run already pending" while silently discarding the real cause; any other
+        # integrity error is logged and surfaced as a distinct, generic failure instead.
+        db.rollback()
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint == "idx_runs_one_pending_per_prompt_model":
+            raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409) from exc
+        logger.exception("Unexpected integrity error creating run for prompt_id=%s, model_id=%s", prompt_id, model_id)
+        raise AppError("run_creation_failed", t("errors.run_creation_failed"), status_code=409) from exc
     db.refresh(run)
 
     logger.info(
