@@ -318,6 +318,31 @@ and passing it in from every call site.
 Full task breakdown and design decisions: `docs/TASKS_LOCAL_TIME.md` and
 `docs/PROMPTS_LOCAL_TIME.md`.
 
+## Bulk prompt import + multi-model runs
+
+Branch `feature/signalmap-bulk-import-multi-model`, merged 2026-09-15
+([PR #12](https://github.com/jirkalla/SignalMap/pull/12)). Two independent features bundled in
+one branch, neither dependent on the other: (1) **multi-model run triggering** — checkboxes
+instead of a single `<select>` on the run-trigger form, runs every checked model in parallel
+against the existing `POST /prompts/{id}/runs` endpoint, no new route; (2) **bulk CSV/XLSX/JSON
+prompt import** into an existing prompt set, with a preview step (duplicate detection, per-row
+market override) before anything is saved. Neither adds a database table or column — both reuse
+the existing `Prompt`/`Run`/`AIModel` models. "Run every prompt at once" (the roadmap's "Study"
+concept) is explicitly out of scope, deferred until the Scheduler exists.
+
+Two rounds of code-review remediation followed (19 findings, 18 fixed, 1 deliberately deferred):
+a DB-level partial unique index closing a TOCTOU race on run creation, CSV/XLSX row-shape
+validation hardening (including a bug found while testing — `openpyxl` pads a sheet's header row
+to its widest row, silently hiding a ragged-row check keyed off the raw header length), i18n
+hardening for row-level import errors, a locale-switch 405 fix affecting ~14 POST-rendered pages
+app-wide (not just this branch's own pages), and several correctness/DRY fixes in the bulk-import
+confirm flow (an overly broad `except IntegrityError`, a silently-dropped intentional-duplicate
+override, an unbounded `market_id` causing an unhandled 500, and blocking DB calls running on the
+event loop instead of a threadpool).
+
+Full task breakdown, design decisions, and the complete code-review remediation log:
+`docs/TASKS_BULK_IMPORT_MULTI_MODEL.md` and `docs/PROMPTS_BULK_IMPORT_MULTI_MODEL.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

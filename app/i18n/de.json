@@ -307,7 +307,7 @@
   "prompt.runs_empty": "Noch keine Läufe — starte oben einen.",
   "prompt.version_label": "Version",
   "prompt.edit_title": "Prompt bearbeiten",
-  "prompt.edit_version_note": "Speichern erstellt Version {version} — die aktuelle Version bleibt unverändert, und jeder vergangene Lauf zeigt weiterhin genau den Text, mit dem er tatsächlich lief.",
+  "prompt.edit_version_note": "Eine Änderung an Text, Markt oder Thema erstellt beim Speichern Version {version} — die aktuelle Version bleibt unverändert, und jeder vergangene Lauf zeigt weiterhin genau den Text, mit dem er tatsächlich lief. Wird nur \"Aktiv\" umgeschaltet, bleibt es bei dieser Version.",
   "prompt.version_history_title": "Versionsverlauf",
   "prompt.version_current": "aktuell",
   "prompt.delete_button": "Löschen",

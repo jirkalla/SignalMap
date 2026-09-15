@@ -378,10 +378,24 @@ novou funkcionalitu:
 
 - **Hromadný import promptů** (CSV/XLSX upload) — dnes se prompty přidávají
   jednotlivě přes formulář.
+
+  ✅ **Implementováno mimo pořadí**, branch `feature/signalmap-bulk-import-multi-model`,
+  smergnuto 2026-09-15 (PR #12) — CSV/XLSX/JSON upload s preview krokem (duplicate detection,
+  per-řádkový trh) před uložením. Spolu s tím i menší, nezávislý kus multi-model run triggeru
+  (viz další bod) — oba popsané v `docs/TASKS_BULK_IMPORT_MULTI_MODEL.md`.
+
 - **"Study" koncept** — jeden setup krok spustí dávku runů najednou (více
   promptů × více modelů), místo dnešního jednoho runu (prompt × model ×
   market) najednou. Největší architektonická změna z celé diskuze — vlastní
   budoucí fáze, ne součást žádného kroku výše.
+
+  ⏳ **Pořád čeká na Scheduler infrastrukturu** (viz #5 výše) — appka dnes nemá žádný task
+  queue/`BackgroundTasks` mechanismus. Branch výše (2026-09-15) implementovala jen **stavební
+  kámen** směrem k tomuhle konceptu, ne "Study" samotný: umí spustit víc modelů paralelně pro
+  **jeden** prompt (checkboxy na run-trigger formuláři, `POST /prompts/{id}/runs` volané N-krát
+  z klienta) — ne dávku přes víc promptů najednou. Vědomě rozhodnuto v konverzaci 2026-09-14
+  nestavět "Study" dřív, než existuje Scheduler, aby se stejná infrastruktura nemusela stavět
+  dvakrát nezávisle.
 
 Z konverzace o client-scoped access (2026-09-13, viz #10 výše) vyplynula
 ještě jedna myšlenka, porovnaná a **vědomě odložená celá**, ne jen

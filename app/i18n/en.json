@@ -307,7 +307,7 @@
   "prompt.runs_empty": "No runs yet — trigger one above.",
   "prompt.version_label": "Version",
   "prompt.edit_title": "Edit prompt",
-  "prompt.edit_version_note": "Saving creates version {version} — the current version is kept exactly as-is, and every past run keeps showing the text it actually ran against.",
+  "prompt.edit_version_note": "Saving a change to the text, market, or topic creates version {version} — the current version is kept exactly as-is, and every past run keeps showing the text it actually ran against. Toggling only \"Active\" updates this same version instead of creating a new one.",
   "prompt.version_history_title": "Version history",
   "prompt.version_current": "current",
   "prompt.delete_button": "Delete",

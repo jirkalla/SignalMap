@@ -127,7 +127,10 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
 
 @router.get("/{prompt_id}/edit", dependencies=_editor_or_admin)
 def edit_prompt_form(request: Request, prompt_id: int, db: Session = Depends(get_db)):
-    """Render the prompt edit form. Saving creates version+1 — this row is never changed."""
+    """Render the prompt edit form. Saving a text/market/topic change creates version+1 — this
+    row is never changed for that. Toggling only `is_active` updates this same row in place
+    instead (see `update_prompt`'s docstring).
+    """
     prompt = _get_prompt_or_404(db, request, prompt_id)
     t = get_t(request)
     return render(
@@ -154,11 +157,16 @@ def update_prompt(
     is_active: bool = Form(False, description="Inactive prompts are kept for history but not offered for new runs."),
     db: Session = Depends(get_db),
 ):
-    """Save an edit as a new prompt version (FR-6's deferred edit UI, now built).
+    """Save an edit as a new prompt version (FR-6's deferred edit UI, now built) — but only when
+    the text, market, or topic actually changed.
 
-    The original row is never modified — a new row is inserted at
-    version+1 and the original is marked as no longer current, so every
-    past run still shows the exact text it actually ran against.
+    A new version exists so every past run keeps showing the exact text it actually ran
+    against — `Prompt.__doc__` already documents `is_active` as "a separate, user-controlled
+    concern... orthogonal to whether it's the current version," but this route didn't honor
+    that until now: saving the form with only the Active checkbox flipped used to create a new
+    version too, even though nothing about what a provider would be asked changes (found in
+    conversation, 2026-09-15 — a prompt ended up 4 versions deep from two is_active toggles with
+    identical text). Content unchanged now just flips `is_active` on the current row in place.
     """
     t = get_t(request)
     old = _get_prompt_or_404(db, request, prompt_id)
@@ -166,13 +174,22 @@ def update_prompt(
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
 
+    new_text = text.strip()
+    new_topic = topic.strip() or None
+    content_changed = new_text != old.text or market.id != old.market_id or new_topic != old.topic
+
+    if not content_changed:
+        old.is_active = is_active
+        db.commit()
+        return RedirectResponse(url=f"/prompts/{old.id}", status_code=303)
+
     new_prompt = Prompt(
         prompt_set_id=old.prompt_set_id,
         root_prompt_id=old.root_prompt_id or old.id,
         version=old.version + 1,
-        text=text.strip(),
+        text=new_text,
         market_id=market.id,
-        topic=topic.strip() or None,
+        topic=new_topic,
         is_active=is_active,
     )
     old.is_current_version = False

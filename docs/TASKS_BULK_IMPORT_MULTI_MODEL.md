@@ -536,7 +536,9 @@ Všech 177 testů (`pytest`) zelených po obou kolech, včetně nových testů n
 - [x] `pytest` sada zelená, pokrývá obě featury (177 testů, viz Code-review remediation výše)
 - [ ] Ověřeno na ~640px/~1024px/desktop šířce (obě featury) — zatím jen desktop, mobil/tablet
       nebyl v týhle branch ještě ručně ověřen
-- [ ] `docs/TASKS.md` — poznámka, že tahle branch existuje a co pokrývá (odkaz na tenhle
-      soubor) — až po sloučení, po potvrzení uživatele v prohlížeči (AI_INSTRUCTIONS.md §7)
-- [ ] `docs/ROADMAP.md` — poznámka u "Hromadný import promptů" / "Study" koncept, že import byl
-      vytažen mimo pořadí a implementován, multi-model run stejně — až po sloučení
+- [x] `docs/TASKS.md` — poznámka, že tahle branch existuje a co pokrývá (odkaz na tenhle
+      soubor) — hotovo po sloučení (PR #12, 2026-09-15), na výslovný pokyn uživatele
+      (ne po plném browser walkthroughu, jak plán původně počítal — viz řádek výše)
+- [x] `docs/ROADMAP.md` — poznámka u "Hromadný import promptů" / "Study" koncept, že import byl
+      vytažen mimo pořadí a implementován; "Study" koncept samotný zůstává neimplementovaný,
+      čeká na Scheduler — hotovo po sloučení, na výslovný pokyn uživatele
