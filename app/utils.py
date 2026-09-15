@@ -5,7 +5,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Market, Persona
+from app.models import Market, Persona, Prompt
 
 
 def market_options(db: Session) -> list[tuple[int, str]]:
@@ -16,6 +16,16 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     """
     markets = db.scalars(select(Market).order_by(Market.code)).all()
     return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
+
+
+def most_recent_prompt_market_id(db: Session, prompt_set_id: int) -> int | None:
+    """Market of the most recently created prompt in this set — used as the bulk-import form's
+    smart default, so re-importing into an existing (typically single-language) prompt set
+    doesn't force re-picking the same market every time. None for a brand-new, empty prompt set.
+    """
+    return db.scalar(
+        select(Prompt.market_id).where(Prompt.prompt_set_id == prompt_set_id).order_by(Prompt.created_at.desc()).limit(1)
+    )
 
 
 def persona_options(db: Session) -> list[tuple[int, str]]:
