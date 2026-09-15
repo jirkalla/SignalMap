@@ -406,6 +406,7 @@
   "errors.ai_model_in_use": "Für dieses Modell sind {count} Lauf/Läufe erfasst — es kann nicht gelöscht werden. Deaktiviere es stattdessen.",
   "errors.user_email_duplicate": "Ein Benutzer mit dieser E-Mail existiert bereits.",
   "errors.user_not_found": "Benutzer nicht gefunden.",
+  "errors.invalid_user_id": "user_id muss eine numerische Benutzer-ID oder \"scheduler\" sein.",
   "errors.user_cannot_deactivate_self": "Sie können Ihr eigenes Konto nicht deaktivieren.",
   "errors.user_cannot_change_own_role": "Sie können Ihre eigene Rolle nicht ändern.",
   "errors.invalid_role": "Keine gültige Rolle.",

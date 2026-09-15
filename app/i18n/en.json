@@ -406,6 +406,7 @@
   "errors.ai_model_in_use": "This model has {count} run(s) recorded against it and can't be deleted. Deactivate it instead.",
   "errors.user_email_duplicate": "A user with this email already exists.",
   "errors.user_not_found": "User not found.",
+  "errors.invalid_user_id": "user_id must be a numeric user id or \"scheduler\".",
   "errors.user_cannot_deactivate_self": "You can't deactivate your own account.",
   "errors.user_cannot_change_own_role": "You can't change your own role.",
   "errors.invalid_role": "Not a valid role.",
