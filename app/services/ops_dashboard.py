@@ -12,14 +12,15 @@ Aggregation is always SQL (GROUP BY/SUM/COUNT/AVG), never a Python loop over ful
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Literal
 
-from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
 from app.services.cost import run_cost_sql_expr
+from app.services.date_ranges import day_starts, month_starts, week_starts
 
 DailyGranularity = Literal["day", "week", "month"]
 
@@ -33,18 +34,34 @@ def _cost_expr():
     )
 
 
+def _classify_attribution(user_id: int | None, trigger_type: str) -> tuple[bool, bool]:
+    """(is_scheduler, is_unknown_attribution) for one run's `triggered_by_user_id`/`trigger_type`
+    (design decision 10, plus the unknown-attribution case found during T2) — the one place
+    `user_ops_rows` and `recent_runs` both derive this three-way split from, instead of each
+    re-deriving the same two boolean expressions independently (code review finding).
+    """
+    is_scheduler = user_id is None and trigger_type == "scheduled"
+    is_unknown_attribution = user_id is None and trigger_type != "scheduled"
+    return is_scheduler, is_unknown_attribution
+
+
 def ops_scoped_run_ids_query(
     date_from: datetime | None,
     date_to: datetime | None,
-    client_id: int | None,
-    prompt_set_id: int | None,
-    prompt_id: int | None,
-    user_id: int | None,
-    is_scheduler: bool,
+    *,
+    client_id: int | None = None,
+    prompt_set_id: int | None = None,
+    prompt_id: int | None = None,
+    user_id: int | None = None,
+    is_scheduler: bool = False,
 ) -> Select:
     """Select of in-scope `Run.id` values — every ops endpoint builds on this rather than repeating
     the date/client/prompt-set/prompt/user scoping independently, the same role
     `app.services.dashboard.scoped_run_ids_query` plays for the client-facing dashboard.
+
+    The filter params are keyword-only (code review finding): they're all `int | None`, and every
+    narrowing call site only sets one or two of them — positional calls previously had to pass
+    `None`/`False` for the rest, where two same-typed args could be transposed with no type error.
 
     `prompt_id` scopes to that prompt's *whole version lineage* (`root_prompt_id`), not just the
     exact row id — the same rollup `prompt_ops_rows`/`prompt_model_comparison_rows` already use, so
@@ -102,25 +119,26 @@ def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
     computable cost, or zero finished runs (an excluded 'pending' run never reaches here in the
     first place, per `ops_scoped_run_ids_query`, but the guard costs nothing and matches this
     module's "never assume a count is nonzero" discipline elsewhere).
+
+    One round trip, not three (code review finding) — `AIModel` is a required FK on `Run` and
+    `RawResponse` is unique per `run_id`, so joining both here doesn't change the row count per Run,
+    and all four aggregates can share the one join. `AVG()` skips SQL NULL `latency_ms` values on
+    its own, same relied-on Postgres behavior `avg_share_of_voice` (app/services/dashboard.py)
+    already documents — no extra `IS NOT NULL` filter needed to get a correct average.
     """
-    success_count, error_count = db.execute(
+    success_count, error_count, total_cost, avg_latency = db.execute(
         select(
             func.count(Run.id).filter(Run.status == "success"),
             func.count(Run.id).filter(Run.status == "error"),
-        ).where(Run.id.in_(run_ids_query))
-    ).one()
-    runs_count = success_count + error_count
-
-    total_cost = db.scalar(
-        select(func.sum(_cost_expr()))
+            func.sum(_cost_expr()),
+            func.avg(Run.latency_ms),
+        )
         .select_from(Run)
         .join(AIModel, Run.model_id == AIModel.id)
         .outerjoin(RawResponse, RawResponse.run_id == Run.id)
         .where(Run.id.in_(run_ids_query))
-    )
-    avg_latency = db.scalar(
-        select(func.avg(Run.latency_ms)).where(Run.id.in_(run_ids_query), Run.latency_ms.is_not(None))
-    )
+    ).one()
+    runs_count = success_count + error_count
 
     return OpsSummary(
         runs_count=runs_count,
@@ -143,35 +161,6 @@ def daily_granularity(range_: str) -> DailyGranularity:
     return "month"
 
 
-def _day_starts(date_from: date, date_to: date) -> list[date]:
-    days, current = [], date_from
-    while current <= date_to:
-        days.append(current)
-        current += timedelta(days=1)
-    return days
-
-
-def _week_starts(date_from: date, date_to: date) -> list[date]:
-    start = date_from - timedelta(days=date_from.weekday())
-    end = date_to - timedelta(days=date_to.weekday())
-    weeks, current = [], start
-    while current <= end:
-        weeks.append(current)
-        current += timedelta(days=7)
-    return weeks
-
-
-def _month_starts(date_from: date, date_to: date) -> list[date]:
-    months, current = [], date_from.replace(day=1)
-    end = date_to.replace(day=1)
-    while current <= end:
-        months.append(current)
-        current = current.replace(year=current.year + 1, month=1) if current.month == 12 else current.replace(
-            month=current.month + 1
-        )
-    return months
-
-
 def resolve_daily_bounds(
     db: Session, run_ids_query: Select, date_from: datetime | None, date_to: datetime | None, granularity: DailyGranularity
 ) -> list[date]:
@@ -179,6 +168,10 @@ def resolve_daily_bounds(
     to the actual min/max `Run.started_at` in scope for whichever side is open-ended (range="all"),
     same fallback `app.services.dashboard.resolve_week_range` uses. Empty when there's no data and
     no bound to fall back on.
+
+    `day_starts`/`week_starts`/`month_starts` (app.services.date_ranges, code review finding) are
+    shared with app.services.dashboard's own week-bucketing — one definition per granularity, not
+    an independently-maintained copy per dashboard.
     """
     effective_from, effective_to = date_from, date_to
     if effective_from is None or effective_to is None:
@@ -192,10 +185,10 @@ def resolve_daily_bounds(
 
     from_date, to_date = effective_from.date(), effective_to.date()
     if granularity == "day":
-        return _day_starts(from_date, to_date)
+        return day_starts(from_date, to_date)
     if granularity == "week":
-        return _week_starts(from_date, to_date)
-    return _month_starts(from_date, to_date)
+        return week_starts(from_date, to_date)
+    return month_starts(from_date, to_date)
 
 
 def daily_values(db: Session, run_ids_query: Select, granularity: DailyGranularity) -> dict[date, tuple[int, int]]:
@@ -343,8 +336,7 @@ def user_ops_rows(db: Session, run_ids_query: Select) -> list[UserOpsRow]:
 
     result = []
     for user_id, trigger_type, name, runs_count, error_count, total_cost in rows:
-        is_scheduler = user_id is None and trigger_type == "scheduled"
-        is_unknown_attribution = user_id is None and trigger_type != "scheduled"
+        is_scheduler, is_unknown_attribution = _classify_attribution(user_id, trigger_type)
         result.append(
             UserOpsRow(
                 user_id=user_id,
@@ -419,45 +411,34 @@ def prompt_ops_rows(db: Session, db_prompt_set_id: int, run_ids_query: Select) -
     given historical `Run.prompt_id` actually points at. Same "only entities with in-scope activity
     appear" behavior as `prompt_set_ops_rows` — a lineage with zero in-scope runs is omitted, not
     shown as a zero row.
+
+    One query, not two (code review finding): a second `Prompt` alias (`current`), joined on "same
+    lineage, is the current version", supplies the row's displayed `text`/`topic`/`id` directly
+    alongside the aggregate, instead of a separate follow-up `SELECT` against `Prompt` to look up
+    that same information for each lineage found by the first query.
     """
     lineage_key = func.coalesce(Prompt.root_prompt_id, Prompt.id)
+    current = aliased(Prompt)
+    current_lineage_key = func.coalesce(current.root_prompt_id, current.id)
     cost_expr = _cost_expr()
 
     rows = db.execute(
-        select(lineage_key, func.count(Run.id), func.sum(cost_expr))
+        select(current.id, current.text, current.topic, func.count(Run.id), func.sum(cost_expr))
         .select_from(Run)
         .join(Prompt, Run.prompt_id == Prompt.id)
         .join(AIModel, Run.model_id == AIModel.id)
         .outerjoin(RawResponse, RawResponse.run_id == Run.id)
+        .join(current, and_(current_lineage_key == lineage_key, current.is_current_version.is_(True)))
         .where(Run.id.in_(run_ids_query), Prompt.prompt_set_id == db_prompt_set_id)
-        .group_by(lineage_key)
+        .group_by(current.id, current.text, current.topic)
+        .order_by(func.sum(cost_expr).desc().nulls_last(), current.text.asc())
     ).all()
-    totals_by_root = {row[0]: (row[1], row[2]) for row in rows}
-    if not totals_by_root:
-        return []
-
-    current_versions = db.scalars(
-        select(Prompt).where(
-            Prompt.prompt_set_id == db_prompt_set_id,
-            Prompt.is_current_version.is_(True),
-            lineage_key.in_(totals_by_root.keys()),
+    return [
+        PromptOpsRow(
+            prompt_id=row[0], text=row[1], topic=row[2], runs_count=row[3], total_cost_usd=float(row[4]) if row[4] is not None else None
         )
-    ).all()
-
-    result = []
-    for current in current_versions:
-        runs_count, total_cost = totals_by_root[current.root_prompt_id or current.id]
-        result.append(
-            PromptOpsRow(
-                prompt_id=current.id,
-                text=current.text,
-                topic=current.topic,
-                runs_count=runs_count,
-                total_cost_usd=float(total_cost) if total_cost is not None else None,
-            )
-        )
-    result.sort(key=lambda r: (r.total_cost_usd is None, -(r.total_cost_usd or 0)))
-    return result
+        for row in rows
+    ]
 
 
 @dataclass
@@ -559,20 +540,23 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
         )
 
     rows = db.execute(query).all()
-    return [
-        RecentRunRow(
-            run_id=row.Run.id,
-            started_at=row.Run.started_at,
-            model_name=row.AIModel.model_name,
-            status=row.Run.status,
-            latency_ms=row.Run.latency_ms,
-            cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel),
-            error_message=row.Run.error_message,
-            triggered_by_user_id=row.Run.triggered_by_user_id,
-            triggered_by_user_name=row.User.name if row.User else None,
-            is_scheduler=row.Run.triggered_by_user_id is None and row.Run.trigger_type == "scheduled",
-            is_unknown_attribution=row.Run.triggered_by_user_id is None and row.Run.trigger_type != "scheduled",
-            client_name=row.client_name if with_client_name else None,
+    result = []
+    for row in rows:
+        is_scheduler, is_unknown_attribution = _classify_attribution(row.Run.triggered_by_user_id, row.Run.trigger_type)
+        result.append(
+            RecentRunRow(
+                run_id=row.Run.id,
+                started_at=row.Run.started_at,
+                model_name=row.AIModel.model_name,
+                status=row.Run.status,
+                latency_ms=row.Run.latency_ms,
+                cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel),
+                error_message=row.Run.error_message,
+                triggered_by_user_id=row.Run.triggered_by_user_id,
+                triggered_by_user_name=row.User.name if row.User else None,
+                is_scheduler=is_scheduler,
+                is_unknown_attribution=is_unknown_attribution,
+                client_name=row.client_name if with_client_name else None,
+            )
         )
-        for row in rows
-    ]
+    return result

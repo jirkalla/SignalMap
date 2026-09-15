@@ -3,7 +3,7 @@
 history, and lets it be edited — as a new version, never in place (NFR-6).
 """
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -102,14 +102,26 @@ def _delete_prompt_lineage(db: Session, versions: list[Prompt]) -> None:
 
 
 @router.get("/{prompt_id}")
-def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db)):
+def prompt_detail(
+    request: Request,
+    prompt_id: int,
+    scope: str | None = Query(
+        None,
+        description="Pass 'lineage' to list runs against every version of this prompt, not just this "
+        "exact version — used by the ops dashboard's \"view all runs\" link (code review finding: it "
+        "otherwise linked here while showing lineage-wide totals above the link) so the two agree. "
+        "Omitted or any other value: today's default, this exact version's own runs only.",
+    ),
+    db: Session = Depends(get_db),
+):
     """Show one prompt: its text/market/topic, a run-trigger form, past runs, and version history (FR-7, FR-15)."""
     prompt = _get_prompt_or_404(db, request, prompt_id)
     model_groups = _runnable_model_groups(db)
-    runs = db.scalars(
-        select(Run).where(Run.prompt_id == prompt_id).order_by(Run.started_at.desc())
-    ).all()
     versions = _version_history(db, prompt)
+    run_prompt_ids = [v.id for v in versions] if scope == "lineage" and len(versions) > 1 else [prompt_id]
+    runs = db.scalars(
+        select(Run).where(Run.prompt_id.in_(run_prompt_ids)).order_by(Run.started_at.desc())
+    ).all()
     return render(
         request,
         "prompts/detail.html",

@@ -106,7 +106,13 @@ def _ops_scope(
     date_from, date_to = range_bounds(range)
     resolved_user_id, is_scheduler = _resolve_user_filter(request, user_id)
     run_ids_query = ops_service.ops_scoped_run_ids_query(
-        date_from, date_to, client_id, prompt_set_id, prompt_id, resolved_user_id, is_scheduler
+        date_from,
+        date_to,
+        client_id=client_id,
+        prompt_set_id=prompt_set_id,
+        prompt_id=prompt_id,
+        user_id=resolved_user_id,
+        is_scheduler=is_scheduler,
     )
     return OpsScope(
         run_ids_query=run_ids_query,
@@ -244,9 +250,7 @@ def ops_prompt_sets(
     first level of the client/prompt-set/prompt drill-down (design decision 3).
     """
     _get_client_or_404(db, request, client_id)
-    narrowed = ops_service.ops_scoped_run_ids_query(
-        scope.date_from, scope.date_to, client_id, None, None, None, False
-    )
+    narrowed = ops_service.ops_scoped_run_ids_query(scope.date_from, scope.date_to, client_id=client_id)
     return [OpsPromptSetRow(**vars(row)) for row in ops_service.prompt_set_ops_rows(db, narrowed)]
 
 
@@ -269,9 +273,7 @@ def ops_prompts(
     run, ranked by total cost — the second level of the drill-down.
     """
     _get_prompt_set_or_404(db, request, prompt_set_id)
-    narrowed = ops_service.ops_scoped_run_ids_query(
-        scope.date_from, scope.date_to, None, prompt_set_id, None, None, False
-    )
+    narrowed = ops_service.ops_scoped_run_ids_query(scope.date_from, scope.date_to, prompt_set_id=prompt_set_id)
     return [OpsPromptRow(**vars(row)) for row in ops_service.prompt_ops_rows(db, prompt_set_id, narrowed)]
 
 
@@ -306,7 +308,11 @@ class OpsPromptDetailResponse(BaseModel):
 
     prompt_id: int
     prompt_text: str
-    runs_url: str = Field(..., description="Link to the existing full run-list page for this prompt.")
+    runs_url: str = Field(
+        ...,
+        description="Link to the existing full run-list page for this prompt, with ?scope=lineage so it "
+        "shows every version's runs — matching this endpoint's own lineage-wide totals above it.",
+    )
     models: list[OpsModelComparisonRow]
     recent_runs: list[OpsRecentRun]
 
@@ -327,6 +333,11 @@ def ops_prompt_detail(
     endpoint's numbers always agree with `/api/summary?prompt_id=X`'s (a prior version of this
     endpoint built its own separate lineage-scoped query here, which silently disagreed with
     `/api/summary`'s exact-prompt-id-only scoping — found by exercising the T3 UI against real data).
+
+    `runs_url` carries `?scope=lineage` (code review finding): `/prompts/{id}` on its own only ever
+    lists that exact version's runs, which would silently undercount against this endpoint's own
+    lineage-wide totals for any prompt with edit history — the query param makes the two agree
+    without changing `/prompts/{id}`'s default behavior for its other, non-ops callers.
     """
     prompt = _get_prompt_or_404(db, request, prompt_id)
     models = ops_service.prompt_model_comparison_rows(db, scope.run_ids_query)
@@ -334,7 +345,7 @@ def ops_prompt_detail(
     return OpsPromptDetailResponse(
         prompt_id=prompt.id,
         prompt_text=prompt.text,
-        runs_url=f"/prompts/{prompt.id}",
+        runs_url=f"/prompts/{prompt.id}?scope=lineage",
         models=[OpsModelComparisonRow(**vars(row)) for row in models],
         recent_runs=[
             OpsRecentRun(
@@ -406,7 +417,7 @@ def ops_user_detail(
         user_name = user.name
 
     narrowed = ops_service.ops_scoped_run_ids_query(
-        scope.date_from, scope.date_to, None, None, None, resolved_user_id, is_scheduler
+        scope.date_from, scope.date_to, user_id=resolved_user_id, is_scheduler=is_scheduler
     )
     by_client = ops_service.client_ops_rows(db, narrowed)
     runs = ops_service.recent_runs(db, narrowed, with_client_name=True)

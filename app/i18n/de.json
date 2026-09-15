@@ -517,5 +517,9 @@
   "ops.view_all_runs_link": "Alle Läufe anzeigen →",
   "ops.scheduler_label": "Scheduler",
   "ops.unknown_attribution_label": "Unbekannt (vor Erfassung)",
-  "ops.prompt_text_label": "Prompt-Text"
+  "ops.prompt_text_label": "Prompt-Text",
+  "ops.status_ok": "OK",
+  "ops.status_success": "Erfolg",
+  "ops.status_error": "Fehler",
+  "ops.load_error_prefix": "Diese Ansicht konnte nicht geladen werden:"
 }

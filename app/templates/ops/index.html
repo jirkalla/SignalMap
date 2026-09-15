@@ -15,6 +15,12 @@
     </div>
   </div>
 
+  {# Error banner — a failed /ops/api/* request (session expired, transient 500) surfaces here
+     instead of silently rendering garbled/NaN tiles from a swallowed error (code review finding). #}
+  <div v-if="loadError" class="bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-lg px-4 py-3 mb-4">
+    {{ t('ops.load_error_prefix') }} [[ loadError ]]
+  </div>
+
   {# Breadcrumb — client/prompt-set/prompt axis and the independent user axis (design decision 3).
      Only Vue state changes on click, never a page reload (kritické requirement). #}
   <nav class="flex items-center gap-1.5 text-xs text-stone-500 mb-5 flex-wrap">
@@ -345,6 +351,9 @@
   const successRateOkLabel = {{ t('ops.kpi_success_rate_sub_ok') | tojson }};
   const schedulerLabel = {{ t('ops.scheduler_label') | tojson }};
   const unknownAttributionLabel = {{ t('ops.unknown_attribution_label') | tojson }};
+  const statusOkLabel = {{ t('ops.status_ok') | tojson }};
+  const statusSuccessLabel = {{ t('ops.status_success') | tojson }};
+  const statusErrorLabel = {{ t('ops.status_error') | tojson }};
   const rangeLabels = {
     '7d': {{ t('ops.range_7d') | tojson }},
     '30d': {{ t('ops.range_30d') | tojson }},
@@ -370,6 +379,7 @@
       });
 
       const loading = ref(false);
+      const loadError = ref(null);
       const summary = ref(null);
       const daily = ref({ granularity: 'day', points: [] });
       const providers = ref([]);
@@ -388,11 +398,33 @@
 
       async function fetchJson(path, params) {
         const res = await fetch(path + '?' + params.toString());
+        if (!res.ok) {
+          // A failed request's structured error body ({error_code, message, detail}) must never be
+          // returned as if it were valid data (code review finding) — the caller would otherwise
+          // assign it straight into e.g. summary.value and render garbled/NaN KPI tiles instead of
+          // surfacing the failure.
+          let message = res.status + ' ' + res.statusText;
+          try {
+            const body = await res.json();
+            if (body && body.message) message = body.message;
+          } catch (parseErr) {
+            // body wasn't JSON (e.g. a proxy error page) — fall back to the status line above.
+          }
+          throw new Error(message);
+        }
         return res.json();
       }
 
+      // Bumped at the start of every fetchAll() run; a run only applies its results if it's still
+      // the most recent one when its requests resolve (code review finding) — otherwise a slower,
+      // now-stale response (e.g. from a drill-down the admin already clicked past) could overwrite
+      // newer state with the wrong prompt's/client's numbers.
+      let fetchGeneration = 0;
+
       async function fetchAll() {
+        const generation = ++fetchGeneration;
         loading.value = true;
+        loadError.value = null;
         try {
           if (drill.level === 'global') {
             const p = baseParams();
@@ -403,6 +435,7 @@
               fetchJson('/ops/api/clients', p),
               fetchJson('/ops/api/users', p),
             ]);
+            if (generation !== fetchGeneration) return;
             summary.value = s; daily.value = d; providers.value = pr; clients.value = c; users.value = u;
           } else if (drill.level === 'client') {
             const p = baseParams(); p.set('client_id', drill.clientId);
@@ -411,6 +444,7 @@
               fetchJson('/ops/api/daily', p),
               fetchJson('/ops/api/prompt-sets', p),
             ]);
+            if (generation !== fetchGeneration) return;
             summary.value = s; daily.value = d; promptSets.value = ps;
           } else if (drill.level === 'set') {
             const p = baseParams(); p.set('prompt_set_id', drill.promptSetId);
@@ -418,6 +452,7 @@
               fetchJson('/ops/api/summary', p),
               fetchJson('/ops/api/prompts', p),
             ]);
+            if (generation !== fetchGeneration) return;
             summary.value = s; prompts.value = pr;
           } else if (drill.level === 'prompt') {
             const p = baseParams(); p.set('prompt_id', drill.promptId);
@@ -425,6 +460,7 @@
               fetchJson('/ops/api/summary', p),
               fetchJson('/ops/api/prompt-detail', p),
             ]);
+            if (generation !== fetchGeneration) return;
             summary.value = s; promptDetail.value = pd;
           } else if (drill.level === 'user') {
             const p = baseParams(); p.set('user_id', drill.isScheduler ? 'scheduler' : drill.userId);
@@ -433,9 +469,13 @@
               fetchJson('/ops/api/daily', p),
               fetchJson('/ops/api/user-detail', p),
             ]);
+            if (generation !== fetchGeneration) return;
             summary.value = s; daily.value = d; userDetail.value = ud;
           }
+        } catch (err) {
+          if (generation === fetchGeneration) loadError.value = err.message || String(err);
         } finally {
+          if (generation !== fetchGeneration) return;
           loading.value = false;
         }
       }
@@ -465,21 +505,29 @@
         return v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
       }
       function fmtDate(iso) {
+        // A date-only string ("2026-09-15", e.g. OpsDailyPoint.bucket_start) parses as UTC midnight
+        // per the JS Date spec, but a datetime string (e.g. Run.started_at, which always carries an
+        // explicit UTC offset) should display in the viewer's own local time — pinning both to the
+        // same toLocaleDateString call without accounting for this shifted date-only values by a day
+        // for any viewer west of UTC (code review finding).
+        const isDateOnly = iso.length === 10 && !iso.includes('T');
         const d = new Date(iso);
-        return d.toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', { month: 'short', day: 'numeric' })
-          + ' ' + d.toLocaleTimeString(locale === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+        const localeCode = locale === 'de' ? 'de-DE' : 'en-US';
+        const dateStr = d.toLocaleDateString(localeCode, { month: 'short', day: 'numeric', timeZone: isDateOnly ? 'UTC' : undefined });
+        if (isDateOnly) return dateStr;
+        return dateStr + ' ' + d.toLocaleTimeString(localeCode, { hour: '2-digit', minute: '2-digit' });
       }
       function truncate(text, n) { return text.length > n ? text.slice(0, n) + '…' : text; }
 
       function statusLabel(errorCount) {
         return errorCount > 0
           ? '<span class="inline-flex items-center gap-1 text-rose-600 font-medium">' + errorCount + ' ' + errorCountSuffix + '</span>'
-          : '<span class="inline-flex items-center gap-1 text-emerald-600 font-medium">OK</span>';
+          : '<span class="inline-flex items-center gap-1 text-emerald-600 font-medium">' + statusOkLabel + '</span>';
       }
       function runStatusLabel(status) {
         return status === 'success'
-          ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">success</span>'
-          : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-800">error</span>';
+          ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">' + statusSuccessLabel + '</span>'
+          : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-800">' + statusErrorLabel + '</span>';
       }
       function userRowLabel(row) {
         if (row.is_scheduler) return schedulerLabel;
@@ -520,7 +568,7 @@
         const step = Math.max(1, Math.ceil(bars.length / maxLabels));
         return bars
           .filter((b, i) => i % step === 0 || i === bars.length - 1)
-          .map((b) => ({ x: b.x + b.barW / 2, label: fmtDate(b.bucket).split(' ')[0] }));
+          .map((b) => ({ x: b.x + b.barW / 2, label: fmtDate(b.bucket) }));
       });
 
       // Provider cost horizontal bar chart — global level only.
@@ -545,7 +593,7 @@
       });
 
       return {
-        ranges, filters, drill, loading, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
+        ranges, filters, drill, loading, loadError, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
         noData, errorCountSuffix, successRateOkLabel,
         goGlobal, goClient, goSet, goPrompt, goUser,
         fmtInt, fmtCost, fmtMs, fmtDate, truncate,

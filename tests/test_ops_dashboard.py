@@ -264,7 +264,7 @@ def test_prompt_detail_model_comparison_and_recent_runs(authed_client: TestClien
     assert detail["models"][0]["model_name"] == seed["model"].model_name
     assert detail["models"][0]["runs_count"] == 2
     assert detail["models"][0]["success_rate_pct"] == 50.0
-    assert detail["runs_url"] == f"/prompts/{prompt.id}"
+    assert detail["runs_url"] == f"/prompts/{prompt.id}?scope=lineage"
 
     runs_by_status = {r["status"]: r for r in detail["recent_runs"]}
     assert runs_by_status["success"]["triggered_by_user_name"] == admin_user.name
