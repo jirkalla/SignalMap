@@ -421,6 +421,7 @@
   "dashboard.filter_market_all": "All markets",
   "dashboard.filter_provider": "Provider",
   "dashboard.filter_provider_all": "All providers",
+  "dashboard.range_7d": "Last 7 days",
   "dashboard.range_30d": "Last 30 days",
   "dashboard.range_90d": "Last 90 days",
   "dashboard.range_quarter": "This quarter",

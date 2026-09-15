@@ -31,7 +31,7 @@ from app.models import (
 )
 from app.utils import is_own_domain, normalize_domain
 
-DashboardRange = Literal["30d", "90d", "quarter", "all"]
+DashboardRange = Literal["7d", "30d", "90d", "quarter", "all"]
 DashboardMetric = Literal["citations", "runs", "own_rate", "share_of_voice", "position"]
 
 
@@ -40,6 +40,8 @@ def range_bounds(range_: DashboardRange) -> tuple[datetime | None, datetime | No
     now = datetime.now(timezone.utc)
     if range_ == "all":
         return None, None
+    if range_ == "7d":
+        return now - timedelta(days=7), now
     if range_ == "30d":
         return now - timedelta(days=30), now
     if range_ == "90d":
