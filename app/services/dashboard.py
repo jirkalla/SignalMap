@@ -7,6 +7,9 @@ Every function here is read-only: aggregates existing citations/runs/raw_respons
 analysis_results, writes nothing. `own_domain_rate`/`weekly_values`'s own_rate metric are the one
 figures that reuse another layer's output (the `mention_visibility` result from phase 3) rather
 than recomputing domain matching themselves — see design decision 6.
+
+`DashboardRange`/`range_bounds` live in `app.services.date_ranges` (docs/TASKS_OPS_DASHBOARD.md T1)
+and are re-exported here so this module's own callers don't need to change their import.
 """
 
 from dataclasses import dataclass
@@ -29,28 +32,12 @@ from app.models import (
     RawResponse,
     Run,
 )
+from app.services.date_ranges import DashboardRange, range_bounds
 from app.utils import is_own_domain, normalize_domain
 
-DashboardRange = Literal["7d", "30d", "90d", "quarter", "all"]
+__all__ = ["DashboardRange", "range_bounds"]  # re-exported: app/routers/dashboard.py imports both from here
+
 DashboardMetric = Literal["citations", "runs", "own_rate", "share_of_voice", "position"]
-
-
-def range_bounds(range_: DashboardRange) -> tuple[datetime | None, datetime | None]:
-    """Translate a range shorthand into (date_from, date_to) bounds. `None, None` means "all time"."""
-    now = datetime.now(timezone.utc)
-    if range_ == "all":
-        return None, None
-    if range_ == "7d":
-        return now - timedelta(days=7), now
-    if range_ == "30d":
-        return now - timedelta(days=30), now
-    if range_ == "90d":
-        return now - timedelta(days=90), now
-    # "quarter": start of the current calendar quarter, not a rolling 90-day window — distinct from
-    # "90d" even though the two are close in length most of the year.
-    quarter_start_month = ((now.month - 1) // 3) * 3 + 1
-    quarter_start = now.replace(month=quarter_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
-    return quarter_start, now
 
 
 def previous_range_bounds(date_from: datetime | None, date_to: datetime | None) -> tuple[datetime, datetime] | None:
