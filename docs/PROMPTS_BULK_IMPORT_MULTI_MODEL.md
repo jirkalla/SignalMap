@@ -419,4 +419,18 @@ Po dokončení:
 test: cover bulk prompt import parsing, validation, and confirm flow
 ```
 
+### DONE — commit 4f6540b
+
+---
+---
+
+## Po BIM-1..9: code-review remediation (mimo tento prompt-per-task workflow)
+
+Po dokončení všech devíti promptů proběhla na branch dvě nezávislá kola `/code-review`
+(2026-09-14 a 2026-09-15) přímo v konverzaci, ne přes samostatný BIM-N prompt — nálezy a opravy
+jsou zdokumentované v `docs/TASKS_BULK_IMPORT_MULTI_MODEL.md`, sekce "Code-review remediation",
+včetně commit hashů. BIM-8/BIM-9 nemají vlastní PROMPT sekce v tomhle souboru (byly odbavené
+reaktivně po ručním testu BIM-5, ne přes připravený prompt) — jejich zdůvodnění a "Po dokončení"
+kroky jsou přímo v `docs/TASKS_BULK_IMPORT_MULTI_MODEL.md`.
+
 ### DONE — written 2026-09-14, not yet committed

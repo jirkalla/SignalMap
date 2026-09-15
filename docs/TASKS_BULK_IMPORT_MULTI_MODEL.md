@@ -481,19 +481,61 @@ feat(prompts): add a downloadable CSV/XLSX/JSON template for bulk import
 
 ---
 
+## Code-review remediation (2026-09-14 / 2026-09-15)
+
+Po dokončení BIM-T1–T9 proběhla na téhle branch **dvě nezávislá kola** multi-agent code review
+(`/code-review`, `--focus security,dry`), obě odsouhlasená a odpracovaná v konverzaci. Žádný
+z těchto nálezů nemění schéma ani přidává novou route — jde o opravy v rámci existující
+architektury BIM-T1–T9, proto dokumentované tady jako dodatek, ne jako nové BIM-T úkoly.
+
+### Kolo 1 (2026-09-14) — 10 nálezů + 1 bug nalezený při psaní testů
+
+| Nález | Oprava | Commit |
+|---|---|---|
+| Race condition: dva souběžné triggery na stejný prompt+model můžou oba projít SELECT kontrolou | Alembic migrace 0024 (partial unique index `idx_runs_one_pending_per_prompt_model`), zrcadlený na ORM úrovni (`app/models/run.py` `__table_args__`) — bez ORM zrcadlení by test DB (`Base.metadata.create_all`, ne Alembic) constraint neviděla | `efafef5` |
+| `AIModel.is_active` nebyl na `trigger_run` serverově vynucený (jen UI filtr) | Přidána kontrola `if not model.is_active: raise AppError(...)` | `efafef5` |
+| CSV kontrola počtu polí (`!=`) omylem odmítala i legitimně krátké řádky (chybějící volitelné sloupce) | Změněno na `>` — jen přebytečná pole se flagují | `c3c690d` |
+| XLSX nemělo obdobu CSV's field-count-mismatch kontroly | Nová kontrola založená na skutečných hodnotách za hlavičkou, ne na syrové délce tuple (viz další řádek) | `c3c690d` |
+| **Bonus bug nalezený při psaní testu k předchozímu řádku:** `openpyxl.iter_rows` doplňuje i hlavičkový řádek na šířku nejširšího řádku v listu — `len(header)` tak skryje shodu přesně u nejrealističtějšího případu (řádek se zaběhlou hodnotou je zároveň nejširší řádek) | Hranice teď počítaná z nejvyššího indexu, který skutečně zabírá pojmenovaný sloupec hlavičky (`header_width`), ne ze syrové (vycpané) délky | `c3c690d` |
+| `MAX_IMPORT_ROWS` se kontroloval až po naparsování celého souboru | Kontrola přesunuta do smyčky každého parseru (později v kole 2 sloučena do jedné sdílené funkce) | `c3c690d` |
+| Chybové hlášky u řádků (`error_message`) byly natvrdo anglicky, šablona je tiskla přímo — **AI_INSTRUCTIONS.md §3 porušení** | `error_code`/`error_context` na `ParsedPromptRow`, šablona resolvuje přes `t('prompt_import.row_error_' ~ error_code)` | `c3c690d` |
+| `import_prompts_preview` četlo celý upload do paměti před kontrolou velikosti | `file.file.read(MAX_IMPORT_FILE_BYTES + 1)` — nikdy nenačte víc než 1 byte za limitem | `c3c690d` |
+| `import_prompts_confirm` bez cap na počet řádků (šlo obejít preview přímým POSTem) | Stejný `MAX_IMPORT_ROWS` check jako preview | `c3c690d` |
+| Duplicitní `_normalize_text` (privátní) používaná jen uvnitř modulu | Přejmenováno na veřejné `normalize_prompt_text`, reuse v `import_prompts_confirm` pro duplicate re-check | `c3c690d` |
+| Locale-switch odkazy (`base.html`) stavěly `next` z `request.url.path` bezpodmínečně — 405 na kterékoliv z ~14 stránek renderovaných přímo z POST handleru (bulk-import preview mezi nimi) | `_locale_switch_next()` (`app/templating.py`) — na GET stránce beze změny, na POST-rendered stránce fallback na `Referer` hlavičku toho POST requestu, `/clients` jako poslední záchrana | `617b1a3` |
+
+### Kolo 2 (2026-09-15) — 9 nálezů, 8 opraveno, 1 vědomě odloženo
+
+| Nález | Oprava | Commit |
+|---|---|---|
+| `except IntegrityError` na `trigger_run` chytal i nesouvisející FK violation (např. smazaný model/market/persona v race) a hlásil to jako "run already pending", skutečná výjimka se nikam nelogovala | Rozlišeno podle `exc.orig.diag.constraint_name` — jen shoda s `idx_runs_one_pending_per_prompt_model` dá "already pending", cokoliv jiného se zaloguje a vrátí jako nový `run_creation_failed` | `35f5cdc` |
+| Confirm-time duplicate re-check (kolo 1) tiše zahazoval i řádek, co uživatel **záměrně** zaškrtl navzdory `duplicate` statusu z preview (design decision 11) | Preview form teď posílá i původní `status` řádku (hidden pole); confirm rozlišuje "uživatel chtěl duplicitu záměrně" (importuje) od "stala se duplicitou až od preview" (přeskočí) | `35f5cdc` |
+| `int(market_id_raw)` nemá horní limit — přetečené-ale-číselné `market_id` (např. zfalšovaný request) dosáhlo `db.get()` a spadlo na `DataError`, ne `ValueError`, což byl nezachycený 500 | `market_id` se validuje proti rozsahu Postgres int4 ještě před dotazem do DB | `35f5cdc` |
+| Duplicitní `existing_texts_by_market`/`existing_texts()` closure — stejná v `prompt_import.py` i `prompt_sets.py` | Sloučeno do `build_existing_texts_lookup()` (`app/services/prompt_import.py`), používá ji preview i confirm | `35f5cdc` |
+| `MAX_IMPORT_ROWS` kontrola kopírovaná 3× (jednou na parser) | Sloučeno do `_append_row()` | `35f5cdc` |
+| Docstring `parse_json` tvrdil, že cap se kontroluje "dřív, než se celý soubor naparsuje" — u JSON to neplatí (`json.loads` musí přečíst celé pole najednou) | Opraven jen docstring — skutečná oprava (streamovací JSON parser) by byla neúměrná vzhledem k existujícímu 2MB limitu na velikost souboru | `35f5cdc` |
+| Status pilulka (`new`/`duplicate`/`error`) v `import_preview.html` ručně duplikovala `status_badge` makro z `partials/macros.html` | Makro rozšířené o volitelný `label` parametr (zpětně kompatibilní), `import_preview.html` ho teď reuse | `35f5cdc` |
+| `import_prompts_confirm` byl `async def` (kvůli `await request.form()`), ale dělal synchronní `Session` volání přímo na event loopu — jediná route v appce s tímhle vzorem, v rozporu s konvencí zdokumentovanou v `app/database.py` | Tělo přesunuté do nové `_confirm_import_rows()`, volané přes `run_in_threadpool` | `4de3753` |
+| Locale-switch fallback (kolo 1) na `Referer` hlavičku není 100% spolehlivý (striktní Referrer-Policy, privacy rozšíření) | **Vědomě neopraveno** — i nespolehlivý fallback je striktně lepší než předchozí tvrdá 405 chyba; robustnější řešení (explicitní `?next=` parametr přes ~14 šablon) by bylo neúměrné vzhledem k tomu, jak okrajový je tenhle scénář | — |
+
+Všech 177 testů (`pytest`) zelených po obou kolech, včetně nových testů na každý opravený nález.
+
+---
+
 ## Completion Checklist
 
-- [ ] Duplicate-run guard rozšířený na (prompt_id, model_id) — různé modely běží souběžně,
+- [x] Duplicate-run guard rozšířený na (prompt_id, model_id) — různé modely běží souběžně,
       stejný model dvakrát pořád blokovaný
-- [ ] Multi-model checkboxy fungují, spouští paralelně, historie runů ukazuje všechny nové běhy
-- [ ] CSV/XLSX/JSON import — parsing, validace, duplicate detekce, preview, confirm
-- [ ] Bulk import respektuje limity (max řádků, max velikost souboru), kódovací edge case
+- [x] Multi-model checkboxy fungují, spouští paralelně, historie runů ukazuje všechny nové běhy
+- [x] CSV/XLSX/JSON import — parsing, validace, duplicate detekce, preview, confirm
+- [x] Bulk import respektuje limity (max řádků, max velikost souboru), kódovací edge case
       (cp1252/BOM) nerozbíjí text
-- [ ] CSV se středníkem i čárkou se naparsuje správně; řádek s neuvozenou čárkou v textu je
+- [x] CSV se středníkem i čárkou se naparsuje správně; řádek s neuvozenou čárkou v textu je
       `error` s konkrétní hláškou, ne tiché špatné namapování
-- [ ] Stažitelná CSV/XLSX šablona funguje a appka ji sama umí zpátky naimportovat
-- [ ] `pytest` sada zelená, pokrývá obě featury
-- [ ] Ověřeno na ~640px/~1024px/desktop šířce (obě featury)
+- [x] Stažitelná CSV/XLSX šablona funguje a appka ji sama umí zpátky naimportovat
+- [x] `pytest` sada zelená, pokrývá obě featury (177 testů, viz Code-review remediation výše)
+- [ ] Ověřeno na ~640px/~1024px/desktop šířce (obě featury) — zatím jen desktop, mobil/tablet
+      nebyl v týhle branch ještě ručně ověřen
 - [ ] `docs/TASKS.md` — poznámka, že tahle branch existuje a co pokrývá (odkaz na tenhle
       soubor) — až po sloučení, po potvrzení uživatele v prohlížeči (AI_INSTRUCTIONS.md §7)
 - [ ] `docs/ROADMAP.md` — poznámka u "Hromadný import promptů" / "Study" koncept, že import byl
