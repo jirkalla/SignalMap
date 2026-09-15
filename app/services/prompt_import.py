@@ -22,18 +22,26 @@ to a user directly anymore.
 
 `MAX_IMPORT_FILE_BYTES` is enforced by the caller before this module ever sees the bytes
 (unchanged). `MAX_IMPORT_ROWS`, previously checked by the caller only after a parser returned
-its full row list, is now enforced by each parser inside its own row loop instead — a file with
-far more rows than the cap is worth is rejected as soon as the cap is crossed, not after fully
-parsing every row (code-review fix, 2026-09-14: superseded design decision 13's "limits are
-enforced by that same caller, not here" for row count specifically; the byte-size limit is still
-caller-only, since a parser never sees more bytes than it's handed).
+its full row list, is now enforced by each parser inside its own row loop instead via the shared
+`_append_row` helper — a file with far more rows than the cap is worth is rejected as soon as the
+cap is crossed, not after fully parsing every row (code-review fix, 2026-09-14: superseded design
+decision 13's "limits are enforced by that same caller, not here" for row count specifically; the
+byte-size limit is still caller-only, since a parser never sees more bytes than it's handed).
+This "reject early" benefit is real for `parse_csv` (a lazy `csv.reader` generator) and
+`parse_xlsx` (lazy `iter_rows` in `read_only` mode), which only consume as many rows as the cap
+allows before raising — but NOT for `parse_json` (code-review finding, 2026-09-15): `json.loads`
+must fully deserialize the entire array into memory in one call before the row loop and its cap
+check ever run, so for JSON the check only bounds how many `ParsedPromptRow` objects get built,
+not how much parsing work already happened. Left as-is rather than switching to a streaming JSON
+parser (e.g. `ijson`) — a new dependency for a cost that `MAX_IMPORT_FILE_BYTES`'s 2MB ceiling
+already bounds to a non-issue in practice.
 """
 
 import csv
 import io
 import json
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Callable, Literal
 
 from openpyxl import load_workbook
 from sqlalchemy import select
@@ -116,6 +124,17 @@ def _parse_is_active(raw: str | None) -> bool:
     return True
 
 
+def _append_row(rows: list[ParsedPromptRow], row: ParsedPromptRow) -> None:
+    """Append one parsed row and enforce `MAX_IMPORT_ROWS`, shared by all three parsers
+    (code-review fix, 2026-09-15: the append-then-check-the-cap pair was copy-pasted verbatim
+    into `parse_csv`/`parse_xlsx`/`parse_json` — a single call site means the cap logic can't
+    drift out of sync between formats).
+    """
+    rows.append(row)
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise PromptImportError("import_too_many_rows")
+
+
 def parse_csv(file: bytes) -> list[ParsedPromptRow]:
     """Parse an uploaded CSV file into `ParsedPromptRow` objects (design decision 7).
 
@@ -169,7 +188,8 @@ def parse_csv(file: bytes) -> list[ParsedPromptRow]:
         if all((v or "").strip() == "" for v in raw_row):
             continue  # fully blank line — skip, not an error
         if len(raw_row) > len(header):
-            rows.append(
+            _append_row(
+                rows,
                 ParsedPromptRow(
                     row_number=len(rows) + 1,
                     text="",
@@ -180,20 +200,19 @@ def parse_csv(file: bytes) -> list[ParsedPromptRow]:
                     ),
                     error_code="field_count_mismatch",
                     error_context={"actual": len(raw_row), "expected": len(header)},
-                )
+                ),
             )
         else:
-            rows.append(
+            _append_row(
+                rows,
                 ParsedPromptRow(
                     row_number=len(rows) + 1,
                     text=cell(raw_row, "text") or "",
                     market_code=cell(raw_row, "market_code") or None,
                     topic=cell(raw_row, "topic") or None,
                     is_active=_parse_is_active(cell(raw_row, "is_active")),
-                )
+                ),
             )
-        if len(rows) > MAX_IMPORT_ROWS:
-            raise PromptImportError("import_too_many_rows")
     if not rows:
         raise PromptImportError("import_no_rows_found")
     return rows
@@ -265,7 +284,8 @@ def parse_xlsx(file: bytes) -> list[ParsedPromptRow]:
         extra_cells = raw_row[header_width:]
         has_stray_data = any(v is not None and str(v).strip() != "" for v in extra_cells)
         if has_stray_data:
-            rows.append(
+            _append_row(
+                rows,
                 ParsedPromptRow(
                     row_number=len(rows) + 1,
                     text="",
@@ -276,20 +296,19 @@ def parse_xlsx(file: bytes) -> list[ParsedPromptRow]:
                     ),
                     error_code="field_count_mismatch",
                     error_context={"actual": header_width + len(extra_cells), "expected": header_width},
-                )
+                ),
             )
         else:
-            rows.append(
+            _append_row(
+                rows,
                 ParsedPromptRow(
                     row_number=len(rows) + 1,
                     text=cell(raw_row, "text") or "",
                     market_code=cell(raw_row, "market_code") or None,
                     topic=cell(raw_row, "topic") or None,
                     is_active=_parse_is_active(cell(raw_row, "is_active")),
-                )
+                ),
             )
-        if len(rows) > MAX_IMPORT_ROWS:
-            raise PromptImportError("import_too_many_rows")
     if not rows:
         raise PromptImportError("import_no_rows_found")
     return rows
@@ -317,7 +336,8 @@ def parse_json(file: bytes) -> list[ParsedPromptRow]:
         market_code = item.get("market_code")
         topic = item.get("topic")
         is_active = item.get("is_active")
-        rows.append(
+        _append_row(
+            rows,
             ParsedPromptRow(
                 row_number=len(rows) + 1,
                 text=str(item.get("text") or "").strip(),
@@ -326,11 +346,34 @@ def parse_json(file: bytes) -> list[ParsedPromptRow]:
                 is_active=is_active if isinstance(is_active, bool) else _parse_is_active(
                     str(is_active) if is_active is not None else None
                 ),
-            )
+            ),
         )
-        if len(rows) > MAX_IMPORT_ROWS:
-            raise PromptImportError("import_too_many_rows")
     return rows
+
+
+def build_existing_texts_lookup(db: Session, prompt_set_id: int) -> Callable[[int], set[str]]:
+    """Return a `market_id -> {normalized existing prompt texts}` lookup, memoized per market_id.
+
+    Shared by `validate_and_check_duplicates` (preview-time) and `import_prompts_confirm`
+    (app/routers/prompt_sets.py, confirm-time) — both used to hand-roll the identical cache dict
+    plus query (code-review fix, 2026-09-15), which risked the two duplicate checks silently
+    drifting apart if only one copy was ever updated.
+    """
+    cache: dict[int, set[str]] = {}
+
+    def existing_texts(market_id: int) -> set[str]:
+        if market_id not in cache:
+            texts = db.scalars(
+                select(Prompt.text).where(
+                    Prompt.prompt_set_id == prompt_set_id,
+                    Prompt.market_id == market_id,
+                    Prompt.is_current_version.is_(True),
+                )
+            ).all()
+            cache[market_id] = {normalize_prompt_text(t) for t in texts}
+        return cache[market_id]
+
+    return existing_texts
 
 
 def validate_and_check_duplicates(
@@ -359,19 +402,7 @@ def validate_and_check_duplicates(
             market_cache[code] = db.scalar(select(Market).where(Market.code == code))
         return market_cache[code]
 
-    existing_texts_by_market: dict[int, set[str]] = {}
-
-    def existing_texts(market_id: int) -> set[str]:
-        if market_id not in existing_texts_by_market:
-            texts = db.scalars(
-                select(Prompt.text).where(
-                    Prompt.prompt_set_id == prompt_set_id,
-                    Prompt.market_id == market_id,
-                    Prompt.is_current_version.is_(True),
-                )
-            ).all()
-            existing_texts_by_market[market_id] = {normalize_prompt_text(t) for t in texts}
-        return existing_texts_by_market[market_id]
+    existing_texts = build_existing_texts_lookup(db, prompt_set_id)
 
     seen_in_batch: dict[int, set[str]] = {}
 

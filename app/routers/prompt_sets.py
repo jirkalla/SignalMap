@@ -26,6 +26,7 @@ from app.services.prompt_import import (
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_ROWS,
     PromptImportError,
+    build_existing_texts_lookup,
     normalize_prompt_text,
     parse_csv,
     parse_json,
@@ -36,6 +37,14 @@ from app.templating import get_t, render
 from app.utils import market_options
 
 _IMPORT_PARSERS = {"csv": parse_csv, "xlsx": parse_xlsx, "json": parse_json}
+
+# Postgres int4's own upper bound — Market.id is a plain integer PK, so a value beyond this can
+# never be a real row. Validated here, before it ever reaches the DB (code-review fix,
+# 2026-09-15): int() itself has no upper bound, so a numeric-but-oversized rows-{i}-market_id
+# (e.g. a tampered request bypassing the <select>) used to reach db.get() and raise
+# sqlalchemy.exc.DataError there instead of the ValueError this route already guards against —
+# an unhandled 500 the route's own docstring claimed was no longer possible.
+_POSTGRES_INT4_MAX = 2_147_483_647
 
 # One example row, shared by all three template formats (BIM-T9) — always the same shape
 # parse_csv/parse_xlsx/parse_json expect, generated through the same libraries they're read
@@ -403,6 +412,21 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
     normalization `validate_and_check_duplicates` uses for preview), not just trusted from the
     preview snapshot — a row that became a duplicate in the time between preview and confirm
     (e.g. a concurrent import) is skipped rather than creating a second copy.
+
+    Three more code-review fixes, 2026-09-15: (4) that confirm-time duplicate re-check used to
+    also silently swallow a row the user *deliberately* re-included despite it already being
+    flagged `"duplicate"` at preview time — design decision 11 leaves a duplicate row's checkbox
+    enabled specifically so an intentional repeat (e.g. re-asking the same question to check
+    answer consistency) can be force-imported. The preview form now round-trips each row's
+    original `status` in a hidden field so this route can tell "user opted into a known
+    duplicate" (import it) apart from "became a duplicate since preview" (still skipped) —
+    both used to hit the same silent `continue`. (5) `market_id` is now range-checked against
+    Postgres's int4 bound before it ever reaches `db.get()` — `int()` itself has no upper bound,
+    so an oversized-but-numeric value used to reach the database and raise `DataError` there
+    instead of the `ValueError` this route already guards, an unhandled 500 fix (3) above didn't
+    actually close. (6) The duplicate-lookup cache/query is now `build_existing_texts_lookup`
+    (app/services/prompt_import.py), the same helper `validate_and_check_duplicates` uses for
+    preview, instead of a second hand-copied closure that could silently drift out of sync with it.
     """
     t = get_t(request)
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
@@ -422,19 +446,7 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
             "import_too_many_rows", t("errors.import_too_many_rows").format(max_rows=MAX_IMPORT_ROWS), status_code=400
         )
 
-    existing_texts_by_market: dict[int, set[str]] = {}
-
-    def existing_texts(market_id: int) -> set[str]:
-        if market_id not in existing_texts_by_market:
-            texts = db.scalars(
-                select(Prompt.text).where(
-                    Prompt.prompt_set_id == prompt_set.id,
-                    Prompt.market_id == market_id,
-                    Prompt.is_current_version.is_(True),
-                )
-            ).all()
-            existing_texts_by_market[market_id] = {normalize_prompt_text(text) for text in texts}
-        return existing_texts_by_market[market_id]
+    existing_texts = build_existing_texts_lookup(db, prompt_set.id)
 
     imported = 0
     for i in row_indices:
@@ -447,16 +459,19 @@ async def import_prompts_confirm(request: Request, prompt_set_id: int, db: Sessi
         market = None
         if market_id_raw:
             try:
-                market = db.get(Market, int(market_id_raw))
+                parsed_market_id = int(market_id_raw)
             except ValueError:
-                market = None
+                parsed_market_id = None
+            if parsed_market_id is not None and 0 < parsed_market_id <= _POSTGRES_INT4_MAX:
+                market = db.get(Market, parsed_market_id)
         if market is None:
             continue
 
         normalized = normalize_prompt_text(text)
         seen = existing_texts(market.id)
-        if normalized in seen:
-            continue  # duplicate against the DB's current state, or against an earlier row in this same confirm
+        was_duplicate_at_preview = form.get(f"rows-{i}-status") == "duplicate"
+        if normalized in seen and not was_duplicate_at_preview:
+            continue  # became a duplicate since preview (concurrent import) — skip, not force-imported
         seen.add(normalized)
 
         topic = form.get(f"rows-{i}-topic")

@@ -313,14 +313,23 @@ def trigger_run(
     db.add(run)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         # Backstop for the race the plain pending_run SELECT above can't fully close (BIM
         # code-review finding, migration 0024's idx_runs_one_pending_per_prompt_model): a
         # second request for the same prompt+model that passed the SELECT before this one
         # committed hits the partial unique index instead, converted to the same 409 a
-        # non-racy duplicate submission already gets.
+        # non-racy duplicate submission already gets. Scoped to that ONE constraint by name
+        # (code-review fix, 2026-09-15) — a bare `except IntegrityError` here also caught an
+        # unrelated FK violation (e.g. the model/market/persona row being deleted by someone
+        # else between this handler's own db.get() checks and this commit) and misreported it
+        # as "run already pending" while silently discarding the real cause; any other
+        # integrity error is logged and surfaced as a distinct, generic failure instead.
         db.rollback()
-        raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409)
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        if constraint == "idx_runs_one_pending_per_prompt_model":
+            raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409) from exc
+        logger.exception("Unexpected integrity error creating run for prompt_id=%s, model_id=%s", prompt_id, model_id)
+        raise AppError("run_creation_failed", t("errors.run_creation_failed"), status_code=409) from exc
     db.refresh(run)
 
     logger.info(

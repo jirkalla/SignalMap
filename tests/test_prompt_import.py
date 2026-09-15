@@ -445,3 +445,66 @@ def test_bulk_import_confirm_skips_row_that_became_duplicate_since_preview(
         )
     )
     assert count == 1
+
+
+def test_bulk_import_confirm_allows_intentional_duplicate_override(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_BULK_IMPORT_MULTI_MODEL.md design decision 11 — a `duplicate` row's checkbox
+    is deliberately left enabled in preview so a user can force-import an intentional repeat
+    (e.g. re-asking the same question to check answer consistency). Confirm's duplicate re-check
+    (added to catch a row that became a duplicate *since* preview) must not also swallow this
+    case — it needs the row's original preview-time status to tell the two apart (code-review
+    fix, 2026-09-15: previously both hit the same silent `continue`, so checking this box had no
+    effect at all).
+    """
+    db_session.add(
+        Prompt(
+            prompt_set_id=sample_prompt.prompt_set_id,
+            text="Repeat this question on purpose?",
+            market_id=seed["market"].id,
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    response = authed_client.post(
+        f"/prompt-sets/{sample_prompt.prompt_set_id}/prompts/import/confirm",
+        data={
+            "rows-0-text": "Repeat this question on purpose?",
+            "rows-0-market_id": str(seed["market"].id),
+            "rows-0-status": "duplicate",  # what preview flagged it as
+            "rows-0-include": "true",  # user deliberately checked it anyway
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    count = db_session.scalar(
+        select(func.count()).select_from(Prompt).where(
+            Prompt.prompt_set_id == sample_prompt.prompt_set_id,
+            Prompt.text == "Repeat this question on purpose?",
+            Prompt.is_current_version.is_(True),
+        )
+    )
+    assert count == 2  # the pre-existing prompt, plus the deliberately re-imported copy
+
+
+def test_bulk_import_confirm_skips_oversized_market_id_without_crashing(
+    authed_client: TestClient, db_session: Session, sample_prompt: Prompt
+):
+    """`int()` has no upper bound, so a numeric-but-oversized `market_id` (e.g. a tampered
+    request bypassing the <select>) used to reach `db.get()` and raise `sqlalchemy.exc.DataError`
+    there instead of the `ValueError` this route already guards — an unhandled 500 (code-review
+    fix, 2026-09-15). The value is now range-checked before it ever reaches the database.
+    """
+    response = authed_client.post(
+        f"/prompt-sets/{sample_prompt.prompt_set_id}/prompts/import/confirm",
+        data={
+            "rows-0-text": "Should never be saved either",
+            "rows-0-market_id": "99999999999999999999",
+            "rows-0-include": "true",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert db_session.scalar(select(Prompt).where(Prompt.text == "Should never be saved either")) is None

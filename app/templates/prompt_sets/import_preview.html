@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/macros.html" import status_badge %}
 {% block title %}{{ t('prompt_import.title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -33,6 +34,7 @@
         <tr class="border-t border-stone-100 align-top">
           <td class="py-2 px-3">
             <input type="hidden" name="rows-{{ loop.index0 }}-text" value="{{ row.text }}">
+            <input type="hidden" name="rows-{{ loop.index0 }}-status" value="{{ row.status }}">
             <input type="checkbox" name="rows-{{ loop.index0 }}-include" value="true"
                    {% if row.status == 'new' %}checked{% endif %} {% if row.status == 'error' %}disabled{% endif %}
                    class="{{ checkbox_class }}">
@@ -56,14 +58,7 @@
                    class="{{ checkbox_class }}">
           </td>
           <td class="py-2 px-3">
-            {% set status_classes = {
-              'new': 'bg-emerald-100 text-emerald-800',
-              'duplicate': 'bg-amber-100 text-amber-800',
-              'error': 'bg-red-100 text-red-800'
-            } %}
-            <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ status_classes[row.status] }}">
-              {{ t('prompt_import.status_' ~ row.status) }}
-            </span>
+            {{ status_badge(row.status, t('prompt_import.status_' ~ row.status)) }}
           </td>
         </tr>
         {% endfor %}

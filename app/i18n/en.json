@@ -378,6 +378,7 @@
   "errors.import_too_many_rows": "This file has more than {max_rows} rows — split it into smaller files.",
   "errors.run_not_found": "Run not found.",
   "errors.run_already_pending": "A run is already in progress for this prompt — wait for it to finish before starting another.",
+  "errors.run_creation_failed": "Couldn't start the run because of an unexpected database error. Try again, and contact an admin if it keeps happening.",
   "errors.prompt_inactive": "This prompt is inactive and can't be run. Edit it and check \"Active\" first.",
   "errors.model_inactive": "This model is inactive and can't be used for a new run. Choose an active model, or reactivate it in Models.",
   "errors.model_not_found": "Model not found.",

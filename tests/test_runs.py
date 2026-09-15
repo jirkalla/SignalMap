@@ -50,6 +50,51 @@ def test_trigger_run_rejected_for_inactive_model(
     assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
 
 
+def test_trigger_run_reports_unrelated_integrity_errors_distinctly(
+    monkeypatch, authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """A concurrent FK violation (e.g. the model/market/persona row being deleted by someone
+    else between trigger_run's own db.get() checks and its commit) must not be misreported as
+    "run already pending" — only the specific partial unique index backstopping that race maps
+    to that message; any other IntegrityError surfaces as a distinct, logged failure instead
+    (code-review fix, 2026-09-15: the previous bare `except IntegrityError` caught both alike
+    and silently discarded the real exception).
+
+    Simulates the race by making the run's own `db.commit()` raise a synthetic IntegrityError
+    carrying a constraint name other than `idx_runs_one_pending_per_prompt_model` — reproducing
+    a real FK violation end-to-end would require deleting a referenced row mid-request, which
+    isn't reachable through a single synchronous test client call.
+    """
+
+    class _FakeDiag:
+        constraint_name = "runs_model_id_fkey"
+
+    class _FakeOrig:
+        diag = _FakeDiag()
+
+    original_commit = Session.commit
+    state = {"raised": False}
+
+    def fake_commit(self, *args, **kwargs):
+        if not state["raised"]:
+            state["raised"] = True
+            raise IntegrityError("INSERT INTO runs ...", {}, _FakeOrig())
+        return original_commit(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "commit", fake_commit)
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert "unexpected database error" in response.text.lower()
+    assert "already in progress" not in response.text.lower()
+    assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
+
+
 def test_pending_run_unique_index_rejects_a_second_pending_row(
     db_session: Session, seed, sample_prompt: Prompt
 ):

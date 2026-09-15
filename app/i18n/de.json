@@ -378,6 +378,7 @@
   "errors.import_too_many_rows": "Diese Datei hat mehr als {max_rows} Zeilen — teile sie in kleinere Dateien auf.",
   "errors.run_not_found": "Lauf nicht gefunden.",
   "errors.run_already_pending": "Für diesen Prompt läuft bereits ein Lauf — bitte warten, bis dieser abgeschlossen ist, bevor ein weiterer gestartet wird.",
+  "errors.run_creation_failed": "Der Lauf konnte wegen eines unerwarteten Datenbankfehlers nicht gestartet werden. Bitte erneut versuchen und bei wiederholtem Auftreten einen Administrator kontaktieren.",
   "errors.prompt_inactive": "Dieser Prompt ist inaktiv und kann nicht ausgeführt werden. Bearbeite ihn und aktiviere zuerst \"Aktiv\".",
   "errors.model_inactive": "Dieses Modell ist inaktiv und kann nicht für einen neuen Lauf verwendet werden. Wähle ein aktives Modell oder aktiviere es unter Modelle.",
   "errors.model_not_found": "Modell nicht gefunden.",
