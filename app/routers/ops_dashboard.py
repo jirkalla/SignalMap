@@ -14,20 +14,19 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import Prompt, Run
 from app.routers.clients import _get_client_or_404
 from app.routers.prompt_sets import _get_prompt_set_or_404
 from app.routers.prompts import _get_prompt_or_404
 from app.routers.users import _get_user_or_404
 from app.services import ops_dashboard as ops_service
 from app.services.date_ranges import DashboardRange, range_bounds
-from app.templating import get_t
+from app.templating import get_t, render
 
 router = APIRouter(prefix="/ops", tags=["ops_dashboard"], dependencies=[Depends(require_role("admin", "editor"))])
 
@@ -42,6 +41,21 @@ _USER_ID_QUERY = Query(
     description='Restrict to one user\'s runs: a numeric user id, or the literal "scheduler" for '
     "scheduler-triggered runs (trigger_type='scheduled' with no human behind them). Omitted: every user.",
 )
+
+
+@router.get("", include_in_schema=False)
+def ops_page(request: Request):
+    """Ops dashboard page shell (docs/TASKS_OPS_DASHBOARD.md T3).
+
+    Thin on purpose: unlike app/routers/dashboard.py's page shell, there's no required top-level
+    selector to pre-populate server-side — the global view fetches its own client/user tables from
+    the JSON endpoints below via the Vue island, the same "server renders the frame, JS fetches the
+    data" split as the client-facing dashboard (design decision 10 there). Access control is
+    already covered by this router's own `require_role("admin", "editor")` dependency — a viewer
+    hitting this route gets the same HTML 403 page as any other admin-only page route
+    (app/errors.py's handler branches on "/api/" in the path, not on route-by-route special-casing).
+    """
+    return render(request, "ops/index.html")
 
 
 def _resolve_user_filter(request: Request, user_id: str | None) -> tuple[int | None, bool]:
@@ -278,6 +292,13 @@ class OpsRecentRun(BaseModel):
     status: str
     latency_ms: int | None
     cost_usd: float | None
+    error_message: str | None
+    triggered_by_user_id: int | None
+    triggered_by_user_name: str | None
+    is_scheduler: bool = Field(..., description="True when trigger_type='scheduled' (design decision 10).")
+    is_unknown_attribution: bool = Field(
+        ..., description="True for runs that predate user-attribution tracking — distinct from Scheduler."
+    )
 
 
 class OpsPromptDetailResponse(BaseModel):
@@ -301,27 +322,34 @@ def ops_prompt_detail(
     6 — no new pagination is built here; "view all" links to the existing `/prompts/{id}` page,
     which already lists every run against this prompt).
 
-    Aggregates across the prompt's whole version lineage (`root_prompt_id`), same as
-    `/api/prompts` — editing a prompt's text never makes its run history vanish from view here.
+    Aggregates across the prompt's whole version lineage (`root_prompt_id`) via `scope.run_ids_query`
+    itself — `ops_scoped_run_ids_query` resolves `prompt_id` to its lineage internally, so this
+    endpoint's numbers always agree with `/api/summary?prompt_id=X`'s (a prior version of this
+    endpoint built its own separate lineage-scoped query here, which silently disagreed with
+    `/api/summary`'s exact-prompt-id-only scoping — found by exercising the T3 UI against real data).
     """
     prompt = _get_prompt_or_404(db, request, prompt_id)
-    root_id = prompt.root_prompt_id or prompt.id
-    lineage_ids = db.scalars(
-        select(Prompt.id).where(or_(Prompt.id == root_id, Prompt.root_prompt_id == root_id))
-    ).all()
-    narrowed = ops_service.ops_scoped_run_ids_query(
-        scope.date_from, scope.date_to, None, None, None, None, False
-    ).where(Run.prompt_id.in_(lineage_ids))
-
-    models = ops_service.prompt_model_comparison_rows(db, narrowed)
-    runs = ops_service.recent_runs(db, narrowed, with_client_name=False)
+    models = ops_service.prompt_model_comparison_rows(db, scope.run_ids_query)
+    runs = ops_service.recent_runs(db, scope.run_ids_query, with_client_name=False)
     return OpsPromptDetailResponse(
         prompt_id=prompt.id,
         prompt_text=prompt.text,
         runs_url=f"/prompts/{prompt.id}",
         models=[OpsModelComparisonRow(**vars(row)) for row in models],
         recent_runs=[
-            OpsRecentRun(run_id=r.run_id, started_at=r.started_at, model_name=r.model_name, status=r.status, latency_ms=r.latency_ms, cost_usd=r.cost_usd)
+            OpsRecentRun(
+                run_id=r.run_id,
+                started_at=r.started_at,
+                model_name=r.model_name,
+                status=r.status,
+                latency_ms=r.latency_ms,
+                cost_usd=r.cost_usd,
+                error_message=r.error_message,
+                triggered_by_user_id=r.triggered_by_user_id,
+                triggered_by_user_name=r.triggered_by_user_name,
+                is_scheduler=r.is_scheduler,
+                is_unknown_attribution=r.is_unknown_attribution,
+            )
             for r in runs
         ],
     )

@@ -1,0 +1,563 @@
+{% extends "base.html" %}
+{% block title %}{{ t('ops.title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+
+<div id="ops-app">
+  {# Header: title + range buttons. Only 4 ranges (7d/30d/90d/all), matching the agreed mockup —
+     "quarter" (used by the client dashboard) is deliberately not offered here. #}
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+    <h1 class="text-xl font-semibold">{{ t('ops.title') }}</h1>
+    <div class="flex gap-1.5">
+      <button type="button" v-for="r in ranges" :key="r.value" @click="filters.range = r.value"
+              :class="filters.range === r.value ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300'"
+              class="px-3 py-1 rounded-full text-xs font-medium border">[[ r.label ]]</button>
+      <span v-show="loading" class="text-xs text-stone-400 self-center ml-2">{{ t('ops.loading') }}</span>
+    </div>
+  </div>
+
+  {# Breadcrumb — client/prompt-set/prompt axis and the independent user axis (design decision 3).
+     Only Vue state changes on click, never a page reload (kritické requirement). #}
+  <nav class="flex items-center gap-1.5 text-xs text-stone-500 mb-5 flex-wrap">
+    <button v-if="drill.level !== 'global'" type="button" @click="goGlobal" class="hover:underline">{{ t('ops.breadcrumb_root') }}</button>
+    <span v-else class="text-stone-800 font-semibold">{{ t('ops.breadcrumb_root') }}</span>
+
+    <template v-if="drill.level === 'user'">
+      <span>/</span>
+      <span class="text-stone-800 font-semibold">[[ drill.userLabel ]]</span>
+    </template>
+    <template v-else>
+      <template v-if="drill.clientId">
+        <span>/</span>
+        <button v-if="drill.level !== 'client'" type="button" @click="goClient(drill.clientId, drill.clientName)" class="hover:underline">[[ drill.clientName ]]</button>
+        <span v-else class="text-stone-800 font-semibold">[[ drill.clientName ]]</span>
+      </template>
+      <template v-if="drill.promptSetId">
+        <span>/</span>
+        <button v-if="drill.level !== 'set'" type="button" @click="goSet(drill.promptSetId, drill.promptSetName)" class="hover:underline">[[ drill.promptSetName ]]</button>
+        <span v-else class="text-stone-800 font-semibold">[[ drill.promptSetName ]]</span>
+      </template>
+      <template v-if="drill.promptId">
+        <span>/</span>
+        <span class="text-stone-800 font-semibold">#[[ drill.promptId ]]</span>
+      </template>
+    </template>
+  </nav>
+
+  {# KPI tiles — same 4 metrics at every drill level, scoped by whatever filters are active. #}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_runs') }}</div>
+      <div class="text-2xl font-semibold font-mono">[[ summary ? fmtInt(summary.runs_count) : noData ]]</div>
+      <div class="text-xs text-stone-400 mt-1">[[ summary ? fmtInt(summary.success_count) + ' / ' + fmtInt(summary.error_count) : '—' ]]</div>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_success_rate') }}</div>
+      <div class="text-2xl font-semibold font-mono" :class="summary && summary.error_count > 0 ? 'text-rose-600' : ''">
+        [[ summary && summary.success_rate_pct !== null ? summary.success_rate_pct + '%' : noData ]]
+      </div>
+      <div class="text-xs text-stone-400 mt-1">[[ summary && summary.error_count > 0 ? (summary.error_count + ' ' + errorCountSuffix) : successRateOkLabel ]]</div>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_cost') }}</div>
+      <div class="text-2xl font-semibold font-mono">[[ summary ? fmtCost(summary.total_cost_usd) : noData ]]</div>
+      <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_cost_sub') }}</div>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_latency') }}</div>
+      <div class="text-2xl font-semibold font-mono">[[ summary ? fmtMs(summary.avg_latency_ms) : noData ]]</div>
+      <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_latency_sub') }}</div>
+    </div>
+  </div>
+
+  {# Daily chart — every level except "set" (prompt-set), matching the agreed mockup exactly. #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4" v-if="drill.level !== 'set' && drill.level !== 'prompt'">
+    <div class="px-4 py-3 border-b border-stone-100 flex items-center justify-between gap-2">
+      <h2 class="text-sm font-semibold">{{ t('ops.chart_daily_title') }}</h2>
+      <div class="flex gap-3 text-xs text-stone-500">
+        <span class="inline-flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-sm bg-emerald-600"></span>{{ t('ops.chart_daily_legend_success') }}</span>
+        <span class="inline-flex items-center gap-1.5"><span class="inline-block w-2 h-2 rounded-sm bg-rose-600"></span>{{ t('ops.chart_daily_legend_error') }}</span>
+      </div>
+    </div>
+    <div class="p-3" v-if="dailyBars.length">
+      <svg :view-box.camel="'0 0 ' + chartW + ' ' + chartH" class="w-full h-auto block">
+        <line :x1="padL" :x2="chartW - padR" :y1="padT + plotH" :y2="padT + plotH" stroke="#e7e5e4" stroke-width="1" />
+        <rect v-for="(b, i) in dailyBars" :key="'s'+i" :x="b.x" :y="b.successY" :width="b.barW" :height="b.successH" fill="#0f766e" rx="1" />
+        <template v-for="(b, i) in dailyBars" :key="'e'+i">
+          <rect v-if="b.errorH > 0" :x="b.x" :y="b.errorY" :width="b.barW" :height="b.errorH" fill="#dc2626" rx="1" />
+        </template>
+        <text v-for="(lbl, i) in dailyXLabels" :key="'x'+i" :x="lbl.x" :y="chartH - 4" text-anchor="middle" class="fill-stone-400" font-size="9" font-family="monospace">[[ lbl.label ]]</text>
+      </svg>
+    </div>
+    <div v-else class="p-6 text-center text-sm text-stone-400">{{ t('ops.chart_daily_empty') }}</div>
+  </div>
+
+  {# Provider cost chart — global level only. #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4" v-if="drill.level === 'global'">
+    <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.chart_providers_title') }}</h2></div>
+    <div class="p-3" v-if="providers.length">
+      <svg :view-box.camel="'0 0 ' + chartW + ' ' + providerChartH" class="w-full h-auto block">
+        <text v-for="(row, i) in providerBars" :key="'lbl'+i" x="0" :y="row.labelY" font-size="10.5" font-family="monospace" class="fill-stone-600">[[ row.label ]]</text>
+        <rect v-for="(row, i) in providerBars" :key="'bar'+i" :x="providerBarPadL" :y="row.barY" :width="row.barW" :height="row.barH" rx="3" :fill="row.color" />
+        <text v-for="(row, i) in providerBars" :key="'val'+i" :x="providerBarPadL + row.barW + 8" :y="row.labelY" font-size="10.5" font-family="monospace" class="fill-stone-800">[[ row.valueLabel ]]</text>
+      </svg>
+    </div>
+    <div v-else class="p-6 text-center text-sm text-stone-400">{{ t('ops.chart_providers_empty') }}</div>
+  </div>
+
+  {# Clients + Users tables — global level only. #}
+  <template v-if="drill.level === 'global'">
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_clients_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_client') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in clients" :key="row.client_id" class="border-t border-stone-100 hover:bg-stone-50 cursor-pointer" @click="goClient(row.client_id, row.client_name)">
+              <td class="py-2 px-4 font-medium text-stone-800">[[ row.client_name ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.runs_count) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtCost(row.total_cost_usd) ]]</td>
+              <td class="py-2 px-4 text-right" v-html="statusLabel(row.error_count)"></td>
+            </tr>
+            <tr v-if="!loading && clients.length === 0"><td colspan="4" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_users_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_user') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in users" :key="row.user_id ?? (row.is_scheduler ? 'scheduler' : 'unknown')"
+                class="border-t border-stone-100"
+                :class="row.is_unknown_attribution ? 'text-stone-400 italic' : 'hover:bg-stone-50 cursor-pointer'"
+                @click="!row.is_unknown_attribution && goUser(row.user_id, userRowLabel(row), row.is_scheduler)">
+              <td class="py-2 px-4 font-medium" :class="row.is_unknown_attribution ? '' : 'text-stone-800'">[[ userRowLabel(row) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.runs_count) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtCost(row.total_cost_usd) ]]</td>
+              <td class="py-2 px-4 text-right" v-html="statusLabel(row.error_count)"></td>
+            </tr>
+            <tr v-if="!loading && users.length === 0"><td colspan="4" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </template>
+
+  {# Prompt sets table — client level only. #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4" v-if="drill.level === 'client'">
+    <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_prompt_sets_title') }}</h2></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+          <tr>
+            <th class="py-2 px-4 font-medium">{{ t('ops.col_prompt_set') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in promptSets" :key="row.prompt_set_id" class="border-t border-stone-100 hover:bg-stone-50 cursor-pointer" @click="goSet(row.prompt_set_id, row.name)">
+            <td class="py-2 px-4 font-medium text-stone-800">[[ row.name ]]</td>
+            <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.runs_count) ]]</td>
+            <td class="py-2 px-4 text-right font-mono">[[ fmtCost(row.total_cost_usd) ]]</td>
+          </tr>
+          <tr v-if="!loading && promptSets.length === 0"><td colspan="3" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Prompts table — prompt-set level only. No daily chart at this level (matches agreed mockup). #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4" v-if="drill.level === 'set'">
+    <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_prompts_title') }}</h2></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+          <tr>
+            <th class="py-2 px-4 font-medium">{{ t('ops.col_prompt') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in prompts" :key="row.prompt_id" class="border-t border-stone-100 hover:bg-stone-50 cursor-pointer" @click="goPrompt(row.prompt_id)">
+            <td class="py-2 px-4 text-stone-800">[[ truncate(row.text, 80) ]]</td>
+            <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.runs_count) ]]</td>
+            <td class="py-2 px-4 text-right font-mono">[[ fmtCost(row.total_cost_usd) ]]</td>
+          </tr>
+          <tr v-if="!loading && prompts.length === 0"><td colspan="3" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Prompt detail: text box, model comparison, recent runs + view-all-runs link. #}
+  <template v-if="drill.level === 'prompt' && promptDetail">
+    <div class="bg-stone-100 border border-stone-200 rounded-lg p-4 mb-4 text-sm text-stone-700">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.prompt_text_label') }}</div>
+      [[ promptDetail.prompt_text ]]
+    </div>
+
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_models_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_model') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_success_rate') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_latency') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in promptDetail.models" :key="m.model_id" class="border-t border-stone-100">
+              <td class="py-2 px-4 text-stone-800">[[ m.model_name ]]<span class="text-xs text-stone-400 ml-1">([[ m.provider_name ]])</span></td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(m.runs_count) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ m.success_rate_pct !== null ? m.success_rate_pct + '%' : noData ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtMs(m.avg_latency_ms) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtCost(m.total_cost_usd) ]]</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100 flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold">{{ t('ops.table_recent_runs_title') }}</h2>
+        <a :href="promptDetail.runs_url" class="text-xs text-stone-500 hover:underline">{{ t('ops.view_all_runs_link') }}</a>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_run') }}</th>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_model') }}</th>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_user') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_latency') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="r in promptDetail.recent_runs" :key="r.run_id">
+              <tr :class="r.status === 'error' ? 'bg-rose-50' : ''" class="border-t border-stone-100">
+                <td class="py-2 px-4 font-mono text-xs text-stone-500">#[[ r.run_id ]]<span class="block text-stone-400">[[ fmtDate(r.started_at) ]]</span></td>
+                <td class="py-2 px-4 text-stone-800">[[ r.model_name ]]</td>
+                <td class="py-2 px-4 text-stone-600">[[ triggeredByLabel(r) ]]</td>
+                <td class="py-2 px-4 text-right" v-html="runStatusLabel(r.status)"></td>
+                <td class="py-2 px-4 text-right font-mono">[[ r.status === 'success' ? fmtMs(r.latency_ms) : noData ]]</td>
+                <td class="py-2 px-4 text-right font-mono">[[ fmtCost(r.cost_usd) ]]</td>
+              </tr>
+              <tr v-if="r.error_message" class="bg-rose-50">
+                <td colspan="6" class="py-1.5 px-4 text-xs text-rose-700">[[ r.error_message ]]</td>
+              </tr>
+            </template>
+            <tr v-if="!loading && promptDetail.recent_runs.length === 0"><td colspan="6" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </template>
+
+  {# User detail: by-client breakdown (click leaves user axis, design decision 3) + recent runs. #}
+  <template v-if="drill.level === 'user' && userDetail">
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_by_client_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_client') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_runs') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in userDetail.by_client" :key="row.client_id" class="border-t border-stone-100 hover:bg-stone-50 cursor-pointer" @click="goClient(row.client_id, row.client_name)">
+              <td class="py-2 px-4 font-medium text-stone-800">[[ row.client_name ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.runs_count) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtCost(row.total_cost_usd) ]]</td>
+            </tr>
+            <tr v-if="!loading && userDetail.by_client.length === 0"><td colspan="3" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.table_recent_runs_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_run') }}</th>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_client') }}</th>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_model') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_latency') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in userDetail.recent_runs" :key="r.run_id" :class="r.status === 'error' ? 'bg-rose-50' : ''" class="border-t border-stone-100">
+              <td class="py-2 px-4"><a :href="r.run_url" class="font-mono text-xs text-stone-500 hover:underline">#[[ r.run_id ]]</a><span class="block text-xs text-stone-400">[[ fmtDate(r.started_at) ]]</span></td>
+              <td class="py-2 px-4 text-stone-800">[[ r.client_name ]]</td>
+              <td class="py-2 px-4 text-stone-600">[[ r.model_name ]]</td>
+              <td class="py-2 px-4 text-right" v-html="runStatusLabel(r.status)"></td>
+              <td class="py-2 px-4 text-right font-mono">[[ r.status === 'success' ? fmtMs(r.latency_ms) : noData ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtCost(r.cost_usd) ]]</td>
+            </tr>
+            <tr v-if="!loading && userDetail.recent_runs.length === 0"><td colspan="6" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.global.prod.js"></script>
+<script>
+(function () {
+  const { createApp, reactive, ref, computed, onMounted, watch } = Vue;
+  const locale = {{ locale | tojson }};
+  const noData = {{ t('ops.no_data') | tojson }};
+  const errorCountSuffix = {{ t('ops.error_count_suffix') | tojson }};
+  const successRateOkLabel = {{ t('ops.kpi_success_rate_sub_ok') | tojson }};
+  const schedulerLabel = {{ t('ops.scheduler_label') | tojson }};
+  const unknownAttributionLabel = {{ t('ops.unknown_attribution_label') | tojson }};
+  const rangeLabels = {
+    '7d': {{ t('ops.range_7d') | tojson }},
+    '30d': {{ t('ops.range_30d') | tojson }},
+    '90d': {{ t('ops.range_90d') | tojson }},
+    all: {{ t('ops.range_all') | tojson }},
+  };
+  const providerColors = ['#2a78d6', '#eb6834', '#1baf7a', '#a855f7', '#64748b'];
+
+  const chartW = 700, chartH = 160, padL = 8, padR = 8, padT = 8, padB = 20;
+  const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
+  const providerBarPadL = 130;
+
+  const app = createApp({
+    setup() {
+      const ranges = ['7d', '30d', '90d', 'all'].map((value) => ({ value, label: rangeLabels[value] }));
+      const filters = reactive({ range: '30d' });
+      const drill = reactive({
+        level: 'global',
+        clientId: null, clientName: null,
+        promptSetId: null, promptSetName: null,
+        promptId: null,
+        userId: null, userLabel: null, isScheduler: false,
+      });
+
+      const loading = ref(false);
+      const summary = ref(null);
+      const daily = ref({ granularity: 'day', points: [] });
+      const providers = ref([]);
+      const clients = ref([]);
+      const users = ref([]);
+      const promptSets = ref([]);
+      const prompts = ref([]);
+      const promptDetail = ref(null);
+      const userDetail = ref(null);
+
+      function baseParams() {
+        const p = new URLSearchParams();
+        p.set('range', filters.range);
+        return p;
+      }
+
+      async function fetchJson(path, params) {
+        const res = await fetch(path + '?' + params.toString());
+        return res.json();
+      }
+
+      async function fetchAll() {
+        loading.value = true;
+        try {
+          if (drill.level === 'global') {
+            const p = baseParams();
+            const [s, d, pr, c, u] = await Promise.all([
+              fetchJson('/ops/api/summary', p),
+              fetchJson('/ops/api/daily', p),
+              fetchJson('/ops/api/providers', p),
+              fetchJson('/ops/api/clients', p),
+              fetchJson('/ops/api/users', p),
+            ]);
+            summary.value = s; daily.value = d; providers.value = pr; clients.value = c; users.value = u;
+          } else if (drill.level === 'client') {
+            const p = baseParams(); p.set('client_id', drill.clientId);
+            const [s, d, ps] = await Promise.all([
+              fetchJson('/ops/api/summary', p),
+              fetchJson('/ops/api/daily', p),
+              fetchJson('/ops/api/prompt-sets', p),
+            ]);
+            summary.value = s; daily.value = d; promptSets.value = ps;
+          } else if (drill.level === 'set') {
+            const p = baseParams(); p.set('prompt_set_id', drill.promptSetId);
+            const [s, pr] = await Promise.all([
+              fetchJson('/ops/api/summary', p),
+              fetchJson('/ops/api/prompts', p),
+            ]);
+            summary.value = s; prompts.value = pr;
+          } else if (drill.level === 'prompt') {
+            const p = baseParams(); p.set('prompt_id', drill.promptId);
+            const [s, pd] = await Promise.all([
+              fetchJson('/ops/api/summary', p),
+              fetchJson('/ops/api/prompt-detail', p),
+            ]);
+            summary.value = s; promptDetail.value = pd;
+          } else if (drill.level === 'user') {
+            const p = baseParams(); p.set('user_id', drill.isScheduler ? 'scheduler' : drill.userId);
+            const [s, d, ud] = await Promise.all([
+              fetchJson('/ops/api/summary', p),
+              fetchJson('/ops/api/daily', p),
+              fetchJson('/ops/api/user-detail', p),
+            ]);
+            summary.value = s; daily.value = d; userDetail.value = ud;
+          }
+        } finally {
+          loading.value = false;
+        }
+      }
+
+      watch(
+        () => [drill.level, drill.clientId, drill.promptSetId, drill.promptId, drill.userId, drill.isScheduler, filters.range],
+        fetchAll
+      );
+      onMounted(fetchAll);
+
+      function resetDrill(overrides) {
+        Object.assign(drill, {
+          level: 'global', clientId: null, clientName: null, promptSetId: null, promptSetName: null,
+          promptId: null, userId: null, userLabel: null, isScheduler: false,
+        }, overrides);
+      }
+      function goGlobal() { resetDrill({ level: 'global' }); }
+      function goClient(id, name) { resetDrill({ level: 'client', clientId: id, clientName: name }); }
+      function goSet(id, name) { drill.level = 'set'; drill.promptSetId = id; drill.promptSetName = name; drill.promptId = null; }
+      function goPrompt(id) { drill.level = 'prompt'; drill.promptId = id; }
+      function goUser(id, label, isScheduler) { resetDrill({ level: 'user', userId: id, userLabel: label, isScheduler: isScheduler }); }
+
+      function fmtInt(n) { return new Intl.NumberFormat(locale === 'de' ? 'de-DE' : 'en-US').format(n); }
+      function fmtCost(v) { return v === null || v === undefined ? noData : '$' + v.toFixed(2); }
+      function fmtMs(v) {
+        if (v === null || v === undefined) return noData;
+        return v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
+      }
+      function fmtDate(iso) {
+        const d = new Date(iso);
+        return d.toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', { month: 'short', day: 'numeric' })
+          + ' ' + d.toLocaleTimeString(locale === 'de' ? 'de-DE' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+      }
+      function truncate(text, n) { return text.length > n ? text.slice(0, n) + '…' : text; }
+
+      function statusLabel(errorCount) {
+        return errorCount > 0
+          ? '<span class="inline-flex items-center gap-1 text-rose-600 font-medium">' + errorCount + ' ' + errorCountSuffix + '</span>'
+          : '<span class="inline-flex items-center gap-1 text-emerald-600 font-medium">OK</span>';
+      }
+      function runStatusLabel(status) {
+        return status === 'success'
+          ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">success</span>'
+          : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-800">error</span>';
+      }
+      function userRowLabel(row) {
+        if (row.is_scheduler) return schedulerLabel;
+        if (row.is_unknown_attribution) return unknownAttributionLabel;
+        return row.user_name;
+      }
+      function triggeredByLabel(r) {
+        if (r.is_scheduler) return schedulerLabel;
+        if (r.is_unknown_attribution) return unknownAttributionLabel;
+        return r.triggered_by_user_name || noData;
+      }
+
+      // Daily bar chart — stacked success (teal) + error (red) bars, one per bucket, x-axis
+      // capped at ~8 visible labels (same "don't overcrowd a fixed-width chart" rule as the
+      // client dashboard's weekly chart).
+      const dailyMax = computed(() => {
+        const vals = (daily.value.points || []).map((p) => p.success_count + p.error_count);
+        return Math.max(...vals, 1);
+      });
+      const dailyBars = computed(() => {
+        const pts = daily.value.points || [];
+        const n = pts.length;
+        if (!n) return [];
+        const barGap = 2;
+        const barW = Math.max(1, plotW / n - barGap);
+        return pts.map((p, i) => {
+          const x = padL + i * (plotW / n);
+          const successH = (p.success_count / dailyMax.value) * plotH;
+          const errorH = (p.error_count / dailyMax.value) * plotH;
+          const yBase = padT + plotH;
+          return { x, barW, successY: yBase - successH, successH, errorY: yBase - successH - errorH, errorH, bucket: p.bucket_start };
+        });
+      });
+      const dailyXLabels = computed(() => {
+        const bars = dailyBars.value;
+        if (!bars.length) return [];
+        const maxLabels = 8;
+        const step = Math.max(1, Math.ceil(bars.length / maxLabels));
+        return bars
+          .filter((b, i) => i % step === 0 || i === bars.length - 1)
+          .map((b) => ({ x: b.x + b.barW / 2, label: fmtDate(b.bucket).split(' ')[0] }));
+      });
+
+      // Provider cost horizontal bar chart — global level only.
+      const providerChartH = computed(() => Math.max(60, providers.value.length * 28 + 10));
+      const providerBars = computed(() => {
+        const max = Math.max(...providers.value.map((r) => r.total_cost_usd || 0), 0.01);
+        const rowH = 28;
+        const barMaxW = chartW - providerBarPadL - 70;
+        return providers.value.map((r, i) => {
+          const y = 8 + i * rowH;
+          const value = r.total_cost_usd || 0;
+          return {
+            label: r.provider_name,
+            barY: y + 4,
+            barH: rowH - 10,
+            barW: (value / max) * barMaxW,
+            labelY: y + rowH / 2 + 4,
+            valueLabel: fmtCost(r.total_cost_usd),
+            color: providerColors[i % providerColors.length],
+          };
+        });
+      });
+
+      return {
+        ranges, filters, drill, loading, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
+        noData, errorCountSuffix, successRateOkLabel,
+        goGlobal, goClient, goSet, goPrompt, goUser,
+        fmtInt, fmtCost, fmtMs, fmtDate, truncate,
+        statusLabel, runStatusLabel, userRowLabel, triggeredByLabel,
+        chartW, chartH, padL, padR, padT, padB, plotW, plotH, providerBarPadL,
+        dailyBars, dailyXLabels, providerChartH, providerBars,
+      };
+    },
+  });
+  app.config.compilerOptions.delimiters = ['[[', ']]'];
+  app.mount('#ops-app');
+})();
+</script>
+
+{% endblock %}

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
@@ -46,6 +46,13 @@ def ops_scoped_run_ids_query(
     the date/client/prompt-set/prompt/user scoping independently, the same role
     `app.services.dashboard.scoped_run_ids_query` plays for the client-facing dashboard.
 
+    `prompt_id` scopes to that prompt's *whole version lineage* (`root_prompt_id`), not just the
+    exact row id — the same rollup `prompt_ops_rows`/`prompt_model_comparison_rows` already use, so
+    `/api/summary?prompt_id=X` and `/api/prompt-detail?prompt_id=X` always agree on how many runs
+    are "this prompt's runs" instead of one counting only the current version and the other
+    counting the full history (found by exercising T3's prompt-detail view against real data,
+    where the two disagreed before this fix).
+
     `user_id` and `is_scheduler` are mutually exclusive from the caller's perspective (the router
     resolves the `user_id` query param into exactly one of "a specific user", "the scheduler
     pseudo-user", or neither) — `is_scheduler=True` takes precedence here if both were somehow
@@ -67,7 +74,9 @@ def ops_scoped_run_ids_query(
     if prompt_set_id is not None:
         query = query.where(Prompt.prompt_set_id == prompt_set_id)
     if prompt_id is not None:
-        query = query.where(Run.prompt_id == prompt_id)
+        root_id_subq = select(func.coalesce(Prompt.root_prompt_id, Prompt.id)).where(Prompt.id == prompt_id).scalar_subquery()
+        lineage_ids_subq = select(Prompt.id).where(or_(Prompt.id == root_id_subq, Prompt.root_prompt_id == root_id_subq))
+        query = query.where(Run.prompt_id.in_(lineage_ids_subq))
     if is_scheduler:
         query = query.where(Run.trigger_type == "scheduled", Run.triggered_by_user_id.is_(None))
     elif user_id is not None:
@@ -507,6 +516,11 @@ class RecentRunRow:
     `/ops/api/user-detail` (design decision 6). Cost here is computed via the Python
     `estimate_run_cost`, not the SQL expression — this is always a bounded ~15-row fetch, not a
     full-table aggregation, so it isn't the pattern design decision 4 rules out.
+
+    `triggered_by_user_id`/`triggered_by_user_name`/`is_scheduler`/`is_unknown_attribution` mirror
+    `UserOpsRow`'s three-way split (design decision 10 plus the unknown-attribution case found
+    during T2) — a flag set, not a pre-baked label, so the Vue island localizes "Scheduler" itself
+    rather than the backend shipping UI text (i18n rule).
     """
 
     run_id: int
@@ -515,6 +529,11 @@ class RecentRunRow:
     status: str
     latency_ms: int | None
     cost_usd: float | None
+    error_message: str | None
+    triggered_by_user_id: int | None
+    triggered_by_user_name: str | None
+    is_scheduler: bool
+    is_unknown_attribution: bool
     client_name: str | None = None
 
 
@@ -523,9 +542,10 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
     from app.services.cost import estimate_run_cost  # local import: avoids a cost.py <-> here cycle at module load
 
     query = (
-        select(Run, AIModel, RawResponse)
+        select(Run, AIModel, RawResponse, User)
         .join(AIModel, Run.model_id == AIModel.id)
         .outerjoin(RawResponse, RawResponse.run_id == Run.id)
+        .outerjoin(User, Run.triggered_by_user_id == User.id)
         .where(Run.id.in_(run_ids_query))
         .order_by(Run.started_at.desc())
         .limit(limit)
@@ -547,6 +567,11 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
             status=row.Run.status,
             latency_ms=row.Run.latency_ms,
             cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel),
+            error_message=row.Run.error_message,
+            triggered_by_user_id=row.Run.triggered_by_user_id,
+            triggered_by_user_name=row.User.name if row.User else None,
+            is_scheduler=row.Run.triggered_by_user_id is None and row.Run.trigger_type == "scheduled",
+            is_unknown_attribution=row.Run.triggered_by_user_id is None and row.Run.trigger_type != "scheduled",
             client_name=row.client_name if with_client_name else None,
         )
         for row in rows
