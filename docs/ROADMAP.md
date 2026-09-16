@@ -12,6 +12,14 @@ Každá položka je zatím jen **rámec** — teprve až se na ni dojde, dostane
 `docs/TASKS_PHASEn.md`/`docs/PROMPTS_PHASEn.md` pár se schváleným schématem a
 design decisions, stejně jako fáze 1–5.
 
+**Dodatečná úprava (2026-09-15):** Rozsáhlá konverzace o Philipově "AI
+Perception Analysis Platform" functional spec dokumentu, o komerčním
+směřování appky (potvrzeno — SignalMap se plánuje jako komerční produkt,
+Knauf je reálné, probíhající jednání) a o konkrétním technickém návrhu pro
+#4/#5/#10. Plné bod-po-bodu srovnání spec dokumentu s touhle roadmapou:
+[Evidence Gap Ledger artefakt](https://claude.ai/artifact/2d5A52xq28j49bmmT9nScu).
+Výsledky promítnuty do #4, #5, #9, #10 níže a do nových položek #11–16.
+
 ---
 
 ## 1. Auth + user management (admin / editor / viewer)
@@ -190,17 +198,28 @@ vývojářově PC). Nic z tohohle ještě není řešené.
 Ověřit HTTPS funguje, auth blokuje neautorizovaný přístup, appka běží
 identicky jako lokálně (Docker Compose portabilita, NFR-8).
 
-## 4. Cost/ops dashboard
+## 4. Ops dashboard (interní)
 
 **Proč před schedulerem, ne po něm:** chcete vidět náklady dřív, než appka
-začne spouštět runy automaticky a nehlídaně.
+začne spouštět runy automaticky a nehlídaně. Přejmenováno z "Cost/ops
+dashboard" (2026-09-15) — odděleno od budoucího Billingu (#16), který je
+jiná věc (klientské účtování, ne interní viditelnost).
 
 - Data už existují, nejde o nové schéma: `runs.latency_ms`, `token_usage`
   (JSON na `RawResponse`), `cost_per_1k_input_usd`/`cost_per_1k_output_usd`
-  (na `ai_models`, z fáze 2 admin UI).
-- Nová agregace v `app/services/dashboard.py` (nebo samostatný
-  `app/services/cost.py`) + dashboard sekce: náklady podle klienta/promptu/
-  modelu za období, trend v čase.
+  (na `ai_models`, z fáze 2 admin UI), `runs.triggered_by_user_id` (#1).
+- Dvě nezávislé osy pohledu: Klient → Prompt Set → Prompt (vnořené), a
+  odděleně Uživatel (napříč klienty — kdo runy spouští, včetně pseudo-
+  uživatele "Scheduler" pro `trigger_type='scheduled'`).
+- Agregace vždy v SQL (`GROUP BY`/`SUM`/`COUNT`), nikdy Python nad plným
+  seznamem `Run` řádků — jediný způsob, jak zůstat rychlý i při tisících
+  runů. Časový bucket u grafu se mění podle rozsahu (den/týden/měsíc),
+  stejný princip jako existující `/dashboard` bucket-switching logika.
+- `/ops` je **admin/editor only, nikdy viewer, nikdy client-facing** —
+  jiná access-control hranice než klientský `/dashboard`.
+- **Implementováno:** `docs/TASKS_OPS_DASHBOARD.md` + `docs/PROMPTS_OPS_DASHBOARD.md`
+  (design odsouhlasený na mockup artefaktu) — T0–T4 hotové a otestované na
+  branch `feature/signalmap-ops-dashboard` (2026-09-15), čeká na merge.
 
 ## 5. Scheduler
 
@@ -211,8 +230,36 @@ scope — teď dává smysl to odemknout).
 - `triggered_by_user_id` (#1) rozliší, kdo/co run spustil.
 - UI koncept z mockupu: přepínač "Repeat" (weekly/monthly) na úrovni promptu
   nebo prompt setu.
-- Bez #1 (auth) a #4 (cost dashboard) tohle nejde bezpečně pustit ven —
+- Bez #1 (auth) a #4 (ops dashboard) tohle nejde bezpečně pustit ven —
   nehlídané opakované volání placených API bez viditelnosti nákladů je riziko.
+
+### Technický návrh (2026-09-15)
+
+- **Fronta oddělená od `runs`**, ne rozšíření `Run` samotné — appka má
+  dnes zdokumentovaný dvoufázový životní cyklus runu (`pending` vloženo
+  těsně před voláním adaptéru) a partiální unique index proti duplicitě
+  (`app/models/run.py`); scheduler rozhoduje **kdy** spustit, `Run` vznikne
+  až při skutečném spuštění, přesně jako dnes.
+- Dvě nové tabulky: `scheduled_run_definitions` (pravidlo opakování —
+  `prompt_id`, `frequency`, `next_run_at`, `is_active`) a `run_queue`
+  (konkrétní položka k vykonání — `priority`, `status`, `queued_at`,
+  `run_id` po vzniku).
+- Worker: `SELECT ... FROM run_queue WHERE status='queued' ORDER BY
+  priority DESC, queued_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED` — standardní
+  Postgres vzor, žádný Celery/Redis (drží NFR-8 portabilitu, menší provozní
+  zátěž pro malý tým).
+- Exekuční logika (sestav request → zavolej adapter → ulož Run/RawResponse/
+  Citations) se vytáhne z `trigger_run` do sdíleného `app/services/
+  run_execution.py`, volaného jak z HTTP routeru, tak z workeru — žádná
+  duplikace.
+- Guardrail proti nehlídanému rozpočtu od prvního dne: denní/týdenní limit
+  počtu runů na klienta (jednoduché počítadlo, ne celý billing engine).
+
+**Dodatečná úprava (2026-09-15):** #11 (oprava extrakce citací) a #12 (LLM
+quote-verification skill) by měly jít před #6/#7/#8 — využívají stejný
+`execution_type='llm_prompt'` hák na `AnalysisSkill`, co čeká nevyužitý od
+fáze 3, a #12 je levnější, konkrétnější první krok směrem k LLM-based
+analýze než rovnou sentiment/attribute klasifikace.
 
 ## 6. Brand-attribute tagging
 
@@ -239,6 +286,14 @@ Vizuální redesign appky podle nového brandu. **Návrh design systému a
 prototyp jsou hotové** (artefakt: https://claude.ai/code/artifact/579b74dd-1be1-424d-a54a-52a40060865c)
 — zbývá promítnout do skutečných Jinja2 šablon. Čistě kosmetická/frontendová
 práce, žádné nové schéma, může jet paralelně s kterýmkoliv krokem výše.
+
+**Dodatečná úprava (2026-09-15):** Potvrzeno v konverzaci — appka **zůstává**
+na Jinja2 + HTMX + Vue3 ostrůvcích, žádný přechod na plnou SPA kvůli
+komerčnímu směřování. Spouštěcí podmínka na revizi zůstává přesně ta, co je
+zapsaná v `docs/TASKS_PHASE4.md` design decision 1 (víc obrazovek sdílí
+stav / client-side routing / interaktivních obrazovek víc než CRUD) —
+nejpravděpodobnější moment je **Visual Signal Map** (viz "Zaznamenáno,
+vědomě odloženo" níže), pokud bude sdílet filtry s dashboardem.
 
 ### Design tokeny (odsouhlasené, CSS custom properties)
 
@@ -331,14 +386,32 @@ i v HTML šabloně i ve Vue3 dashboard islandu.
 ## 10. Client-scoped access (dřív "Multi-tenancy")
 
 Izolace dat po klientech (ne po rolích — role řeší "co smí dělat", tohle
-řeší "která data vidí"). **Ne** izolace mezi několika oddělenými
-organizacemi sdílejícími jednu instanci (dřívější `org_id` skica níž byla
-špatný tvar problému) — jde o to, že jeden interní `editor`/`viewer` účet
-(account manager) má být omezený na podmnožinu existujících `Client` řádků,
-které reálně spravuje, zatímco `admin` a dnešní neomezené účty vidí
-všechno stejně jako teď. Design probraný a kriticky zhodnocený v konverzaci
+řeší "která data vidí"). Design probraný a kriticky zhodnocený v konverzaci
 2026-09-13 (porovnáno i s alternativou "feature/module entitlements" —
 viz "Mimo tuhle roadmapu" níže, ta je odložená zcela).
+
+**Dodatečná úprava (2026-09-15) — rozšířeno o smíšený model:** Původní
+rozsah (jen interní account manageři, appku nikdy neotvírá externí klient)
+předpokládal, že appka zůstává čistě agenturní nástroj. Teď je potvrzeno,
+že SignalMap se plánuje jako komerční produkt, a Knauf (reálné, probíhající
+jednání, appka ho už má jako klienta) je konkrétní blízký případ —
+předpoklad "žádný externí přístup" už neplatí obecně, i když pro Knauf
+konkrétně se billing řeší fakturou mimo appku (#16), ne přes appku.
+
+- **Client = hranice tenantu**, ne nová `workspace_id` entita nad Client
+  (jak navrhoval Philipův spec dokument) — Project/Brand entita (#13) řeší
+  "víc scopů pod jedním klientem", tenant-izolace řeší "klient nikdy
+  nevidí jiného klienta", to jsou dvě různé osy.
+- **`users.user_type`** (`internal` / `external`) + **`home_client_id`**
+  (nullable FK, jen pro `external`) — interní uživatelé zůstávají na
+  `user_clients` M2M scopingu (návrh níže, beze změny), externí mají
+  `home_client_id` jako jedinou a neměnnou hranici, žádný `user_clients`
+  řádek. Smíšený model (někteří klienti self-serve, jiní agenturně
+  spravovaní) vyjde přirozeně z toho, jestli danému klientovi appka vůbec
+  vytvoří externí účty, ne z jiného datového modelu.
+- **Nová závislost:** externí přístup (Knauf "Client-view" portál, #14)
+  vyžaduje #2 (deploy hardening) + #3 (jít online) hotové dřív — externí
+  uživatel se nepřipojí na appku běžící lokálně na vývojářově PC.
 
 ### Návrh (odsouhlaseno v konverzaci, čeká na vlastní branch)
 
@@ -369,6 +442,74 @@ viz "Mimo tuhle roadmapu" níže, ta je odložená zcela).
 - Až se na tohle dojde: vlastní `docs/TASKS_CLIENT_SCOPING.md`/
   `docs/PROMPTS_CLIENT_SCOPING.md`, stejný formát jako fáze 2–6, ne
   přílepek k jiné branch.
+
+## 11. Oprava extrakce citací (Gemini)
+
+**Přidáno 2026-09-15.** `app/adapters/google.py::_map_citations` dnes bere
+jen **první** `grounding_support`, co odkazuje na daný chunk, a zbytek
+zahodí (`break` v cyklu) — Gemini ale reálně vrací víc segmentů odpovědi
+na jeden zdroj a víc zdrojů na jeden segment (many-to-many). Appka dnes
+ukládá zploštělou 1:1 citaci místo plné struktury. Malá oprava, ale nutná
+**před** #12 — LLM quote-verification na zploštělých datech by ztrácel
+většinu claim-source vazeb, co Gemini reálně vrací.
+
+## 12. LLM quote-verification skill
+
+**Přidáno 2026-09-15.** První `execution_type='llm_prompt'` analysis skill
+— hák na `AnalysisSkill.prompt_template` čeká nevyužitý od fáze 3
+(`docs/TASKS_PHASE3.md`: "the column exists now so adding one later doesn't
+need another schema change"). Porovnává claim (segment odpovědi) proti
+zdrojové pasáži: lexikální shoda deterministicky (string processing, žádné
+LLM), sémantická podpora (verified/partial/weak/contradictory) přes nové,
+samostatné LLM volání — existující adapter, jiný system prompt, teplota 0,
+žádné search/grounding nástroje.
+
+- Anthropic runy: zdrojová pasáž už je uložená (`citations[].cited_text`
+  přes dnešní `cited_answer_span` pole) — žádné fetchování, jen klasifikace.
+- Gemini runy: potřeba lehký fetch+extract krok (`httpx`+`trafilatura`,
+  žádné verzování pro v1) — zdrojová pasáž dnes uložená není.
+- Závisí na #11 (bez opravy extrakce nemá skill na čem stavět).
+- Vlastní `docs/TASKS_QUOTE_VERIFICATION.md`/`docs/PROMPTS_QUOTE_VERIFICATION.md`,
+  až se na to dojde.
+
+## 13. Project/Brand entita
+
+**Přidáno 2026-09-15.** Vrstva mezi `Client` a `PromptSet` — dnes 1 Client
+= 1 scope, ale jeden platící účet (Škoda, případně Knauf) potřebuje
+sledovat víc scopů zároveň (Škoda DE vs. CZ). Malá, aditivní změna (jedna
+tabulka + FK), nezávislá na #10, ale logicky s ním souvisí (Project je
+"víc scopů pod klientem", #10 je "klient nikdy nevidí jiného klienta").
+
+## 14. Client-view portál + Executive Summary report
+
+**Přidáno 2026-09-15.** Vázáno na Knauf. Omezený, read-only pohled pro
+externí uživatele (#10) + klientsky čitelný jednostránkový report na
+existujících dashboard datech — přímo odpovídá spec dokumentu: "první
+obrazovka musí odpovědět na strategickou otázku okamžitě". Silnější s
+reálně narůstajícími daty ze Scheduleru (#5) než s jedním ručním snímkem —
+proto až po #4/#5, ne před nimi. Vyžaduje #2+#3 (viz #10).
+
+## 15. UUID `public_id` na `clients`
+
+**Přidáno 2026-09-15.** Scoped řešení, ne plná migrace primárních klíčů
+(appka má ~15-17 tabulek, 40 FK míst, 25 migrací — plná migrace je
+invazivní napříč celou appkou a musí se flagovat zvlášť, `AI_INSTRUCTIONS.md`
+§4). `public_id` (UUID) sloupec navíc jen na entitách, co uvidí externí
+klient (`clients`, případně později `runs`/reporty) — interní joiny
+zůstávají na integeru. Řeší konkrétní riziko (enumerace mezi klienty přes
+`/clients/8`, `/clients/9`), co vzniká přesně ve chvíli, kdy začnou
+existovat externí uživatelé (#10/#14) — sekvenováno spolu s nimi.
+
+## 16. Billing
+
+**Přidáno 2026-09-15.** Potvrzený komerční směr, ale **oddělené** od #4
+(ops dashboard zůstává čistě interní). Cenový model (měsíční tarify podle
+vzoru Profound/Otterly/Scrunch vs. metered prepay ze spec dokumentu) je
+otevřená diskuze, zatím nerozhodnuto. Pro Knauf konkrétně billing engine
+**není potřeba** — fakturuje se mimo appku jako běžná konzultační zakázka
+(retainer/projekt), appka jen ukazuje Client-view portál (#14). Tahle
+položka je blokovaná na **existenci prvního self-serve zákazníka**, ne na
+Knauf.
 
 ## Mimo tuhle roadmapu, zaznamenáno pro pořádek
 
@@ -424,6 +565,30 @@ naplánovaná na později:
   grant-tabulku a admin UI stavět, až bude reálný obchodní důvod (externí
   uživatel, placený tier) — ne dřív.
 
+**Přidáno 2026-09-15**, z konverzace o Philipově "AI Perception Analysis
+Platform" functional spec dokumentu (plné srovnání: [Evidence Gap Ledger
+artefakt](https://claude.ai/artifact/2d5A52xq28j49bmmT9nScu)) — zaznamenáno
+jako zvážené a vědomě odložené, ne zapomenuté:
+
+- **Plný Desired Perception Claims model** (verzované, vážené, se
+  schvalovacím flow) — žádný ze zkoumaných konkurentů v kategorii
+  (Profound, Otterly.ai, Scrunch AI) nic takového nemá, prodávají
+  viditelnost/sentiment/citace přímo z promptů. Nahrazeno pro v1 prostým
+  volným textovým polem, pokud/až bude potřeba (#6/#7/#8 na tom nezávisí).
+- **Tři formální scoring modely** (Claim Alignment % / Evidence Quality /
+  Observed Source Contribution s konfigurovatelnými váhami) — čeká na
+  Desired Claims model výše.
+- **Visual Signal Map** (interaktivní graf claimů/zdrojů/evidence) — žádný
+  zkoumaný konkurent nevede grafovou vizualizaci jako hlavní hodnotu;
+  trh kupuje hlavně čísla, trendy a alerty. Zároveň jediný kandidát na
+  revizi rozhodnutí "zůstat na Jinja2+HTMX+Vue ostrůvcích" (#9).
+- **Plná canonical data model migrace na UUID** (všechny primární klíče,
+  ne jen `public_id` na `clients` z #15) — invazivní napříč celou appkou,
+  žádný konkrétní důvod ji dělat teď, když scoped řešení (#15) pokrývá
+  reálné riziko (enumerace).
+- **Plný billing engine** (rate cards, markup, prepayment, wallet/ledger,
+  platební brána) — viz #16, blokováno na existenci self-serve zákazníka.
+
 ---
 
 ## Stav
@@ -431,12 +596,18 @@ naplánovaná na později:
 | # | Krok | Status |
 |---|------|--------|
 | 1 | Auth + user management | Hotovo, smergnuto do `master` 2026-09-12 ([PR #8](https://github.com/jirkalla/SignalMap/pull/8)) — chybí jen systematické ověření na ~375/768px/desktop pro všechny obrazovky |
-| 2 | Deploy hardening | Neimplementováno |
+| 2 | Deploy hardening | Neimplementováno — nová závislost: #14 (Knauf Client-view) na tom čeká |
 | 3 | Jít online | Čeká na 1–2 |
-| 4 | Cost/ops dashboard | Neimplementováno |
-| 5 | Scheduler | Čeká na 1, 4 |
-| 6 | Brand-attribute tagging | Neimplementováno |
-| 7 | Sentiment | Odemčeno, neimplementováno |
+| 4 | Ops dashboard (interní) | T0–T4 hotové a otestované na `feature/signalmap-ops-dashboard` (2026-09-15), čeká na merge |
+| 5 | Scheduler | Technický návrh hotový (2026-09-15), čeká na 4 |
+| 6 | Brand-attribute tagging | Neimplementováno, čeká za #11/#12 |
+| 7 | Sentiment | Odemčeno, čeká za #11/#12 |
 | 8 | Gap/opportunity score | Čeká na 7 |
-| 9 | Frontend rebrand | Design hotový, implementace čeká |
-| 10 | Client-scoped access | Navrženo v konverzaci (2026-09-13), čeká na vlastní branch |
+| 9 | Frontend rebrand | Design hotový, implementace čeká; potvrzeno žádný přechod na SPA (2026-09-15) |
+| 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
+| 11 | Oprava extrakce citací (Gemini) | Navrženo 2026-09-15, čeká na branch |
+| 12 | LLM quote-verification skill | Navrženo 2026-09-15, čeká na 11 |
+| 13 | Project/Brand entita | Navrženo 2026-09-15 |
+| 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15, čeká na 2, 3, 4, 5, 10 |
+| 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
+| 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
