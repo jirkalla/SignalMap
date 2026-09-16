@@ -49,8 +49,10 @@
     </template>
   </nav>
 
-  {# KPI tiles — same 4 metrics at every drill level, scoped by whatever filters are active. #}
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+  {# KPI tiles — same 5 metrics at every drill level, scoped by whatever filters are active.
+     Cost and Tokens sit next to each other on purpose (design decision 7: tokens are shown
+     alongside the cost estimate, never in place of it) — Tokens never replaces the Cost tile. #}
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_runs') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? fmtInt(summary.runs_count) : noData ]]</div>
@@ -67,6 +69,11 @@
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_cost') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? fmtCost(summary.total_cost_usd) : noData ]]</div>
       <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_cost_sub') }}</div>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-lg p-4">
+      <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_tokens') }}</div>
+      <div class="text-2xl font-semibold font-mono">[[ summary ? fmtTokens(summary.total_input_tokens) + ' / ' + fmtTokens(summary.total_output_tokens) : noData ]]</div>
+      <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_tokens_sub') }}</div>
     </div>
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_latency') }}</div>
@@ -97,12 +104,16 @@
     <div v-else class="p-6 text-center text-sm text-stone-400">{{ t('ops.chart_daily_empty') }}</div>
   </div>
 
-  {# Provider cost chart — global level only. #}
+  {# Provider cost chart — global level only. Tokens sit as a second, smaller line under each
+     provider's name (docs/TASKS_COST_COMPONENTS.md CC-6 step 3) rather than appended to the cost
+     value label, since that label's x-position tracks the bar's own (cost-proportional) width —
+     cramming more text there risks running past the SVG viewBox on a provider with a long bar. #}
   <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4" v-if="drill.level === 'global'">
     <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.chart_providers_title') }}</h2></div>
     <div class="p-3" v-if="providers.length">
       <svg :view-box.camel="'0 0 ' + chartW + ' ' + providerChartH" class="w-full h-auto block">
         <text v-for="(row, i) in providerBars" :key="'lbl'+i" x="0" :y="row.labelY" font-size="10.5" font-family="monospace" class="fill-stone-600">[[ row.label ]]</text>
+        <text v-for="(row, i) in providerBars" :key="'tok'+i" x="0" :y="row.tokensLabelY" font-size="9" font-family="monospace" class="fill-stone-400">[[ row.tokensLabel ]]</text>
         <rect v-for="(row, i) in providerBars" :key="'bar'+i" :x="providerBarPadL" :y="row.barY" :width="row.barW" :height="row.barH" rx="3" :fill="row.color" />
         <text v-for="(row, i) in providerBars" :key="'val'+i" :x="providerBarPadL + row.barW + 8" :y="row.labelY" font-size="10.5" font-family="monospace" class="fill-stone-800">[[ row.valueLabel ]]</text>
       </svg>
@@ -261,6 +272,7 @@
               <th class="py-2 px-4 font-medium">{{ t('ops.col_user') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_latency') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_tokens') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
             </tr>
           </thead>
@@ -272,13 +284,14 @@
                 <td class="py-2 px-4 text-stone-600">[[ triggeredByLabel(r) ]]</td>
                 <td class="py-2 px-4 text-right" v-html="runStatusLabel(r.status)"></td>
                 <td class="py-2 px-4 text-right font-mono">[[ r.status === 'success' ? fmtMs(r.latency_ms) : noData ]]</td>
+                <td class="py-2 px-4 text-right font-mono">[[ fmtTokens(r.input_tokens) + ' / ' + fmtTokens(r.output_tokens) ]]</td>
                 <td class="py-2 px-4 text-right font-mono">[[ fmtCost(r.cost_usd) ]]</td>
               </tr>
               <tr v-if="r.error_message" class="bg-rose-50">
-                <td colspan="6" class="py-1.5 px-4 text-xs text-rose-700">[[ r.error_message ]]</td>
+                <td colspan="7" class="py-1.5 px-4 text-xs text-rose-700">[[ r.error_message ]]</td>
               </tr>
             </template>
-            <tr v-if="!loading && promptDetail.recent_runs.length === 0"><td colspan="6" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+            <tr v-if="!loading && promptDetail.recent_runs.length === 0"><td colspan="7" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -321,6 +334,7 @@
               <th class="py-2 px-4 font-medium">{{ t('ops.col_model') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_status') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_latency') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_tokens') }}</th>
               <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_cost') }}</th>
             </tr>
           </thead>
@@ -331,9 +345,10 @@
               <td class="py-2 px-4 text-stone-600">[[ r.model_name ]]</td>
               <td class="py-2 px-4 text-right" v-html="runStatusLabel(r.status)"></td>
               <td class="py-2 px-4 text-right font-mono">[[ r.status === 'success' ? fmtMs(r.latency_ms) : noData ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtTokens(r.input_tokens) + ' / ' + fmtTokens(r.output_tokens) ]]</td>
               <td class="py-2 px-4 text-right font-mono">[[ fmtCost(r.cost_usd) ]]</td>
             </tr>
-            <tr v-if="!loading && userDetail.recent_runs.length === 0"><td colspan="6" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+            <tr v-if="!loading && userDetail.recent_runs.length === 0"><td colspan="7" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -500,6 +515,14 @@
 
       function fmtInt(n) { return new Intl.NumberFormat(locale === 'de' ? 'de-DE' : 'en-US').format(n); }
       function fmtCost(v) { return v === null || v === undefined ? noData : '$' + v.toFixed(2); }
+      function fmtTokens(n) {
+        // Shortened form (1.2M / 847k / 312) — tokens are shown as a quick-scan magnitude here,
+        // not an exact count (that's what hovering/exporting the raw run data is for).
+        if (n === null || n === undefined) return noData;
+        if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+        if (n >= 1_000) return Math.round(n / 1_000) + 'k';
+        return String(n);
+      }
       function fmtMs(v) {
         if (v === null || v === undefined) return noData;
         return v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
@@ -571,11 +594,13 @@
           .map((b) => ({ x: b.x + b.barW / 2, label: fmtDate(b.bucket) }));
       });
 
-      // Provider cost horizontal bar chart — global level only.
-      const providerChartH = computed(() => Math.max(60, providers.value.length * 28 + 10));
+      // Provider cost horizontal bar chart — global level only. Each row is now two lines tall
+      // (provider name + a smaller token-totals line under it, CC-6 step 3), so rowH grew from 28
+      // to 34 to fit both without the next row's label overlapping it.
+      const providerChartH = computed(() => Math.max(70, providers.value.length * 34 + 10));
       const providerBars = computed(() => {
         const max = Math.max(...providers.value.map((r) => r.total_cost_usd || 0), 0.01);
-        const rowH = 28;
+        const rowH = 34;
         const barMaxW = chartW - providerBarPadL - 70;
         return providers.value.map((r, i) => {
           const y = 8 + i * rowH;
@@ -583,9 +608,11 @@
           return {
             label: r.provider_name,
             barY: y + 4,
-            barH: rowH - 10,
+            barH: rowH - 16,
             barW: (value / max) * barMaxW,
-            labelY: y + rowH / 2 + 4,
+            labelY: y + 10,
+            tokensLabelY: y + 22,
+            tokensLabel: fmtTokens(r.total_input_tokens) + ' / ' + fmtTokens(r.total_output_tokens),
             valueLabel: fmtCost(r.total_cost_usd),
             color: providerColors[i % providerColors.length],
           };
@@ -596,7 +623,7 @@
         ranges, filters, drill, loading, loadError, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
         noData, errorCountSuffix, successRateOkLabel,
         goGlobal, goClient, goSet, goPrompt, goUser,
-        fmtInt, fmtCost, fmtMs, fmtDate, truncate,
+        fmtInt, fmtCost, fmtTokens, fmtMs, fmtDate, truncate,
         statusLabel, runStatusLabel, userRowLabel, triggeredByLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH, providerBarPadL,
         dailyBars, dailyXLabels, providerChartH, providerBars,

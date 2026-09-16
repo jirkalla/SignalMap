@@ -134,6 +134,20 @@ class OpsSummaryResponse(BaseModel):
     success_rate_pct: float | None = Field(..., description="0-100. None when runs_count is 0.")
     total_cost_usd: float | None = Field(..., description="None when no run in scope has a computable cost.")
     avg_latency_ms: float | None = Field(..., description="None when no finished run in scope has a recorded latency.")
+    total_input_tokens: int | None = Field(
+        ..., description="Raw input tokens reported across scope, as the provider reported them. None only when no run in scope has a raw_responses row."
+    )
+    total_output_tokens: int | None = Field(
+        ..., description="Raw output tokens reported across scope. None only when no run in scope has a raw_responses row."
+    )
+    total_cache_read_tokens: int | None = Field(
+        ..., description="Cache-read tokens reported across scope. None only when no run in scope has a raw_responses row."
+    )
+    total_cache_write_tokens: int | None = Field(
+        ...,
+        description="Cache-write tokens reported across scope, summed across every write tier (e.g. Anthropic's 5-minute "
+        "and 1-hour tiers). None only when no run in scope has a raw_responses row.",
+    )
 
 
 @router.get("/api/summary", response_model=OpsSummaryResponse)
@@ -183,6 +197,8 @@ class OpsProviderRow(BaseModel):
     provider_name: str
     runs_count: int
     total_cost_usd: float | None
+    total_input_tokens: int | None = Field(..., description="Raw input tokens for this provider. None only when none of its in-scope runs has a raw_responses row.")
+    total_output_tokens: int | None = Field(..., description="Raw output tokens for this provider. None only when none of its in-scope runs has a raw_responses row.")
 
 
 @router.get("/api/providers", response_model=list[OpsProviderRow])
@@ -294,6 +310,8 @@ class OpsRecentRun(BaseModel):
     status: str
     latency_ms: int | None
     cost_usd: float | None
+    input_tokens: int | None = Field(..., description="Raw input tokens the provider reported, not netted against cache. None if the run has no raw_responses row.")
+    output_tokens: int | None = Field(..., description="Raw output tokens the provider reported. None if the run has no raw_responses row.")
     error_message: str | None
     triggered_by_user_id: int | None
     triggered_by_user_name: str | None
@@ -355,6 +373,8 @@ def ops_prompt_detail(
                 status=r.status,
                 latency_ms=r.latency_ms,
                 cost_usd=r.cost_usd,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
                 error_message=r.error_message,
                 triggered_by_user_id=r.triggered_by_user_id,
                 triggered_by_user_name=r.triggered_by_user_name,
@@ -382,6 +402,8 @@ class OpsUserRecentRun(BaseModel):
     status: str
     latency_ms: int | None
     cost_usd: float | None
+    input_tokens: int | None = Field(..., description="Raw input tokens the provider reported, not netted against cache. None if the run has no raw_responses row.")
+    output_tokens: int | None = Field(..., description="Raw output tokens the provider reported. None if the run has no raw_responses row.")
 
 
 class OpsUserDetailResponse(BaseModel):
@@ -440,6 +462,8 @@ def ops_user_detail(
                 status=r.status,
                 latency_ms=r.latency_ms,
                 cost_usd=r.cost_usd,
+                input_tokens=r.input_tokens,
+                output_tokens=r.output_tokens,
             )
             for r in runs
         ],

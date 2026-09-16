@@ -5,18 +5,20 @@ run's started_at, trigger_type, triggered_by_user_id, and token_usage shape can 
 a real trigger_run/FakeAdapter flow can't express "this run was triggered by the Scheduler" or "this
 run predates user-attribution tracking".
 
-The shared `seed` fixture's models have no price set (NULL cost_per_1k_*_usd) — every cost-related
-test here sets a price explicitly on the specific model it uses, rather than changing the shared
-fixture (which other test files rely on staying price-less).
+The shared `seed` fixture's models have no price components — every cost-related test here sets a
+price explicitly on the specific model it uses, rather than changing the shared fixture (which
+other test files rely on staying price-less).
 """
 
 import pytest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Client, Prompt, PromptSet, RawResponse, Run, User
+from app.models import AIModel, AIModelPriceComponent, Client, Prompt, PromptSet, RawResponse, Run, User
+from app.services.cost import estimate_run_cost, load_price_components, prices_at
 
 
 def _client_with_prompt_set(db_session: Session, name: str, slug: str) -> tuple[Client, PromptSet]:
@@ -108,8 +110,34 @@ def _make_run(
 
 
 def _price(db_session: Session, model, cost_in: float, cost_out: float) -> None:
-    model.cost_per_1k_input_usd = cost_in
-    model.cost_per_1k_output_usd = cost_out
+    """Insert 'input'/'output' AIModelPriceComponent rows for `model` — CC-4 repoints run costing
+    at these instead of the old flat cost_per_1k_*_usd columns. `cost_in`/`cost_out` are kept as
+    the old per-1k values this file's callers already pass (× 1000 to the per-1M unit the table
+    actually stores — the same arithmetic identity the old cost_per_1k_* column implied, so every
+    hardcoded expected cost already written against this fixture data still holds unchanged).
+
+    `effective_from` is pinned a year back, comfortably before any run this file creates (the
+    furthest back-dated run is 5 days) — run_cost_sql_expr/prices_at resolve the price effective
+    AT the run's own started_at, not today's, so a component "effective" only from right now would
+    never apply to a run dated in the past.
+    """
+    effective_from = datetime.now(timezone.utc) - timedelta(days=365)
+    db_session.add_all(
+        [
+            AIModelPriceComponent(
+                ai_model_id=model.id,
+                component_type="input",
+                price_per_unit_usd=Decimal(str(cost_in * 1000)),
+                effective_from=effective_from,
+            ),
+            AIModelPriceComponent(
+                ai_model_id=model.id,
+                component_type="output",
+                price_per_unit_usd=Decimal(str(cost_out * 1000)),
+                effective_from=effective_from,
+            ),
+        ]
+    )
     db_session.commit()
 
 
@@ -402,3 +430,248 @@ def test_gemini_shaped_token_usage_is_aggregated_correctly(authed_client: TestCl
 
     resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
     assert resp["total_cost_usd"] == pytest.approx(57 / 1000 * 0.001 + 1061 / 1000 * 0.002, abs=1e-9)
+
+
+# --- CC-7: price versioning, Python/SQL parity, token aggregation --------------------------------
+
+
+def _price_two_versions(
+    db_session: Session, model_id: int, *, old_input: str, old_output: str, old_from, new_input: str, new_output: str, new_from
+) -> None:
+    """Two 'input'/'output' version generations for one model, at distinct effective_from times —
+    unlike `_price`, which only ever writes one (the versioning tests need a real predecessor to
+    prove the resolver picks the one effective at a run's OWN time, not simply "the latest row").
+    """
+    db_session.add_all(
+        [
+            AIModelPriceComponent(ai_model_id=model_id, component_type="input", price_per_unit_usd=Decimal(old_input), effective_from=old_from),
+            AIModelPriceComponent(ai_model_id=model_id, component_type="output", price_per_unit_usd=Decimal(old_output), effective_from=old_from),
+            AIModelPriceComponent(ai_model_id=model_id, component_type="input", price_per_unit_usd=Decimal(new_input), effective_from=new_from),
+            AIModelPriceComponent(ai_model_id=model_id, component_type="output", price_per_unit_usd=Decimal(new_output), effective_from=new_from),
+        ]
+    )
+    db_session.commit()
+
+
+def test_price_versioning_resolves_correctly_in_python(db_session: Session, seed: dict):
+    model = seed["model"]
+    now = datetime.now(timezone.utc)
+    old_from = now - timedelta(days=2)
+    new_from = now - timedelta(hours=1)
+    _price_two_versions(
+        db_session, model.id, old_input="1.0", old_output="5.0", old_from=old_from, new_input="2.0", new_output="10.0", new_from=new_from
+    )
+
+    components = load_price_components(db_session, [model.id])[model.id]
+    old_run_time = now - timedelta(days=1, hours=1)  # after old_from, before new_from
+    new_run_time = now - timedelta(minutes=10)  # after new_from
+
+    old_prices = prices_at(components, old_run_time)
+    new_prices = prices_at(components, new_run_time)
+    assert old_prices == {"input": Decimal("1.000000"), "output": Decimal("5.000000")}
+    assert new_prices == {"input": Decimal("2.000000"), "output": Decimal("10.000000")}
+
+    token_usage = {"input_tokens": 1000, "output_tokens": 200}
+    old_cost = estimate_run_cost(token_usage, model, old_prices)
+    new_cost = estimate_run_cost(token_usage, model, new_prices)
+    assert old_cost == round(1000 / 1e6 * 1.0 + 200 / 1e6 * 5.0, 6)
+    assert new_cost == round(1000 / 1e6 * 2.0 + 200 / 1e6 * 10.0, 6)
+    assert new_cost > old_cost
+
+
+def test_price_versioning_resolves_correctly_via_sql(authed_client: TestClient, db_session: Session, seed: dict):
+    model = seed["model"]
+    now = datetime.now(timezone.utc)
+    old_from = now - timedelta(days=2)
+    new_from = now - timedelta(hours=1)
+    _price_two_versions(
+        db_session, model.id, old_input="1.0", old_output="5.0", old_from=old_from, new_input="2.0", new_output="10.0", new_from=new_from
+    )
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+
+    old_run_time = now - timedelta(days=1, hours=1)
+    new_run_time = now - timedelta(minutes=10)
+    _make_run(db_session, prompt, model_id=model.id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+              started_at=old_run_time, input_tokens=1000, output_tokens=200)
+    _make_run(db_session, prompt, model_id=model.id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+              started_at=new_run_time, input_tokens=1000, output_tokens=200)
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    # If the SQL twin used "today's" price for both runs instead of each run's own effective
+    # price, this would come out as 2x the new-price cost instead — a clearly different number.
+    expected = (1000 / 1e6 * 1.0 + 200 / 1e6 * 5.0) + (1000 / 1e6 * 2.0 + 200 / 1e6 * 10.0)
+    assert resp["total_cost_usd"] == pytest.approx(expected, abs=1e-9)
+
+
+def test_python_and_sql_cost_totals_agree_across_mixed_provider_shapes(authed_client: TestClient, db_session: Session, seed: dict):
+    """The only guard against `run_cost_sql_expr` and `estimate_run_cost` silently drifting apart
+    over time (docs/TASKS_COST_COMPONENTS.md CC-7 step 3) — every other test here exercises one or
+    the other, never both against the exact same data.
+    """
+    effective_from = datetime.now(timezone.utc) - timedelta(days=365)
+    db_session.add_all(
+        [
+            # Anthropic: input/output + cache_read + both write tiers.
+            AIModelPriceComponent(ai_model_id=seed["anthropic_model"].id, component_type="input", price_per_unit_usd=Decimal("2.0"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["anthropic_model"].id, component_type="output", price_per_unit_usd=Decimal("10.0"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["anthropic_model"].id, component_type="cache_read", price_per_unit_usd=Decimal("0.20"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["anthropic_model"].id, component_type="cache_write_5m", price_per_unit_usd=Decimal("2.50"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["anthropic_model"].id, component_type="cache_write_1h", price_per_unit_usd=Decimal("4.0"), effective_from=effective_from),
+            # Gemini: input/output + cache_read.
+            AIModelPriceComponent(ai_model_id=seed["model"].id, component_type="input", price_per_unit_usd=Decimal("0.25"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["model"].id, component_type="output", price_per_unit_usd=Decimal("1.50"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["model"].id, component_type="cache_read", price_per_unit_usd=Decimal("0.025"), effective_from=effective_from),
+            # OpenAI: input/output + cache_read + cache_write.
+            AIModelPriceComponent(ai_model_id=seed["openai_model"].id, component_type="input", price_per_unit_usd=Decimal("0.20"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["openai_model"].id, component_type="output", price_per_unit_usd=Decimal("1.20"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["openai_model"].id, component_type="cache_read", price_per_unit_usd=Decimal("0.02"), effective_from=effective_from),
+            AIModelPriceComponent(ai_model_id=seed["openai_model"].id, component_type="cache_write", price_per_unit_usd=Decimal("0.25"), effective_from=effective_from),
+        ]
+    )
+    db_session.commit()
+
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    started_at = datetime.now(timezone.utc) - timedelta(days=1)
+
+    runs = []
+    for model_id, token_usage in (
+        (
+            seed["anthropic_model"].id,
+            {
+                "input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500,
+                "cache_creation": {"ephemeral_5m_input_tokens": 300, "ephemeral_1h_input_tokens": 100},
+            },
+        ),
+        (seed["model"].id, {"prompt_token_count": 2000, "candidates_token_count": 300, "cached_content_token_count": 800}),
+        (
+            seed["openai_model"].id,
+            {"input_tokens": 10_000, "output_tokens": 1_000, "input_tokens_details": {"cached_tokens": 4_000, "cache_write_tokens": 1_000}},
+        ),
+        (seed["model"].id, {"prompt_token_count": 500, "candidates_token_count": 50}),  # no cache activity
+    ):
+        run = Run(prompt_id=prompt.id, model_id=model_id, market_id=seed["market"].id, persona_id=seed["persona"].id, status="success", started_at=started_at)
+        db_session.add(run)
+        db_session.flush()
+        db_session.add(RawResponse(run_id=run.id, raw_payload={"answer": "..."}, token_usage=token_usage))
+        runs.append(run)
+    db_session.commit()
+
+    model_ids = list({r.model_id for r in runs})
+    components_by_model = load_price_components(db_session, model_ids)
+    models_by_id = {m.id: m for m in db_session.query(AIModel).filter(AIModel.id.in_(model_ids)).all()}
+    python_total = 0.0
+    for run in runs:
+        raw_response = db_session.query(RawResponse).filter_by(run_id=run.id).one()
+        model = models_by_id[run.model_id]
+        prices = prices_at(components_by_model.get(model.id, []), run.started_at)
+        cost = estimate_run_cost(raw_response.token_usage, model, prices)
+        assert cost is not None
+        python_total += cost
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+    assert resp["runs_count"] == 4
+    assert resp["total_cost_usd"] == pytest.approx(python_total, abs=1e-6)
+
+
+def test_token_totals_match_seeded_data(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    started_at = datetime.now(timezone.utc) - timedelta(days=1)
+
+    run1 = Run(prompt_id=prompt.id, model_id=seed["anthropic_model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, status="success", started_at=started_at)
+    db_session.add(run1)
+    db_session.flush()
+    db_session.add(RawResponse(run_id=run1.id, raw_payload={"answer": "..."}, token_usage={
+        "input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500,
+        "cache_creation": {"ephemeral_5m_input_tokens": 300, "ephemeral_1h_input_tokens": 100},
+    }))
+    run2 = Run(prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, status="success", started_at=started_at)
+    db_session.add(run2)
+    db_session.flush()
+    db_session.add(RawResponse(run_id=run2.id, raw_payload={"answer": "..."}, token_usage={
+        "prompt_token_count": 2000, "candidates_token_count": 300, "cached_content_token_count": 800,
+    }))
+    db_session.commit()
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    assert resp["total_input_tokens"] == 1000 + 2000  # RAW counts, never netted against cache
+    assert resp["total_output_tokens"] == 200 + 300
+    assert resp["total_cache_read_tokens"] == 500 + 800
+    assert resp["total_cache_write_tokens"] == 300 + 100  # both Anthropic write tiers summed
+
+
+def test_token_totals_are_none_when_no_run_in_scope_has_a_raw_responses_row(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=1), status="error", error_message="boom",
+    )
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    assert resp["runs_count"] == 1
+    assert resp["total_input_tokens"] is None
+    assert resp["total_output_tokens"] is None
+    assert resp["total_cache_read_tokens"] is None
+    assert resp["total_cache_write_tokens"] is None
+
+
+def test_token_totals_are_none_for_a_run_with_an_unrecognized_token_usage_shape(authed_client: TestClient, db_session: Session, seed: dict):
+    """Regression guard (code review finding): a RawResponse row that exists but whose
+    token_usage matches no known provider shape must make total_input_tokens/total_output_tokens
+    None, the same as "no RawResponse at all" — never a silent 0 that dilutes/hides an unknown run
+    (design decision 7's "no data is masked as zero" discipline, extended from cost to tokens).
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    run = Run(
+        prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        status="success", started_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(RawResponse(run_id=run.id, raw_payload={"answer": "..."}, token_usage={"some_other_provider_field": 123}))
+    db_session.commit()
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    assert resp["runs_count"] == 1
+    assert resp["total_input_tokens"] is None
+    assert resp["total_output_tokens"] is None
+
+
+def test_cache_token_totals_are_zero_not_none_when_a_run_has_no_cache_activity(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=1), input_tokens=500, output_tokens=50,
+    )
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    assert resp["total_input_tokens"] == 500
+    assert resp["total_output_tokens"] == 50
+    assert resp["total_cache_read_tokens"] == 0  # a real run exists, so this is a known zero, not unknown
+    assert resp["total_cache_write_tokens"] == 0
+
+
+def test_provider_rows_include_token_totals(authed_client: TestClient, db_session: Session, seed: dict):
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=1), input_tokens=57, output_tokens=1061, token_usage_shape="gemini",
+    )
+
+    rows = authed_client.get(f"/ops/api/providers?range=30d&client_id={client_row.id}").json()
+
+    assert len(rows) == 1
+    assert rows[0]["total_input_tokens"] == 57
+    assert rows[0]["total_output_tokens"] == 1061

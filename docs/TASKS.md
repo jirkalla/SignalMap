@@ -343,6 +343,36 @@ event loop instead of a threadpool).
 Full task breakdown, design decisions, and the complete code-review remediation log:
 `docs/TASKS_BULK_IMPORT_MULTI_MODEL.md` and `docs/PROMPTS_BULK_IMPORT_MULTI_MODEL.md`.
 
+## Ops dashboard
+
+Branch `feature/signalmap-ops-dashboard`, merged 2026-09-16
+([PR #13](https://github.com/jirkalla/SignalMap/pull/13)). Internal `/ops` dashboard — cost,
+latency, and error visibility across every client, admin/editor only and never client-facing,
+entirely separate from the client-facing `/dashboard` (docs/ROADMAP.md #4; a prerequisite for the
+Scheduler, #5). Adds a `7d` range option to the existing client dashboard, a shared date-range
+resolver (`app/services/date_ranges.py`), run cost estimation (`app/services/cost.py`, reading
+whichever provider-specific token-usage key shape a given run's `token_usage` actually has), a
+9-endpoint SQL aggregation API (`app/services/ops_dashboard.py`/`app/routers/ops_dashboard.py`),
+and a Vue3 island page (`app/templates/ops/index.html`) with client/prompt-set/prompt drill-down
+plus an independent cross-client user axis — including a "Scheduler" pseudo-user
+(`trigger_type='scheduled'`) and a separate "unknown attribution" bucket for runs that predate
+phase 6's user-attribution tracking, found while implementing this rather than assumed upfront.
+Bundles one small unrelated fix found along the way: bulk-import's default market now comes from
+the prompt set's own existing prompts (or the browser's last choice), not always the
+alphabetically-first market.
+
+`/code-review high` on the full branch diff found and fixed 10 issues before merge: a
+prompt-detail "view all runs" link that undercounted against its own lineage-wide totals (closed
+via an additive `/prompts/{id}?scope=lineage` param, default behavior unchanged for every other
+caller), hardcoded English status text bypassing i18n, a daily-chart date off-by-one for
+negative-UTC-offset viewers, unhandled failed API responses rendered as if they were valid data, a
+stale-response race on rapid drill-down clicks, plus reuse/efficiency cleanup (shared
+day/week/month bucketing, a deduplicated Scheduler/unknown-attribution classifier, `ops_summary`
+cut from 3 DB round-trips to 1, `prompt_ops_rows` from 2 to 1, keyword-only scoping filters).
+
+Full task breakdown and design decisions: `docs/TASKS_OPS_DASHBOARD.md` and
+`docs/PROMPTS_OPS_DASHBOARD.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

@@ -18,10 +18,18 @@
   {{ text_field('display_name', t('ai_model.display_name_label'), model.display_name if model else '') }}
 
   <div class="grid sm:grid-cols-2 gap-x-4">
-    {{ text_field('cost_per_million_input_usd', t('ai_model.cost_input_label'), model.cost_per_million_input_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
-    {{ text_field('cost_per_million_output_usd', t('ai_model.cost_output_label'), model.cost_per_million_output_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_input', t('ai_model.cost_component_input_label'), model.price_input if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_output', t('ai_model.cost_component_output_label'), model.price_output if model else '', placeholder=t('ai_model.cost_placeholder')) }}
   </div>
-  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.cost_hint') }}</p>
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('price_cache_read', t('ai_model.cost_component_cache_read_label'), model.price_cache_read if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_cache_write', t('ai_model.cost_component_cache_write_label'), model.price_cache_write if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+  </div>
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('price_cache_write_5m', t('ai_model.cost_component_cache_write_5m_label'), model.price_cache_write_5m if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_cache_write_1h', t('ai_model.cost_component_cache_write_1h_label'), model.price_cache_write_1h if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+  </div>
+  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.cost_components_hint') }}</p>
 
   <div class="grid sm:grid-cols-2 gap-x-4">
     {{ text_field('context_window_tokens', t('ai_model.context_window_label'), model.context_window_tokens if model else '', placeholder=t('ai_model.context_window_placeholder')) }}
@@ -45,6 +53,7 @@
         <tr class="text-left text-xs text-stone-400 uppercase tracking-wide">
           <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_from_label') }}</th>
           <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_until_label') }}</th>
+          <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_component_label') }}</th>
           <th class="pb-1 font-medium">{{ t('ai_model.cost_label') }}</th>
         </tr>
       </thead>
@@ -53,13 +62,8 @@
         <tr class="border-t border-stone-100">
           <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(row.effective_from, t('common.utc_suffix'), seconds=False) }}</td>
           <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(valid_until, t('common.utc_suffix'), seconds=False) if valid_until else t('ai_model.price_history_current_label') }}</td>
-          <td class="py-1 text-stone-600">
-            {%- if row.cost_per_1k_input_usd is not none and row.cost_per_1k_output_usd is not none -%}
-            ${{ '%.2f'|format(row.cost_per_1k_input_usd * 1000) }} / ${{ '%.2f'|format(row.cost_per_1k_output_usd * 1000) }} {{ t('ai_model.cost_per_million_suffix') }}
-            {%- else -%}
-            &mdash;
-            {%- endif -%}
-          </td>
+          <td class="py-1 pr-3 text-stone-600">{{ t('ai_model.cost_component_' ~ row.component_type ~ '_label') }}</td>
+          <td class="py-1 text-stone-600">${{ row.price_per_unit_usd | price }} {{ t('ai_model.cost_per_million_suffix') }}</td>
         </tr>
         {% endfor %}
       </tbody>

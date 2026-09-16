@@ -3,6 +3,8 @@
 history, and lets it be edited — as a new version, never in place (NFR-6).
 """
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
@@ -13,6 +15,7 @@ from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
+from app.services.cost import current_prices
 from app.templating import get_t, render
 from app.utils import default_persona_id, market_options, persona_options
 
@@ -30,7 +33,7 @@ def _get_prompt_or_404(db: Session, request: Request, prompt_id: int) -> Prompt:
     return prompt
 
 
-def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
+def _runnable_model_groups(db: Session) -> list[tuple[str, list[tuple[AIModel, dict[str, Decimal]]]]]:
     """Active models, grouped by provider, for the run-trigger dropdown.
 
     A provider only contributes a group once it has both a registered
@@ -39,19 +42,20 @@ def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
     added ahead of its adapter), simply produces no group rather than a
     broken or dead option.
 
-    Returns full AIModel rows (not just id/label pairs) — prompts/detail.html
-    builds the <option>s itself (not select_grouped_field, which only knows
-    generic (value, text) pairs) so it can also pre-render each model's
-    cost_badge for the live price/free indicator below the dropdown.
+    Returns (AIModel, prices) pairs, not bare AIModel rows — prompts/detail.html builds the
+    <option>s itself (not select_grouped_field, which only knows generic (value, text) pairs) so
+    it can also pre-render each model's cost_badge for the live price/free indicator below the
+    dropdown, and cost_badge needs that model's current component prices (app.services.cost.
+    current_prices) alongside it (docs/TASKS_COST_COMPONENTS.md CC-3 step 6).
     """
     models = db.scalars(
         select(AIModel).join(Provider).where(AIModel.is_active.is_(True)).order_by(Provider.name, AIModel.display_name)
     ).all()
-    groups: dict[str, list[AIModel]] = {}
-    for model in models:
-        if not has_adapter(model.provider.code):
-            continue
-        groups.setdefault(model.provider.name, []).append(model)
+    runnable = [m for m in models if has_adapter(m.provider.code)]
+    prices = current_prices(db, [m.id for m in runnable])
+    groups: dict[str, list[tuple[AIModel, dict[str, Decimal]]]] = {}
+    for model in runnable:
+        groups.setdefault(model.provider.name, []).append((model, prices.get(model.id, {})))
     return list(groups.items())
 
 

@@ -19,7 +19,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
-from app.services.cost import run_cost_sql_expr
+from app.services.cost import run_cost_sql_expr, run_token_sql_expr
 from app.services.date_ranges import day_starts, month_starts, week_starts
 
 DailyGranularity = Literal["day", "week", "month"]
@@ -28,10 +28,18 @@ DailyGranularity = Literal["day", "week", "month"]
 def _cost_expr():
     """The one place `run_cost_sql_expr` is wired to this app's actual columns — every aggregation
     function below calls this instead of repeating the same four-column argument list.
+
+    Prices from `ai_model_price_components`, effective at each run's own `started_at` (docs/
+    TASKS_COST_COMPONENTS.md CC-4) — not `AIModel.cost_per_1k_*_usd`/today's price.
     """
-    return run_cost_sql_expr(
-        RawResponse.token_usage, AIModel.cost_per_1k_input_usd, AIModel.cost_per_1k_output_usd, AIModel.is_free
-    )
+    return run_cost_sql_expr(RawResponse.token_usage, Run.model_id, Run.started_at, AIModel.is_free)
+
+
+def _token_expr(axis: str):
+    """The one place `run_token_sql_expr` is wired to `RawResponse.token_usage` — every aggregation
+    function below that needs a token total calls this instead of repeating the column reference.
+    """
+    return run_token_sql_expr(RawResponse.token_usage, axis)
 
 
 def _classify_attribution(user_id: int | None, trigger_type: str) -> tuple[bool, bool]:
@@ -103,7 +111,14 @@ def ops_scoped_run_ids_query(
 
 @dataclass
 class OpsSummary:
-    """KPI totals for the resolved scope — backs `/ops/api/summary`."""
+    """KPI totals for the resolved scope — backs `/ops/api/summary`.
+
+    `total_*_tokens` (docs/TASKS_COST_COMPONENTS.md CC-5, design decision 7 — tokens shown
+    alongside cost, never instead of it) are `None` only when no run in scope has a `raw_responses`
+    row at all; a run that has one but reports zero of a given axis counts as 0, not `None` — see
+    `app.services.cost.run_token_sql_expr`'s docstring for how that distinction is preserved
+    through `SUM()`.
+    """
 
     runs_count: int
     success_count: int
@@ -111,6 +126,10 @@ class OpsSummary:
     success_rate_pct: float | None
     total_cost_usd: float | None
     avg_latency_ms: float | None
+    total_input_tokens: int | None
+    total_output_tokens: int | None
+    total_cache_read_tokens: int | None
+    total_cache_write_tokens: int | None
 
 
 def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
@@ -122,16 +141,30 @@ def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
 
     One round trip, not three (code review finding) — `AIModel` is a required FK on `Run` and
     `RawResponse` is unique per `run_id`, so joining both here doesn't change the row count per Run,
-    and all four aggregates can share the one join. `AVG()` skips SQL NULL `latency_ms` values on
-    its own, same relied-on Postgres behavior `avg_share_of_voice` (app/services/dashboard.py)
-    already documents — no extra `IS NOT NULL` filter needed to get a correct average.
+    and all four (now eight) aggregates can share the one join. `AVG()` skips SQL NULL `latency_ms`
+    values on its own, same relied-on Postgres behavior `avg_share_of_voice`
+    (app/services/dashboard.py) already documents — no extra `IS NOT NULL` filter needed to get a
+    correct average.
     """
-    success_count, error_count, total_cost, avg_latency = db.execute(
+    (
+        success_count,
+        error_count,
+        total_cost,
+        avg_latency,
+        total_input,
+        total_output,
+        total_cache_read,
+        total_cache_write,
+    ) = db.execute(
         select(
             func.count(Run.id).filter(Run.status == "success"),
             func.count(Run.id).filter(Run.status == "error"),
             func.sum(_cost_expr()),
             func.avg(Run.latency_ms),
+            func.sum(_token_expr("input")),
+            func.sum(_token_expr("output")),
+            func.sum(_token_expr("cache_read")),
+            func.sum(_token_expr("cache_write")),
         )
         .select_from(Run)
         .join(AIModel, Run.model_id == AIModel.id)
@@ -147,6 +180,10 @@ def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
         success_rate_pct=round(100 * success_count / runs_count, 1) if runs_count else None,
         total_cost_usd=float(total_cost) if total_cost is not None else None,
         avg_latency_ms=round(float(avg_latency), 1) if avg_latency is not None else None,
+        total_input_tokens=int(total_input) if total_input is not None else None,
+        total_output_tokens=int(total_output) if total_output is not None else None,
+        total_cache_read_tokens=int(total_cache_read) if total_cache_read is not None else None,
+        total_cache_write_tokens=int(total_cache_write) if total_cache_write is not None else None,
     )
 
 
@@ -210,19 +247,26 @@ def daily_values(db: Session, run_ids_query: Select, granularity: DailyGranulari
 
 @dataclass
 class ProviderCostRow:
-    """One row of the provider cost table — backs `/ops/api/providers`."""
+    """One row of the provider cost table — backs `/ops/api/providers`. `total_input_tokens`/
+    `total_output_tokens` follow the same `None`-only-when-no-raw_responses-row rule as
+    `OpsSummary`'s token totals.
+    """
 
     provider_id: int
     provider_name: str
     runs_count: int
     total_cost_usd: float | None
+    total_input_tokens: int | None
+    total_output_tokens: int | None
 
 
 def provider_cost_rows(db: Session, run_ids_query: Select) -> list[ProviderCostRow]:
-    """Cost and volume by provider across `run_ids_query`, ranked by total cost."""
+    """Cost, volume, and token totals by provider across `run_ids_query`, ranked by total cost."""
     cost_expr = _cost_expr()
+    input_expr = _token_expr("input")
+    output_expr = _token_expr("output")
     rows = db.execute(
-        select(Provider.id, Provider.name, func.count(Run.id), func.sum(cost_expr))
+        select(Provider.id, Provider.name, func.count(Run.id), func.sum(cost_expr), func.sum(input_expr), func.sum(output_expr))
         .select_from(Run)
         .join(AIModel, Run.model_id == AIModel.id)
         .join(Provider, AIModel.provider_id == Provider.id)
@@ -233,7 +277,12 @@ def provider_cost_rows(db: Session, run_ids_query: Select) -> list[ProviderCostR
     ).all()
     return [
         ProviderCostRow(
-            provider_id=row[0], provider_name=row[1], runs_count=row[2], total_cost_usd=float(row[3]) if row[3] is not None else None
+            provider_id=row[0],
+            provider_name=row[1],
+            runs_count=row[2],
+            total_cost_usd=float(row[3]) if row[3] is not None else None,
+            total_input_tokens=int(row[4]) if row[4] is not None else None,
+            total_output_tokens=int(row[5]) if row[5] is not None else None,
         )
         for row in rows
     ]
@@ -502,6 +551,10 @@ class RecentRunRow:
     `UserOpsRow`'s three-way split (design decision 10 plus the unknown-attribution case found
     during T2) — a flag set, not a pre-baked label, so the Vue island localizes "Scheduler" itself
     rather than the backend shipping UI text (i18n rule).
+
+    `input_tokens`/`output_tokens` (docs/TASKS_COST_COMPONENTS.md CC-5) are the RAW counts the
+    provider reported (`app.services.cost.raw_input_output_tokens`), not netted against cache —
+    same design decision 7 as `OpsSummary`'s token totals.
     """
 
     run_id: int
@@ -510,6 +563,8 @@ class RecentRunRow:
     status: str
     latency_ms: int | None
     cost_usd: float | None
+    input_tokens: int | None
+    output_tokens: int | None
     error_message: str | None
     triggered_by_user_id: int | None
     triggered_by_user_name: str | None
@@ -520,7 +575,12 @@ class RecentRunRow:
 
 def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, limit: int = 15) -> list[RecentRunRow]:
     """The most recent `limit` runs in `run_ids_query`, most recent first."""
-    from app.services.cost import estimate_run_cost  # local import: avoids a cost.py <-> here cycle at module load
+    from app.services.cost import (  # avoids a cost.py <-> here cycle
+        estimate_run_cost,
+        load_price_components,
+        prices_at,
+        raw_input_output_tokens,
+    )
 
     query = (
         select(Run, AIModel, RawResponse, User)
@@ -540,9 +600,17 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
         )
 
     rows = db.execute(query).all()
+    # One query for every model these ~15 rows reference, not one query per row (same discipline
+    # as app/routers/ai_models.py's _model_rows) — each row then resolves its OWN price as of its
+    # OWN started_at (docs/TASKS_COST_COMPONENTS.md design decision 4), not today's price.
+    components_by_model = load_price_components(db, list({row.AIModel.id for row in rows}))
+
     result = []
     for row in rows:
         is_scheduler, is_unknown_attribution = _classify_attribution(row.Run.triggered_by_user_id, row.Run.trigger_type)
+        prices = prices_at(components_by_model.get(row.AIModel.id, []), row.Run.started_at)
+        token_usage = row.RawResponse.token_usage if row.RawResponse else None
+        input_tokens, output_tokens = raw_input_output_tokens(token_usage)
         result.append(
             RecentRunRow(
                 run_id=row.Run.id,
@@ -550,7 +618,9 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
                 model_name=row.AIModel.model_name,
                 status=row.Run.status,
                 latency_ms=row.Run.latency_ms,
-                cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel),
+                cost_usd=estimate_run_cost(token_usage, row.AIModel, prices),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 error_message=row.Run.error_message,
                 triggered_by_user_id=row.Run.triggered_by_user_id,
                 triggered_by_user_name=row.User.name if row.User else None,
