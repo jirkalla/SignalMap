@@ -193,11 +193,11 @@ agent má rozhodnout sám.
 
 | ID | Name | Status |
 |----|------|--------|
-| SQ-T1 | Schema: `SearchQuery` model + migrace `0010` | ⏳ |
-| SQ-T2 | Adapter vrstva: `RawResponsePayload.search_queries` + mapping v obou adapterech | ⏳ |
-| SQ-T3 | Persistence + zobrazení na run detailu | ⏳ |
-| SQ-T4 | Testy: pytest pokrytí (mapping funkce + perzistence/zobrazení) | ⏳ |
-| SQ-T5 (volitelné) | Export integrace — search queries do CSV/XLSX/JSON | ⏳ |
+| SQ-T1 | Schema: `SearchQuery` model + migrace `0010` | ✅ |
+| SQ-T2 | Adapter vrstva: `RawResponsePayload.search_queries` + mapping v obou adapterech | ✅ |
+| SQ-T3 | Persistence + zobrazení na run detailu | ✅ |
+| SQ-T4 | Testy: pytest pokrytí (mapping funkce + perzistence/zobrazení) | ✅ |
+| SQ-T5 (volitelné) | Export integrace — search queries do CSV/XLSX/JSON | ✅ |
 
 Pořadí vynucené: SQ-T2 potřebuje model z SQ-T1 (perzistence v SQ-T2 zatím
 ne, jen datový tvar). SQ-T3 potřebuje SQ-T1 (tabulka) i SQ-T2 (adapter
@@ -374,13 +374,13 @@ feat(export): include search queries in run/prompt/client exports
 
 ## Completion Checklist
 
-- [ ] Schema návrh (design decisions výše) výslovně potvrzený před SQ-T1
-- [ ] `search_queries` tabulka + migrace `0010`
-- [ ] `RawResponsePayload.search_queries` + mapping v `google.py` a `anthropic.py`,
+- [x] Schema návrh (design decisions výše) výslovně potvrzený před SQ-T1
+- [x] `search_queries` tabulka + migrace `0010`
+- [x] `RawResponsePayload.search_queries` + mapping v `google.py` a `anthropic.py`,
       SDK pole/tvar ověřené proti aktuální dokumentaci (ne z paměti)
-- [ ] Run-trigger ukládá `SearchQuery` řádky, `run_detail` je zobrazuje
-- [ ] i18n klíče `run.search_queries_label`/`run.search_queries_empty` (EN+DE)
-- [ ] `pytest` sada zelená, pokrývá mapping + perzistenci + zobrazení
-- [ ] Ověřeno v prohlížeči na ~640px/~1024px/desktop
-- [ ] (Volitelné, SQ-T5) Export rozšířený o search queries
+- [x] Run-trigger ukládá `SearchQuery` řádky, `run_detail` je zobrazuje
+- [x] i18n klíče `run.search_queries_label`/`run.search_queries_empty` (EN+DE)
+- [x] `pytest` sada zelená, pokrývá mapping + perzistenci + zobrazení (51/51)
+- [x] Ověřeno v prohlížeči na ~375px/~1024px/desktop (živá data, oba providery)
+- [x] (Volitelné, SQ-T5) Export rozšířený o search queries
 - [ ] `docs/TASKS.md` — nová sekce "Search query capture" po smergnutí
