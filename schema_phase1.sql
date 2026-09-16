@@ -111,7 +111,13 @@ CREATE TABLE citations (
     source_title        VARCHAR(300),
     source_domain       VARCHAR(200),
     citation_position   INTEGER,
-    cited_answer_span   TEXT
+    -- cited_answer_span / answer_span_* describe the ANSWER segment the source
+    -- supports; source_passage is the passage quoted FROM the source page.
+    -- Which provider fills which is documented on app/models/run.py::Citation.
+    cited_answer_span   TEXT,
+    answer_span_start   INTEGER,
+    answer_span_end     INTEGER,
+    source_passage      TEXT
 );
 
 -- ============================================================
