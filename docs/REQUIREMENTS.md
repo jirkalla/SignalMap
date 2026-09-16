@@ -87,6 +87,33 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 - NFR-8 (Portability): The application must run identically via Docker
   Compose on the developer's PC and on a future VPS deployment — no
   environment-specific setup steps outside `.env` values.
+- NFR-9 (Measurement methodology limitation — API vs. deployed interface):
+  Every provider adapter calls the provider's API directly (with grounding/
+  `web_search` enabled where available), not the provider's deployed
+  consumer chat product (chatgpt.com, gemini.google.com, claude.ai).
+  External research (Wang, Baumann, Ho & Koyejo, "API Benchmark Scores Do
+  Not Reliably Transfer to Chatbot Interfaces," arXiv:2609.08861, Sept
+  2026) found that API-based evaluations of ChatGPT/Claude/Gemini diverge
+  from their deployed chat interfaces by ~3.4 percentage points in
+  accuracy and ~2.1 points in test-retest agreement — a bigger gap than
+  between consecutive model generations — and that exposed API controls
+  (system prompt, sampling, reasoning settings) could not reliably close
+  it. SignalMap's runs should therefore be read as "how the provider's API
+  answers with search grounding on," which is a close proxy for, but not
+  proven identical to, what an end user sees in the provider's consumer
+  chat product. This is a known limitation of the measurement approach
+  itself, not a defect — flag it if a future request assumes API results
+  are interchangeable with chat-interface behavior.
+- NFR-10 (Ops visibility is admin/editor only, never client-facing): The
+  `/ops` dashboard (docs/TASKS_OPS_DASHBOARD.md) surfaces cost, latency,
+  and error data — internal engineering/operations visibility, not a
+  client-facing report. It must never be reachable by the `viewer` role or
+  by any future external/client-scoped account (docs/ROADMAP.md #10), and
+  this must be enforced on every route and endpoint itself (`require_role`),
+  not just hidden in the navigation. This is a separate access-control
+  boundary from the client-facing `/dashboard` (phase 4), which viewers can
+  already reach — the two must never be merged into one screen or one
+  permission check.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 
