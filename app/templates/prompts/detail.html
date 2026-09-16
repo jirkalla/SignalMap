@@ -65,12 +65,12 @@
       {% for group_label, models in model_groups %}
       <div class="{% if not loop.first %}mt-2{% endif %}">
         <p class="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-1">{{ group_label }}</p>
-        {% for model in models %}
+        {% for model, prices in models %}
         <label class="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-sm text-stone-700">
           <input type="checkbox" name="model_ids" value="{{ model.id }}" data-model-checkbox
                  class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
           <span class="flex-1 min-w-[120px]">{{ model.display_name or model.model_name }}</span>
-          <span class="shrink-0 ml-auto">{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</span>
+          <span class="shrink-0 ml-auto">{{ cost_badge(model, prices, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</span>
           <span data-model-status="{{ model.id }}" class="text-xs w-4 text-center shrink-0"></span>
         </label>
         {% endfor %}

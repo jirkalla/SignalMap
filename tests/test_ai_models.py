@@ -14,8 +14,8 @@ def _create_model(authed_client: TestClient, provider_id: int, model_name: str =
             "model_name": model_name,
             "display_name": "Test Model",
             "capability_tier": "standard",
-            "cost_per_million_input_usd": "2.00",
-            "cost_per_million_output_usd": "10.00",
+            "price_input": "2.00",
+            "price_output": "10.00",
             "context_window_tokens": "1000000",
             "max_output_tokens": "128000",
             "notes": "",
@@ -31,7 +31,7 @@ def test_create_list_edit_flow(authed_client: TestClient, db_session: Session, s
     list_response = authed_client.get("/ai-models")
     assert list_response.status_code == 200
     assert "test-model-1" in list_response.text
-    assert "$2.00 / $10.00 per 1M" in list_response.text
+    assert "$2 / $10 per 1M" in list_response.text
 
     model = db_session.query(AIModel).filter_by(model_name="test-model-1").one()
 
@@ -42,8 +42,11 @@ def test_create_list_edit_flow(authed_client: TestClient, db_session: Session, s
             "model_name": "test-model-1",
             "display_name": "Renamed Model",
             "capability_tier": "flagship",
-            "cost_per_million_input_usd": "",
-            "cost_per_million_output_usd": "",
+            # Unchanged from _create_model's "2.00"/"10.00" — an already-priced component can't
+            # be cleared by submitting it blank (docs/TASKS_COST_COMPONENTS.md CC-3 step 4), so
+            # this rename-only edit resubmits the existing prices rather than blanking them.
+            "price_input": "2.00",
+            "price_output": "10.00",
             "context_window_tokens": "",
             "max_output_tokens": "",
             "notes": "",
@@ -70,15 +73,16 @@ def test_price_history_is_visible_on_the_edit_form(authed_client: TestClient, db
             "provider_id": model.provider_id,
             "model_name": model.model_name,
             "capability_tier": model.capability_tier,
-            "cost_per_million_input_usd": "9.00",
-            "cost_per_million_output_usd": "45.00",
+            "price_input": "9.00",
+            "price_output": "45.00",
             "notes": "",
         },
         follow_redirects=False,
     )
 
     edit_response = authed_client.get(f"/ai-models/{model.id}/edit")
-    assert "$9.00 / $45.00 per 1M" in edit_response.text
+    assert "$9 per 1M" in edit_response.text
+    assert "$45 per 1M" in edit_response.text
 
 
 def test_duplicate_model_name_under_same_provider_is_rejected(authed_client: TestClient, seed: dict):
@@ -102,7 +106,7 @@ def test_invalid_price_is_rejected(authed_client: TestClient, seed: dict):
             "provider_id": seed["provider"].id,
             "model_name": "bad-price-model",
             "capability_tier": "standard",
-            "cost_per_million_input_usd": "not-a-number",
+            "price_input": "not-a-number",
         },
     )
 

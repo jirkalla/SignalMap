@@ -5,6 +5,7 @@ never have to wire that up individually.
 """
 
 import json
+from decimal import Decimal
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -66,6 +67,24 @@ def _tojson_filter(value: object) -> Markup:
 
 
 templates.env.filters["tojson"] = _tojson_filter
+
+
+def _price_filter(value: Decimal | None) -> str:
+    """Render an `AIModelPriceComponent.price_per_unit_usd` with no trailing zeros, never in
+    scientific notation.
+
+    `'%.2f'|format(...)` (the old flat cost_per_1k_*_usd display) would round Gemini 3.1
+    flash-lite's $0.025/1M cache-read price to $0.03 — exactly the precision loss
+    docs/TASKS_COST_COMPONENTS.md design decision 11 exists to fix. `Decimal.normalize()` alone
+    can fall back to scientific notation for whole numbers (`Decimal("10.000000").normalize()` ==
+    `Decimal("1E+1")`), so the result is re-rendered with the `f` format spec to force fixed-point.
+    """
+    if value is None:
+        return ""
+    return format(value.normalize(), "f")
+
+
+templates.env.filters["price"] = _price_filter
 
 
 def _locale_switch_next(request: Request) -> str:

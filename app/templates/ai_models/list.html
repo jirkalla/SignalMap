@@ -27,14 +27,14 @@
       </tr>
     </thead>
     <tbody>
-      {% for model, run_count in rows %}
+      {% for model, run_count, prices in rows %}
       <tr class="border-t border-stone-100 hover:bg-stone-50">
         <td class="py-3 px-4 text-stone-600">{{ model.provider.name }}</td>
         <td class="py-3 px-4">
           <div class="font-mono text-xs text-stone-900">{{ model.model_name }}</div>
           {% if model.display_name %}<div class="text-stone-500">{{ model.display_name }}</div>{% endif %}
         </td>
-        <td class="py-3 px-4 whitespace-nowrap">{{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</td>
+        <td class="py-3 px-4 whitespace-nowrap">{{ cost_badge(model, prices, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}</td>
         <td class="py-3 px-4 text-stone-500 whitespace-nowrap">
           {{ model.context_window_tokens if model.context_window_tokens is not none else t('common.none') }} / {{ model.max_output_tokens if model.max_output_tokens is not none else t('common.none') }}
         </td>
@@ -54,11 +54,11 @@
 </div>
 
 <div class="lg:hidden space-y-3">
-  {% for model, run_count in rows %}
+  {% for model, run_count, prices in rows %}
   <div class="border border-stone-200 rounded-lg p-4 bg-white">
     <div class="flex items-center justify-between">
       <span class="text-xs text-stone-400">{{ model.provider.name }}</span>
-      {{ cost_badge(model, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}
+      {{ cost_badge(model, prices, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}
     </div>
     <div class="font-mono text-sm font-medium text-stone-900 mt-1">{{ model.model_name }}</div>
     {% if model.display_name %}<div class="text-sm text-stone-500">{{ model.display_name }}</div>{% endif %}
