@@ -5,18 +5,19 @@ run's started_at, trigger_type, triggered_by_user_id, and token_usage shape can 
 a real trigger_run/FakeAdapter flow can't express "this run was triggered by the Scheduler" or "this
 run predates user-attribution tracking".
 
-The shared `seed` fixture's models have no price set (NULL cost_per_1k_*_usd) — every cost-related
-test here sets a price explicitly on the specific model it uses, rather than changing the shared
-fixture (which other test files rely on staying price-less).
+The shared `seed` fixture's models have no price components — every cost-related test here sets a
+price explicitly on the specific model it uses, rather than changing the shared fixture (which
+other test files rely on staying price-less).
 """
 
 import pytest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Client, Prompt, PromptSet, RawResponse, Run, User
+from app.models import AIModelPriceComponent, Client, Prompt, PromptSet, RawResponse, Run, User
 
 
 def _client_with_prompt_set(db_session: Session, name: str, slug: str) -> tuple[Client, PromptSet]:
@@ -108,8 +109,34 @@ def _make_run(
 
 
 def _price(db_session: Session, model, cost_in: float, cost_out: float) -> None:
-    model.cost_per_1k_input_usd = cost_in
-    model.cost_per_1k_output_usd = cost_out
+    """Insert 'input'/'output' AIModelPriceComponent rows for `model` — CC-4 repoints run costing
+    at these instead of the old flat cost_per_1k_*_usd columns. `cost_in`/`cost_out` are kept as
+    the old per-1k values this file's callers already pass (× 1000 to the per-1M unit the table
+    actually stores — the same arithmetic identity the old cost_per_1k_* column implied, so every
+    hardcoded expected cost already written against this fixture data still holds unchanged).
+
+    `effective_from` is pinned a year back, comfortably before any run this file creates (the
+    furthest back-dated run is 5 days) — run_cost_sql_expr/prices_at resolve the price effective
+    AT the run's own started_at, not today's, so a component "effective" only from right now would
+    never apply to a run dated in the past.
+    """
+    effective_from = datetime.now(timezone.utc) - timedelta(days=365)
+    db_session.add_all(
+        [
+            AIModelPriceComponent(
+                ai_model_id=model.id,
+                component_type="input",
+                price_per_unit_usd=Decimal(str(cost_in * 1000)),
+                effective_from=effective_from,
+            ),
+            AIModelPriceComponent(
+                ai_model_id=model.id,
+                component_type="output",
+                price_per_unit_usd=Decimal(str(cost_out * 1000)),
+                effective_from=effective_from,
+            ),
+        ]
+    )
     db_session.commit()
 
 

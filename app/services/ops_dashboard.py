@@ -28,10 +28,11 @@ DailyGranularity = Literal["day", "week", "month"]
 def _cost_expr():
     """The one place `run_cost_sql_expr` is wired to this app's actual columns — every aggregation
     function below calls this instead of repeating the same four-column argument list.
+
+    Prices from `ai_model_price_components`, effective at each run's own `started_at` (docs/
+    TASKS_COST_COMPONENTS.md CC-4) — not `AIModel.cost_per_1k_*_usd`/today's price.
     """
-    return run_cost_sql_expr(
-        RawResponse.token_usage, AIModel.cost_per_1k_input_usd, AIModel.cost_per_1k_output_usd, AIModel.is_free
-    )
+    return run_cost_sql_expr(RawResponse.token_usage, Run.model_id, Run.started_at, AIModel.is_free)
 
 
 def _classify_attribution(user_id: int | None, trigger_type: str) -> tuple[bool, bool]:
@@ -520,7 +521,7 @@ class RecentRunRow:
 
 def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, limit: int = 15) -> list[RecentRunRow]:
     """The most recent `limit` runs in `run_ids_query`, most recent first."""
-    from app.services.cost import estimate_run_cost  # local import: avoids a cost.py <-> here cycle at module load
+    from app.services.cost import estimate_run_cost, load_price_components, prices_at  # avoids a cost.py <-> here cycle
 
     query = (
         select(Run, AIModel, RawResponse, User)
@@ -540,9 +541,15 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
         )
 
     rows = db.execute(query).all()
+    # One query for every model these ~15 rows reference, not one query per row (same discipline
+    # as app/routers/ai_models.py's _model_rows) — each row then resolves its OWN price as of its
+    # OWN started_at (docs/TASKS_COST_COMPONENTS.md design decision 4), not today's price.
+    components_by_model = load_price_components(db, list({row.AIModel.id for row in rows}))
+
     result = []
     for row in rows:
         is_scheduler, is_unknown_attribution = _classify_attribution(row.Run.triggered_by_user_id, row.Run.trigger_type)
+        prices = prices_at(components_by_model.get(row.AIModel.id, []), row.Run.started_at)
         result.append(
             RecentRunRow(
                 run_id=row.Run.id,
@@ -550,7 +557,7 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
                 model_name=row.AIModel.model_name,
                 status=row.Run.status,
                 latency_ms=row.Run.latency_ms,
-                cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel),
+                cost_usd=estimate_run_cost(row.RawResponse.token_usage if row.RawResponse else None, row.AIModel, prices),
                 error_message=row.Run.error_message,
                 triggered_by_user_id=row.Run.triggered_by_user_id,
                 triggered_by_user_name=row.User.name if row.User else None,

@@ -1,10 +1,12 @@
-"""Run cost estimation (docs/TASKS_OPS_DASHBOARD.md T1, design decision 8).
+"""Run cost estimation (docs/TASKS_OPS_DASHBOARD.md T1, design decision 8; rewritten to price from
+`ai_model_price_components` in docs/TASKS_COST_COMPONENTS.md CC-4, design decisions 13 and 14).
 
 Kept separate from app/services/dashboard.py — cost estimation is its own domain, useful to a
 future billing engine independent of the client-facing dashboard.
 """
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -13,91 +15,313 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import AIModel, AIModelPriceComponent
+from app.models.provider import COMPONENT_TYPES
 
-# The provider adapters (app/adapters/*.py) dump each provider SDK's usage object onto
-# RawResponse.token_usage as-is, not through a shared shape — Anthropic and OpenAI happen to both
-# use input_tokens/output_tokens, but Gemini's usage_metadata uses prompt_token_count/
-# candidates_token_count instead (verified against real run data). Tried in this order. Public
-# (not a leading-underscore module private) so app/services/ops_dashboard.py's SQL-side cost
-# expression below builds from the exact same list — the two can never independently drift on
-# which provider key names are recognized.
-TOKEN_COUNT_KEY_PAIRS = (
-    ("input_tokens", "output_tokens"),  # Anthropic, OpenAI
-    ("prompt_token_count", "candidates_token_count"),  # Google Gemini
+
+@dataclass(frozen=True)
+class TokenUsageShape:
+    """One provider's raw usage-payload shape, exactly as its adapter (app/adapters/*.py) dumps
+    the provider SDK's usage object onto `RawResponse.token_usage` — see `TOKEN_USAGE_SHAPES`
+    below for how each of these was derived from real stored data, not provider documentation.
+
+    `cache_write_paths` maps `component_type` -> the JSON path to that tier's token count, so a
+    provider with more than one write tier (Anthropic: 5-minute vs 1-hour) can report both.
+
+    `input_includes_cache_read`/`input_includes_cache_write`: whether this provider's raw
+    `input_key` count already contains the cache-read/cache-write tokens reported separately
+    elsewhere in the payload (design decision 13). Anthropic reports both entirely outside
+    `input_tokens`; OpenAI and Gemini fold cache-read into their input count — and, per the
+    CC-4 finding below, OpenAI folds cache-write in too. Get either of these wrong and a cached
+    provider's spend gets billed twice: once at full input price, once at the cache price.
+    """
+
+    input_key: str
+    output_key: str
+    cache_read_path: tuple[str, ...] | None
+    cache_write_paths: dict[str, tuple[str, ...]]
+    input_includes_cache_read: bool
+    input_includes_cache_write: bool
+
+
+# Verified against real data (docs/TASKS_COST_COMPONENTS.md CC-4 step 1), not provider docs — same
+# discipline that caught Gemini's prompt_token_count key during T1 of the ops dashboard. Query run
+# 2026-09-16 against every raw_responses.token_usage in the database:
+#
+#   SELECT p.code, jsonb_object_keys(rr.token_usage) AS key, count(*)
+#   FROM raw_responses rr JOIN runs r ON r.id = rr.run_id JOIN ai_models m ON m.id = r.model_id
+#   JOIN providers p ON p.id = m.provider_id GROUP BY 1, 2 ORDER BY 1, 2;
+#
+# anthropic:      cache_creation, cache_creation_input_tokens, cache_read_input_tokens,
+#                 inference_geo, input_tokens, output_tokens, output_tokens_details,
+#                 server_tool_use, service_tier
+# google_gemini:  cached_content_token_count, cache_tokens_details, candidates_token_count,
+#                 candidates_tokens_details, prompt_token_count, prompt_tokens_details,
+#                 thoughts_token_count, tool_use_prompt_token_count,
+#                 tool_use_prompt_tokens_details, total_token_count, traffic_type
+# openai:         input_tokens, input_tokens_details, output_tokens, output_tokens_details,
+#                 total_tokens
+#
+# All 20 Anthropic rows had all-zero cache fields (no cached traffic yet), so `cache_creation`'s
+# nested shape (`{"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}`) and
+# `input_tokens` excluding it entirely is documented behavior, not directly observed on nonzero
+# data — matches the CC-4 task's own table exactly, no deviation.
+#
+# DEVIATION FROM THE CC-4 TASK'S TABLE, flagged and confirmed with the user before implementing:
+# that table listed OpenAI's cache-write as "not billed separately in the report" (no mapping).
+# The real data disagrees: `input_tokens_details` carries a live `cache_write_tokens` field (9 of
+# 12 OpenAI rows nonzero, e.g. `{"cached_tokens": 0, "cache_write_tokens": 4432}`), and CC-3 had
+# already primed OpenAI models with a real `cache_write` price ($0.25-$5/1M, pricier than input —
+# a real premium tier, not a zero-cost bookkeeping field). Leaving it unmapped would silently
+# under-price every OpenAI run that writes to cache — exactly what this whole CC-1..CC-8 effort
+# exists to stop doing — so `cache_write_paths["cache_write"]` maps it here instead.
+# `input_includes_cache_write=True` for OpenAI is derived, not assumed: across all 12 OpenAI rows,
+# `total_tokens == input_tokens + output_tokens` held exactly, with no separate addition for
+# `cache_write_tokens` — so `cache_write_tokens` (like `cached_tokens`) is a *subset* of
+# `input_tokens`, not additional to it. Confirmed on run ids 58/60/61/62/63/74/77/80/82/89/91/99.
+GEMINI_SHAPE = TokenUsageShape(
+    input_key="prompt_token_count",
+    output_key="candidates_token_count",
+    cache_read_path=("cached_content_token_count",),
+    cache_write_paths={},
+    input_includes_cache_read=True,
+    input_includes_cache_write=False,
 )
 
+OPENAI_SHAPE = TokenUsageShape(
+    input_key="input_tokens",
+    output_key="output_tokens",
+    cache_read_path=("input_tokens_details", "cached_tokens"),
+    cache_write_paths={"cache_write": ("input_tokens_details", "cache_write_tokens")},
+    input_includes_cache_read=True,
+    input_includes_cache_write=True,
+)
 
-def estimate_run_cost(token_usage: dict | None, model: AIModel) -> float | None:
-    """Estimate one run's cost in USD from its token usage and the model's per-1k-token prices.
+ANTHROPIC_SHAPE = TokenUsageShape(
+    input_key="input_tokens",
+    output_key="output_tokens",
+    cache_read_path=("cache_read_input_tokens",),
+    cache_write_paths={
+        "cache_write_5m": ("cache_creation", "ephemeral_5m_input_tokens"),
+        "cache_write_1h": ("cache_creation", "ephemeral_1h_input_tokens"),
+    },
+    input_includes_cache_read=False,
+    input_includes_cache_write=False,
+)
 
-    Returns `None` — never a silent `0.0` — when `token_usage` is missing, its shape doesn't match
-    any known provider's usage keys, or the model is missing either price. The one exception is
-    `model.is_free`: a model explicitly marked free costs 0.0 regardless of token usage, since that
-    field exists precisely to distinguish "known to be free" from "price not entered yet" (same
-    discipline as `RawResponse.has_citations`, see `AIModel`'s docstring) — treating it as unknown
-    here would silently drop free-model runs out of any future cost aggregate instead of correctly
-    counting them as zero-cost. This is an extension of design decision 8, not its literal wording.
+# Anthropic and OpenAI happen to share input_tokens/output_tokens key names, so a payload with
+# neither provider's distinguishing key (no cache activity ever recorded) can't be told apart from
+# either by key name alone — and doesn't need to be: with no cache fields present, both providers'
+# cache handling is a no-op anyway, so this shared fallback prices it exactly like the pre-CC-4
+# code did. Its own `input_includes_cache_read`/`_write` are moot (no cache_read_path/
+# cache_write_paths to ever read from).
+PLAIN_SHAPE = TokenUsageShape(
+    input_key="input_tokens",
+    output_key="output_tokens",
+    cache_read_path=None,
+    cache_write_paths={},
+    input_includes_cache_read=False,
+    input_includes_cache_write=False,
+)
+
+# Public (not a leading-underscore module private), same reason TOKEN_COUNT_KEY_PAIRS was public
+# before it: run_cost_sql_expr below builds its per-axis COALESCE chains from this exact tuple, so
+# the Python and SQL implementations can never independently drift on which keys/paths they know.
+TOKEN_USAGE_SHAPES = (GEMINI_SHAPE, OPENAI_SHAPE, ANTHROPIC_SHAPE, PLAIN_SHAPE)
+
+
+def _select_shape(token_usage: dict) -> TokenUsageShape | None:
+    """Pick the provider shape a payload matches, by its most distinguishing key — never by
+    `model.provider`, since `estimate_run_cost` is a pure function with no access to that relation
+    (tests build `AIModel` rows with no session, see this module's test file's header) and the SQL
+    twin below can't cheaply join `providers` into every cost aggregation either.
+
+    Order matters (docs/TASKS_COST_COMPONENTS.md CC-4 step 3): Anthropic and OpenAI both use
+    input_tokens/output_tokens, so the two are told apart by which OTHER key is present, checked
+    before ever falling through to the shared plain shape.
+    """
+    if "prompt_token_count" in token_usage:
+        return GEMINI_SHAPE
+    if "input_tokens_details" in token_usage:
+        return OPENAI_SHAPE
+    if "cache_creation" in token_usage or "cache_read_input_tokens" in token_usage:
+        return ANTHROPIC_SHAPE
+    if "input_tokens" in token_usage and "output_tokens" in token_usage:
+        return PLAIN_SHAPE
+    return None
+
+
+def _read_path(payload: dict, path: tuple[str, ...] | None) -> float | None:
+    """Walk a nested-key path into a JSON-shaped dict, `None` if any step is missing."""
+    if path is None:
+        return None
+    value: object = payload
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value  # type: ignore[return-value]
+
+
+def estimate_run_cost(token_usage: dict | None, model: AIModel, prices: dict[str, Decimal]) -> float | None:
+    """Estimate one run's cost in USD from its token usage and `prices` (component_type -> USD per
+    1M tokens, from `prices_at`/`current_prices` — the price effective at the run's own time, not
+    necessarily today's).
+
+    Returns `None` — never a silent underestimate — when `token_usage` is missing, its shape
+    doesn't match any known provider's usage keys, the model is missing an `input`/`output` price,
+    or a component reports a NONZERO token count with no matching price in `prices` (design
+    decision 14: "no price" means "unknown", never "free"; a zero count with no price is fine —
+    there's nothing to price). The one exception is `model.is_free`: explicitly free costs 0.0
+    regardless of usage or prices, same as before CC-4 (see `AIModel`'s docstring on why that flag
+    exists).
     """
     if model.is_free:
         return 0.0
-
     if token_usage is None:
         return None
-    if model.cost_per_1k_input_usd is None or model.cost_per_1k_output_usd is None:
+
+    shape = _select_shape(token_usage)
+    if shape is None:
         return None
 
-    for input_key, output_key in TOKEN_COUNT_KEY_PAIRS:
-        if input_key in token_usage and output_key in token_usage:
-            input_tokens = token_usage[input_key]
-            output_tokens = token_usage[output_key]
-            if input_tokens is None or output_tokens is None:
-                return None
-            cost = (input_tokens / 1000) * float(model.cost_per_1k_input_usd) + (output_tokens / 1000) * float(
-                model.cost_per_1k_output_usd
-            )
-            return round(cost, 6)
+    input_tokens = token_usage.get(shape.input_key)
+    output_tokens = token_usage.get(shape.output_key)
+    if input_tokens is None or output_tokens is None:
+        return None
+    if "input" not in prices or "output" not in prices:
+        return None
 
-    return None
+    cache_read_tokens = _read_path(token_usage, shape.cache_read_path) or 0
+    write_tokens_by_type = {
+        component_type: (_read_path(token_usage, path) or 0) for component_type, path in shape.cache_write_paths.items()
+    }
+
+    billable_input = input_tokens
+    if shape.input_includes_cache_read:
+        billable_input -= cache_read_tokens
+    if shape.input_includes_cache_write:
+        billable_input -= sum(write_tokens_by_type.values())
+    billable_input = max(0, billable_input)
+
+    cost = (billable_input / 1e6) * float(prices["input"]) + (output_tokens / 1e6) * float(prices["output"])
+
+    if cache_read_tokens:
+        if "cache_read" not in prices:
+            return None
+        cost += (cache_read_tokens / 1e6) * float(prices["cache_read"])
+
+    for component_type, tokens in write_tokens_by_type.items():
+        if tokens:
+            if component_type not in prices:
+                return None
+            cost += (tokens / 1e6) * float(prices[component_type])
+
+    return round(cost, 6)
+
+
+def _json_path_expr(col: ColumnElement, path: tuple[str, ...]) -> ColumnElement:
+    """SQL equivalent of `_read_path`: chain JSONB `->` down to the last key, `->>` (as text) on
+    it, cast to Float — NULL (not an error) at any missing step, same as the Python version.
+    """
+    expr = col
+    for key in path[:-1]:
+        expr = expr[key]
+    return cast(expr[path[-1]].astext, Float)
 
 
 def run_cost_sql_expr(
     token_usage_col: ColumnElement,
-    cost_per_1k_input_col: ColumnElement,
-    cost_per_1k_output_col: ColumnElement,
+    model_id_col: ColumnElement,
+    started_at_col: ColumnElement,
     is_free_col: ColumnElement,
 ) -> ColumnElement:
     """SQL-side twin of `estimate_run_cost`, for use inside `SUM()`/`AVG()` aggregations
     (docs/TASKS_OPS_DASHBOARD.md T2, design decision 4 — aggregation always in SQL, never a Python
-    loop over full `Run` rows summing per-row `estimate_run_cost()` calls).
+    loop over full `Run` rows).
 
-    Builds one `COALESCE` chain per axis (input tokens, output tokens) across every key name in
-    `TOKEN_COUNT_KEY_PAIRS`, rather than matching key pairs one at a time like the Python function
-    does — safe because no known provider's raw usage payload mixes key names from another
-    provider's shape, so the two axes can never end up combining mismatched values from different
-    providers in practice.
+    Prices come from correlated scalar subqueries against `ai_model_price_components`, one per
+    `component_type`, each picking the latest row with `effective_from <= started_at_col` — the
+    run's OWN time, not today's price (docs/TASKS_COST_COMPONENTS.md design decision 4) — via
+    exactly the `(ai_model_id, component_type, effective_from DESC)` shape
+    `idx_price_components_lookup` (migration 0025) was built for.
 
-    `is_free_col`, when true, always yields 0.0 regardless of the other columns — same is_free
-    short-circuit `estimate_run_cost` applies, and for the same reason (see its docstring).
+    Anthropic and OpenAI can't be told apart by `token_usage_col`'s `input_tokens`/`output_tokens`
+    key names alone (both use them), so which axis subtracts cache tokens from "billable input" is
+    decided per-row from whichever of OpenAI's `input_tokens_details` or Anthropic's
+    `cache_creation`/`cache_read_input_tokens` the row's own JSON actually has — not from a
+    provider join, for the same reason `_select_shape` avoids one (see its docstring). A row with
+    neither (Gemini, or a cache-less Anthropic/OpenAI/plain payload) is treated as "cache read is
+    included in input" by default, which is correct for Gemini and a no-op for everyone else with
+    no cache tokens to subtract anyway.
     """
-    input_tokens_expr = func.coalesce(
-        *(cast(token_usage_col[input_key].astext, Float) for input_key, _ in TOKEN_COUNT_KEY_PAIRS)
+
+    def price_subquery(component_type: str) -> ColumnElement:
+        c = AIModelPriceComponent
+        return (
+            select(c.price_per_unit_usd)
+            .where(c.ai_model_id == model_id_col, c.component_type == component_type, c.effective_from <= started_at_col)
+            .order_by(c.effective_from.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+    prices = {component_type: price_subquery(component_type) for component_type in COMPONENT_TYPES}
+
+    unique_io_pairs = dict.fromkeys((shape.input_key, shape.output_key) for shape in TOKEN_USAGE_SHAPES)
+    input_tokens_expr = func.coalesce(*(cast(token_usage_col[input_key].astext, Float) for input_key, _ in unique_io_pairs))
+    output_tokens_expr = func.coalesce(*(cast(token_usage_col[output_key].astext, Float) for _, output_key in unique_io_pairs))
+
+    anthropic_cache_read = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_read_path)
+    anthropic_write_5m = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_5m"])
+    anthropic_write_1h = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_1h"])
+    openai_cache_read = _json_path_expr(token_usage_col, OPENAI_SHAPE.cache_read_path)
+    openai_cache_write = _json_path_expr(token_usage_col, OPENAI_SHAPE.cache_write_paths["cache_write"])
+    gemini_cache_read = _json_path_expr(token_usage_col, GEMINI_SHAPE.cache_read_path)
+
+    is_anthropic_shape = anthropic_cache_read.is_not(None) | anthropic_write_5m.is_not(None) | anthropic_write_1h.is_not(None)
+
+    cache_token_exprs = {
+        "cache_read": func.coalesce(anthropic_cache_read, openai_cache_read, gemini_cache_read),
+        "cache_write": openai_cache_write,
+        "cache_write_5m": anthropic_write_5m,
+        "cache_write_1h": anthropic_write_1h,
+    }
+
+    # Anthropic's cache tokens are never inside input_tokens, at any tier — subtract nothing for
+    # it. Everyone else (Gemini's cache_read, OpenAI's cache_read + cache_write) has them folded
+    # in, so subtract whichever of those this row actually reports (0 where absent).
+    non_anthropic_subtraction = func.coalesce(cache_token_exprs["cache_read"], 0.0) + func.coalesce(openai_cache_write, 0.0)
+    billable_input_expr = func.greatest(
+        0.0, input_tokens_expr - case((is_anthropic_shape, 0.0), else_=non_anthropic_subtraction)
     )
-    output_tokens_expr = func.coalesce(
-        *(cast(token_usage_col[output_key].astext, Float) for _, output_key in TOKEN_COUNT_KEY_PAIRS)
-    )
-    cost_per_1k_input = cast(cost_per_1k_input_col, Float)
-    cost_per_1k_output = cast(cost_per_1k_output_col, Float)
+
+    missing_price_conditions = [
+        (func.coalesce(token_expr, 0.0) != 0.0) & prices[component_type].is_(None)
+        for component_type, token_expr in cache_token_exprs.items()
+    ]
+    any_missing_cache_price = missing_price_conditions[0]
+    for condition in missing_price_conditions[1:]:
+        any_missing_cache_price = any_missing_cache_price | condition
+
+    cache_cost_terms = [
+        func.coalesce(token_expr, 0.0) / 1_000_000.0 * func.coalesce(cast(prices[component_type], Float), 0.0)
+        for component_type, token_expr in cache_token_exprs.items()
+    ]
+    cache_cost = cache_cost_terms[0]
+    for term in cache_cost_terms[1:]:
+        cache_cost = cache_cost + term
+
+    input_price = cast(prices["input"], Float)
+    output_price = cast(prices["output"], Float)
 
     return case(
         (is_free_col.is_(True), 0.0),
         (
-            input_tokens_expr.is_(None)
-            | output_tokens_expr.is_(None)
-            | cost_per_1k_input_col.is_(None)
-            | cost_per_1k_output_col.is_(None),
+            input_tokens_expr.is_(None) | output_tokens_expr.is_(None) | prices["input"].is_(None) | prices["output"].is_(None),
             None,
         ),
-        else_=(input_tokens_expr / 1000.0) * cost_per_1k_input + (output_tokens_expr / 1000.0) * cost_per_1k_output,
+        (any_missing_cache_price, None),
+        else_=(billable_input_expr / 1_000_000.0) * input_price + (output_tokens_expr / 1_000_000.0) * output_price + cache_cost,
     )
 
 
