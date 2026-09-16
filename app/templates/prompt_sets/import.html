@@ -22,7 +22,7 @@
       {{ export_button_group('/prompt-sets/' ~ prompt_set.id ~ '/prompts/import/template', t('prompt.export_csv'), t('prompt.export_xlsx'), t('prompt.export_json')) }}
     </div>
   </div>
-  {{ select_field('default_market_id', t('prompt_import.default_market_label'), markets, required=True) }}
+  {{ select_field('default_market_id', t('prompt_import.default_market_label'), markets, selected=default_market_id, required=True) }}
   <div class="flex items-center gap-3 mt-2">
     {{ button(t('prompt_import.upload_button')) }}
     <a href="/prompt-sets/{{ prompt_set.id }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>

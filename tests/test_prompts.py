@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adapters.base import RawResponsePayload
 from app.models import Prompt, PromptSet
+from tests.fake_adapter import FakeAdapter
 
 
 def _create_new_version(authed_client: TestClient, prompt_id: int, seed: dict, text: str) -> int:
@@ -99,3 +101,35 @@ def test_editing_text_still_creates_a_new_version(
     assert v2.version == 2
     assert v2.is_current_version is True
     assert v2.text == "A genuinely different question?"
+
+
+def test_scope_lineage_includes_older_versions_runs(
+    authed_client: TestClient, db_session: Session, seed: dict, sample_prompt: Prompt
+):
+    """Code review finding: the ops dashboard shows lineage-wide run totals for a prompt, but
+    `/prompts/{id}` on its own only ever lists that exact version's runs — `?scope=lineage` closes
+    that gap without changing the page's default (every-other-caller) behavior.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "..."}, rendered_text="...", has_citations=False, token_usage={"input_tokens": 10, "output_tokens": 5}
+    )
+    authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    v2_id = _create_new_version(authed_client, sample_prompt.id, seed, "A genuinely different question?")
+    authed_client.post(
+        f"/prompts/{v2_id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    default_scope = authed_client.get(f"/prompts/{v2_id}")
+    lineage_scope = authed_client.get(f"/prompts/{v2_id}?scope=lineage")
+
+    assert default_scope.status_code == 200
+    assert lineage_scope.status_code == 200
+    # each run is rendered twice (desktop table row + mobile card, app/templates/prompts/detail.html)
+    assert default_scope.text.count('href="/runs/') == 2  # only v2's own run
+    assert lineage_scope.text.count('href="/runs/') == 4  # v1's run too

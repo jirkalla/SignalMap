@@ -221,6 +221,18 @@ def test_range_filter_excludes_runs_outside_the_window(authed_client: TestClient
     assert within_90d["runs_count"] == 0
 
 
+def test_7d_range_excludes_runs_outside_the_window(authed_client: TestClient, db_session: Session, seed: dict):
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    outside_7d_at = datetime.now(timezone.utc) - timedelta(days=10)  # older than 7d, well within 30d
+    _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, started_at=outside_7d_at)
+
+    within_30d = authed_client.get(f"/dashboard/api/summary?client_id={acme.id}&range=30d").json()
+    within_7d = authed_client.get(f"/dashboard/api/summary?client_id={acme.id}&range=7d").json()
+
+    assert within_30d["runs_count"] == 1
+    assert within_7d["runs_count"] == 0
+
+
 def test_market_and_provider_filters_narrow_the_result(authed_client: TestClient, db_session: Session, seed: dict):
     acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
     other_market = Market(code="de-DE", language="de", country="DE", locale_name="German (Germany)")

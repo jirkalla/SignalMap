@@ -36,7 +36,7 @@ from app.services.prompt_import import (
     validate_and_check_duplicates,
 )
 from app.templating import get_t, render
-from app.utils import market_options
+from app.utils import market_options, most_recent_prompt_market_id
 
 _IMPORT_PARSERS = {"csv": parse_csv, "xlsx": parse_xlsx, "json": parse_json}
 
@@ -313,12 +313,27 @@ def import_prompts_form(request: Request, prompt_set_id: int, db: Session = Depe
     Lets an editor/admin pick a CSV/XLSX/JSON file plus a default market applied to any row
     that doesn't specify its own `market_code` column — nothing is parsed or saved until the
     file is submitted to the preview step below.
+
+    The default market select is pre-populated rather than left to fall back to the browser's
+    own "first option" behavior (which always looked like cs-CZ, alphabetically first — reported
+    as "it switches back to CZ" even though nothing was actually switching anything): a prompt set
+    that already has prompts defaults to whatever market its most recent prompt used (typically a
+    prompt set is single-language), and a brand-new/empty prompt set falls back to whichever
+    market this browser last picked on any bulk import (`last_import_market_id` cookie, set in
+    `import_prompts_preview` below).
     """
     prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+
+    default_market_id = most_recent_prompt_market_id(db, prompt_set_id)
+    if default_market_id is None:
+        cookie_value = request.cookies.get("last_import_market_id")
+        if cookie_value and cookie_value.isdigit() and db.get(Market, int(cookie_value)) is not None:
+            default_market_id = int(cookie_value)
+
     return render(
         request,
         "prompt_sets/import.html",
-        {"prompt_set": prompt_set, "markets": market_options(db)},
+        {"prompt_set": prompt_set, "markets": market_options(db), "default_market_id": default_market_id},
     )
 
 
@@ -373,7 +388,7 @@ def import_prompts_preview(
 
     rows = validate_and_check_duplicates(rows, db, prompt_set_id, market.id)
 
-    return render(
+    response = render(
         request,
         "prompt_sets/import_preview.html",
         {
@@ -385,6 +400,11 @@ def import_prompts_preview(
             "error_count": sum(1 for r in rows if r.status == "error"),
         },
     )
+    # Remembered as the bulk-import form's fallback default for the next brand-new/empty prompt
+    # set (import_prompts_form above) — a prompt set that already has prompts never reads this,
+    # it derives its own default from its existing prompts' market instead.
+    response.set_cookie("last_import_market_id", str(market.id), max_age=60 * 60 * 24 * 365, samesite="lax")
+    return response
 
 
 @router.post("/prompt-sets/{prompt_set_id}/prompts/import/confirm", dependencies=_editor_or_admin)
