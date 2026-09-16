@@ -67,6 +67,9 @@ CITATION_COLUMNS: tuple[str, ...] = (
     "source_domain",
     "citation_position",
     "cited_answer_span",
+    "source_passage",
+    "answer_span_start",
+    "answer_span_end",
 )
 
 SEARCH_QUERY_COLUMNS: tuple[str, ...] = (
@@ -231,6 +234,9 @@ def _citation_rows(run: Run) -> list[dict[str, Any]]:
             "source_domain": citation.source_domain,
             "citation_position": citation.citation_position,
             "cited_answer_span": citation.cited_answer_span,
+            "source_passage": citation.source_passage,
+            "answer_span_start": citation.answer_span_start,
+            "answer_span_end": citation.answer_span_end,
         }
         for citation in raw.citations
     ]
@@ -376,6 +382,9 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
                     "source_domain": citation.source_domain,
                     "citation_position": citation.citation_position,
                     "cited_answer_span": citation.cited_answer_span,
+                    "source_passage": citation.source_passage,
+                    "answer_span_start": citation.answer_span_start,
+                    "answer_span_end": citation.answer_span_end,
                 }
                 for citation in (raw.citations if raw else [])
             ]

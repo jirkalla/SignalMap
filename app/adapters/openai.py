@@ -21,6 +21,10 @@ Verified against developers.openai.com/api/docs/guides/tools-web-search and
   is applied here.
 - `instructions` is the Responses API's top-level system-prompt field (replaces Chat
   Completions' `system` role message).
+
+The mapping functions take the serialized response dict (`response.model_dump(mode="json")`)
+rather than SDK objects, for the reason documented in app/adapters/google.py's module docstring:
+the GC-T3 backfill replays them over stored `raw_payload` rows.
 """
 
 import openai
@@ -29,55 +33,64 @@ from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domai
 from app.config import get_settings
 
 
-def _map_citations(output: list) -> tuple[list[AdapterCitation], bool]:
+def _map_citations(payload: dict) -> tuple[list[AdapterCitation], bool]:
     """Turn every `message` output item's `url_citation` annotations into the canonical shape.
 
     Walks every `output_text` content block of every `message`-type item, in appearance order,
     assigning a running position — same "position = order the provider presented it in"
-    semantics as app/adapters/google.py and app/adapters/anthropic.py. `cited_answer_span` is
-    sliced from the block's own text via `start_index`/`end_index`, since (unlike Anthropic) the
-    annotation itself carries no separate cited-text field. `has_citations` is explicitly False
-    (FR-13), not just an empty list, when no block carries any `url_citation` annotation.
+    semantics as app/adapters/google.py and app/adapters/anthropic.py. The provider already
+    emits one annotation per (claim, source) pair, so the walk itself is unchanged by the
+    many-to-many fix that rewrote Gemini's mapper. `has_citations` is explicitly False (FR-13),
+    not just an empty list, when no block carries any `url_citation` annotation.
+
+    What each field means: the annotation carries offsets into the answer, so
+    `cited_answer_span` is sliced from the block's own text and the raw `start_index`/`end_index`
+    are kept alongside it in `answer_span_start`/`answer_span_end` — the slice for reading, the
+    offsets for locating it again without re-deriving them. `source_passage` stays None: unlike
+    Anthropic, the annotation quotes nothing from the source page (see AdapterCitation's
+    docstring for the boundary).
     """
     citations: list[AdapterCitation] = []
-    for item in output:
-        if getattr(item, "type", None) != "message":
+    for item in payload.get("output") or []:
+        if (item or {}).get("type") != "message":
             continue
-        for block in getattr(item, "content", None) or []:
-            if getattr(block, "type", None) != "output_text":
+        for block in item.get("content") or []:
+            if (block or {}).get("type") != "output_text":
                 continue
-            text = getattr(block, "text", "") or ""
-            for annotation in getattr(block, "annotations", None) or []:
-                if getattr(annotation, "type", None) != "url_citation":
+            text = block.get("text") or ""
+            for annotation in block.get("annotations") or []:
+                if (annotation or {}).get("type") != "url_citation":
                     continue
-                url = getattr(annotation, "url", None)
-                start = getattr(annotation, "start_index", None)
-                end = getattr(annotation, "end_index", None)
+                url = annotation.get("url")
+                start = annotation.get("start_index")
+                end = annotation.get("end_index")
                 cited_answer_span = text[start:end] if start is not None and end is not None else None
                 citations.append(
                     AdapterCitation(
                         source_url=url,
-                        source_title=getattr(annotation, "title", None),
+                        source_title=annotation.get("title"),
                         source_domain=extract_domain(url),
                         citation_position=len(citations),
                         cited_answer_span=cited_answer_span,
+                        answer_span_start=start,
+                        answer_span_end=end,
+                        source_passage=None,
                     )
                 )
     return citations, bool(citations)
 
 
-def _map_search_queries(output: list) -> list[str]:
+def _map_search_queries(payload: dict) -> list[str]:
     """Extract the query from every `web_search_call` output item, in order.
 
     Analogous to app/adapters/anthropic.py's `_map_search_queries` for `server_tool_use` blocks
     — a run can issue multiple searches, each its own output item.
     """
     queries: list[str] = []
-    for item in output:
-        if getattr(item, "type", None) != "web_search_call":
+    for item in payload.get("output") or []:
+        if (item or {}).get("type") != "web_search_call":
             continue
-        action = getattr(item, "action", None)
-        query = getattr(action, "query", None) if action else None
+        query = (item.get("action") or {}).get("query")
         if query:
             queries.append(query)
     return queries
@@ -122,13 +135,16 @@ class OpenAIAdapter:
         response = self._client.responses.create(**create_kwargs)
 
         rendered_text = response.output_text or None
-        citations, has_citations = _map_citations(response.output)
-        search_queries = _map_search_queries(response.output)
+        # Serialized once and handed to both the mappers and raw_payload, so
+        # what gets stored is exactly what the citations were derived from.
+        payload = response.model_dump(mode="json")
+        citations, has_citations = _map_citations(payload)
+        search_queries = _map_search_queries(payload)
 
         token_usage = response.usage.model_dump(mode="json") if response.usage is not None else None
 
         return RawResponsePayload(
-            raw_payload=response.model_dump(mode="json"),
+            raw_payload=payload,
             rendered_text=rendered_text,
             has_citations=has_citations,
             citations=citations,

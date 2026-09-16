@@ -13,6 +13,11 @@ oldest, `web_search_20250305` ("basic web search"), since the newer versions
 add dynamic filtering / response-inclusion controls that change the response
 shape (nested code-execution blocks) for a benefit (token savings on
 search-heavy agentic loops) SignalMap's single-shot Q&A use case doesn't need.
+
+The mapping functions take the serialized response dict
+(`response.model_dump(mode="json")`) rather than SDK objects, for the reason
+documented in app/adapters/google.py's module docstring: the GC-T3 backfill
+replays them over stored `raw_payload` rows.
 """
 
 import anthropic
@@ -34,36 +39,57 @@ _MAX_WEB_SEARCHES = 5
 _DEFAULT_MAX_TOKENS = 4096
 
 
-def _map_citations(content: list) -> tuple[list[AdapterCitation], bool]:
+def _map_citations(payload: dict) -> tuple[list[AdapterCitation], bool]:
     """Turn every text block's inline `citations` into the canonical shape.
 
     Anthropic attaches citations directly on each text content block
-    (`block.citations`), unlike Gemini's single grounding_metadata blob —
+    (`block["citations"]`), unlike Gemini's single grounding_metadata blob —
     so this walks all text blocks in appearance order and assigns a running
     position across the whole response, the same "position = order the
-    provider presented it in" semantics app/adapters/google.py uses.
+    provider presented it in" semantics the other two adapters use. The
+    provider already emits one citation per (claim, source) pair, so no
+    many-to-many flattening happens here and the walk itself is unchanged.
     has_citations is explicitly False (FR-13), not just an empty list, when
     no block carries any citation.
+
+    What each citation's text means: `cited_text` is a passage quoted FROM THE
+    SOURCE PAGE, so it goes to `source_passage`, not `cited_answer_span` —
+    see AdapterCitation's docstring for the boundary. Storing it as the answer
+    span is the defect this change fixes (measured 2026-09-16: the value was
+    findable in the answer for only 17 of 158 stored rows, and those 17 were
+    short-string coincidences), and it contradicted FR-12's definition of the
+    column.
+
+    `answer_span_start`/`answer_span_end` stay permanently None here. The API
+    returns no offsets into the answer: `web_search_result_location` carries an
+    `encrypted_index`, which indexes the search results, not the answer text.
+    That is a property of the API, not an unfinished piece of this adapter —
+    there is nothing to read them from, so do not "fix" it.
     """
     citations: list[AdapterCitation] = []
-    for block in content:
-        if getattr(block, "type", None) != "text":
+    for block in payload.get("content") or []:
+        if (block or {}).get("type") != "text":
             continue
-        for citation in getattr(block, "citations", None) or []:
-            url = getattr(citation, "url", None)
+        # `or []`, not a default: on non-text blocks the key is present with a
+        # scalar null, so `.get("citations", [])` would still hand back None.
+        for citation in block.get("citations") or []:
+            url = citation.get("url")
             citations.append(
                 AdapterCitation(
                     source_url=url,
-                    source_title=getattr(citation, "title", None),
+                    source_title=citation.get("title"),
                     source_domain=extract_domain(url),
                     citation_position=len(citations),
-                    cited_answer_span=getattr(citation, "cited_text", None),
+                    cited_answer_span=None,
+                    answer_span_start=None,
+                    answer_span_end=None,
+                    source_passage=citation.get("cited_text"),
                 )
             )
     return citations, bool(citations)
 
 
-def _map_search_queries(content: list) -> list[str]:
+def _map_search_queries(payload: dict) -> list[str]:
     """Extract the queries from every `server_tool_use` web_search block, in order.
 
     Verified 2026-09-10 against anthropic==1.4.0 (ServerToolUseBlock:
@@ -75,12 +101,12 @@ def _map_search_queries(content: list) -> list[str]:
     each its own block — this walks all of them, not just the first.
     """
     queries: list[str] = []
-    for block in content:
-        if getattr(block, "type", None) != "server_tool_use":
+    for block in payload.get("content") or []:
+        if (block or {}).get("type") != "server_tool_use":
             continue
-        if getattr(block, "name", None) != "web_search":
+        if block.get("name") != "web_search":
             continue
-        query = (getattr(block, "input", None) or {}).get("query")
+        query = (block.get("input") or {}).get("query")
         if query:
             queries.append(query)
     return queries
@@ -141,13 +167,16 @@ class AnthropicAdapter:
         rendered_text = "".join(
             block.text for block in response.content if getattr(block, "type", None) == "text"
         ) or None
-        citations, has_citations = _map_citations(response.content)
-        search_queries = _map_search_queries(response.content)
+        # Serialized once and handed to both the mappers and raw_payload, so
+        # what gets stored is exactly what the citations were derived from.
+        payload = response.model_dump(mode="json")
+        citations, has_citations = _map_citations(payload)
+        search_queries = _map_search_queries(payload)
 
         token_usage = response.usage.model_dump(mode="json") if response.usage is not None else None
 
         return RawResponsePayload(
-            raw_payload=response.model_dump(mode="json"),
+            raw_payload=payload,
             rendered_text=rendered_text,
             has_citations=has_citations,
             citations=citations,

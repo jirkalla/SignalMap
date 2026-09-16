@@ -117,7 +117,38 @@ class RawResponse(Base):
 
 
 class Citation(Base):
-    """One source the provider cited in a raw response."""
+    """One claim-source link the provider returned for a raw response.
+
+    A row is one (answer segment, source) pair, not one source: a provider may
+    cite the same URL for several segments, and several sources for one segment,
+    and every such pair gets its own row.
+
+    Two different texts are involved in a citation and they live in two separate
+    columns (docs/TASKS_GEMINI_CITATIONS.md design decision 6):
+
+    - `cited_answer_span` (plus `answer_span_start`/`answer_span_end`) is the
+      span OF THE ANSWER that the source supports — the model's own claim.
+      The offsets are kept exactly as the provider returned them, so their
+      unit varies by provider: Gemini counts UTF-8 bytes, OpenAI characters
+      (measured 2026-09-16, see app/adapters/base.py). To locate a span in
+      `RawResponse.rendered_text` portably, match `cited_answer_span` as text
+      rather than slicing by offset.
+    - `source_passage` is the passage FROM THE SOURCE PAGE that the provider
+      quoted as backing for that claim.
+
+    Which provider fills which is not uniform, because the APIs expose different
+    halves of the link:
+
+    - Google Gemini — answer span + offsets (`grounding_supports[].segment`);
+      no source passage (the API returns none).
+    - OpenAI ChatGPT — answer span + offsets (`annotations[].start_index`/
+      `end_index` sliced out of the answer text); no source passage.
+    - Anthropic Claude — source passage only (`citations[].cited_text`). The
+      offset columns stay permanently NULL there: `web_search_result_location`
+      carries an `encrypted_index` into the search results, not an offset into
+      the answer, so there is nothing to fill them with. That is a property of
+      the API, not a gap to be closed later.
+    """
 
     __tablename__ = "citations"
 
@@ -128,6 +159,9 @@ class Citation(Base):
     source_domain: Mapped[str | None] = mapped_column(String(200))
     citation_position: Mapped[int | None] = mapped_column(Integer)
     cited_answer_span: Mapped[str | None] = mapped_column(Text)
+    answer_span_start: Mapped[int | None] = mapped_column(Integer)
+    answer_span_end: Mapped[int | None] = mapped_column(Integer)
+    source_passage: Mapped[str | None] = mapped_column(Text)
 
     raw_response: Mapped["RawResponse"] = relationship(back_populates="citations")
 

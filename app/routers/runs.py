@@ -394,6 +394,9 @@ def trigger_run(
                 source_domain=c.source_domain,
                 citation_position=c.citation_position,
                 cited_answer_span=c.cited_answer_span,
+                answer_span_start=c.answer_span_start,
+                answer_span_end=c.answer_span_end,
+                source_passage=c.source_passage,
             )
             db.add(citation)
             citations.append(citation)

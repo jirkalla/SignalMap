@@ -373,6 +373,45 @@ cut from 3 DB round-trips to 1, `prompt_ops_rows` from 2 to 1, keyword-only scop
 Full task breakdown and design decisions: `docs/TASKS_OPS_DASHBOARD.md` and
 `docs/PROMPTS_OPS_DASHBOARD.md`.
 
+## Gemini citation extraction fix + claim/source-passage split
+
+Branch `feature/signalmap-gemini-citation-extraction` (2026-09-16), roadmap
+item #11 — not one of the five roadmap phases in the signalmap-conventions
+skill; it corrects extraction of data `raw_payload` already contained (FR-10)
+and adds the fields roadmap #12 will need.
+
+Two independent defects, both measured against production data rather than
+estimated. First, `app/adapters/google.py::_map_citations` walked the
+grounding chunks and kept only the first support referencing each one, so
+Gemini's many-to-many relation between answer segments and sources was
+flattened: 551 stored rows for 1354 real claim-source pairs, 59% of the links
+dropped, in 40 of 52 answers. It now walks the supports and emits one row per
+(segment, source) pair, ordered by position in the answer. Second,
+`citations.cited_answer_span` meant different things per provider — the answer
+span for Gemini and OpenAI, but the passage quoted from the source page for
+Anthropic, contradicting FR-12 (the stored value was findable in the answer
+for 551/551 Gemini and 71/71 OpenAI rows, but only 17/158 Anthropic ones).
+`citations` gained `source_passage`, `answer_span_start` and `answer_span_end`
+(migration `0027`), and the run detail page now labels the two separately.
+
+All three mappers moved from SDK objects onto the serialized payload dict, so
+migration `0028` could replay the exact same functions over stored
+`raw_payload` rows and recompute the whole archive (Gemini 583 → 1386,
+Anthropic 167 with the text moved, OpenAI 71 with offsets filled) instead of
+growing a second copy of the extraction logic — the one deliberate,
+user-confirmed exception to never rewriting evidence rows, legitimate only
+because `citations` is derived from a `raw_payload` this migration never
+touches. Dashboard code was deliberately left alone: `count(citations)` now
+uniformly means "claim-source links", which is what it always meant for the
+other two providers.
+
+Closes the test gap that let this survive three phases — `_map_citations` had
+no test for any provider, including a named regression test for the original
+`break` bug (243 tests, up from 221).
+
+Full task breakdown, measured figures and design decisions:
+`docs/TASKS_GEMINI_CITATIONS.md` and `docs/PROMPTS_GEMINI_CITATIONS.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

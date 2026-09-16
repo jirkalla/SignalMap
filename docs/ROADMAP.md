@@ -443,15 +443,41 @@ konkrétně se billing řeší fakturou mimo appku (#16), ne přes appku.
   `docs/PROMPTS_CLIENT_SCOPING.md`, stejný formát jako fáze 2–6, ne
   přílepek k jiné branch.
 
-## 11. Oprava extrakce citací (Gemini)
+## 11. Oprava extrakce citací (Gemini) ✅ Hotovo
 
-**Přidáno 2026-09-15.** `app/adapters/google.py::_map_citations` dnes bere
-jen **první** `grounding_support`, co odkazuje na daný chunk, a zbytek
-zahodí (`break` v cyklu) — Gemini ale reálně vrací víc segmentů odpovědi
-na jeden zdroj a víc zdrojů na jeden segment (many-to-many). Appka dnes
-ukládá zploštělou 1:1 citaci místo plné struktury. Malá oprava, ale nutná
-**před** #12 — LLM quote-verification na zploštělých datech by ztrácel
-většinu claim-source vazeb, co Gemini reálně vrací.
+**Přidáno 2026-09-15, implementováno na `feature/signalmap-gemini-citation-extraction`
+(2026-09-16).** `app/adapters/google.py::_map_citations` bral jen **první**
+`grounding_support`, co odkazoval na daný chunk, a zbytek zahodil (`break`
+v cyklu) — Gemini přitom vrací many-to-many vazbu mezi segmenty odpovědi
+a zdroji.
+
+**Rozsah byl větší, než roadmapa odhadovala.** Nešlo o „zploštělou 1:1
+citaci": proměření produkčních dat před opravou ukázalo **551 uložených
+citací proti 1 354 reálným dvojicím (segment odpovědi → zdroj), tedy 803
+ztracených claim-source vazeb = 59 %, ve 40 z 52 odpovědí**. Chunků, na
+které by neukazoval žádný support, bylo 0 — ztráta byla výhradně na straně
+zahozených supportů.
+
+**Součástí opravy bylo i rozdělení sémantiky spanu**, druhý, nezávislý
+defekt nalezený při přípravě: `citations.cited_answer_span` znamenal
+u každého providera něco jiného — u Gemini a OpenAI úsek odpovědi, u
+Anthropicu pasáž ze zdrojové stránky (`citation.cited_text`), což je
+v přímém rozporu s FR-12. Ověřeno: span se v `rendered_text` našel u Gemini
+551/551 a u OpenAI 71/71, ale u Anthropicu jen 17/158. `citations` proto
+dostaly `source_passage`, `answer_span_start` a `answer_span_end`
+(migrace `0027`) a všechny tři mappery přešly z SDK objektů na dict, aby
+šla stejná funkce použít i pro re-extrakci.
+
+Migrace `0028` přepočítala celou historii z nedotčeného `raw_payload`
+(Gemini 583 → 1 386 řádků, Anthropic 167 s přesunutým textem, OpenAI 71
+s doplněnými offsety) — díky tomu se historická čísla posunula konzistentně
+přes celý archiv, ne skokem v místě nasazení. Dashboard se neměnil:
+`count(citations)` nově napříč providery znamená „počet claim-source vazeb",
+což je význam, který u Anthropicu a OpenAI platil odjakživa
+(`docs/REQUIREMENTS.md` FR-12 a poznámka za FR-15).
+
+Plný rozpis, naměřená čísla a design decisions:
+`docs/TASKS_GEMINI_CITATIONS.md` a `docs/PROMPTS_GEMINI_CITATIONS.md`.
 
 ## 12. LLM quote-verification skill
 
@@ -464,11 +490,27 @@ LLM), sémantická podpora (verified/partial/weak/contradictory) přes nové,
 samostatné LLM volání — existující adapter, jiný system prompt, teplota 0,
 žádné search/grounding nástroje.
 
-- Anthropic runy: zdrojová pasáž už je uložená (`citations[].cited_text`
-  přes dnešní `cited_answer_span` pole) — žádné fetchování, jen klasifikace.
-- Gemini runy: potřeba lehký fetch+extract krok (`httpx`+`trafilatura`,
-  žádné verzování pro v1) — zdrojová pasáž dnes uložená není.
-- Závisí na #11 (bez opravy extrakce nemá skill na čem stavět).
+**Vstupní předpoklady se s #11 změnily (2026-09-16)** — nejde o kosmetiku
+názvu sloupce, ale o to, co pro který provider vůbec existuje. Skill dostává
+z každé strany vazby jinou polovinu a musí s tím počítat od návrhu:
+
+- **Anthropic runy:** zdrojová pasáž je uložená v `citations.source_passage`
+  (ne v `cited_answer_span`, jak tahle položka tvrdila dřív) — žádné
+  fetchování, jen klasifikace. **Chybí ale claim:** `cited_answer_span`
+  i offsety jsou u Anthropicu trvale `NULL`, protože API žádný úsek odpovědi
+  nevrací (`web_search_result_location` nese `encrypted_index`, což je index
+  do výsledků vyhledávání, ne do textu odpovědi). Není to mezera k doplnění,
+  je to vlastnost API — tvrzení k porovnání bude potřeba odvodit jinak
+  (např. z textu bloku, na kterém citace visí).
+- **Gemini a OpenAI runy:** claim uložený je, včetně offsetů; chybí zdrojová
+  pasáž — potřeba lehký fetch+extract krok (`httpx`+`trafilatura`, žádné
+  verzování pro v1).
+- **Pozor na jednotku offsetů:** `answer_span_start`/`_end` se ukládají tak,
+  jak je provider vrátil, a jednotka se liší — Gemini počítá **UTF-8 byty**
+  (změřeno: 1 316 z 1 354 spanů sedí jen jako byte offsety), OpenAI
+  **znaky** (71/71). Přenositelné je hledat `cited_answer_span` jako text,
+  ne slicovat podle offsetu.
+- Závisí na #11 (hotovo — bez opravy extrakce by skill ztrácel 59 % vazeb).
 - Vlastní `docs/TASKS_QUOTE_VERIFICATION.md`/`docs/PROMPTS_QUOTE_VERIFICATION.md`,
   až se na to dojde.
 
@@ -510,6 +552,28 @@ otevřená diskuze, zatím nerozhodnuto. Pro Knauf konkrétně billing engine
 (retainer/projekt), appka jen ukazuje Client-view portál (#14). Tahle
 položka je blokovaná na **existenci prvního self-serve zákazníka**, ne na
 Knauf.
+
+## 17. Nový tvar Gemini odpovědi (`steps` / `url_citation`)
+
+**Přidáno 2026-09-16** při práci na #11 (`docs/TASKS_GEMINI_CITATIONS.md`
+design decision 9). Dokumentace Google (`ai.google.dev/gemini-api/docs/google-search`,
+aktualizace 2026-09-02) popisuje pro Gemini 3 **jiný tvar odpovědi**:
+`steps` → `model_output.content[].annotations[]` typu `url_citation` se
+`start_index`/`end_index` — tedy stejný model, jaký dnes vrací OpenAI, ne
+`grounding_metadata`.
+
+**Reálně to zatím nechodí.** Ověřeno 2026-09-16 proti produkčním datům:
+přes `google-genai==2.22.0` a `client.models.generate_content(tools=[GoogleSearch()])`
+chodí i u `gemini-3.1-flash-lite` a `gemini-3.5-flash` pořád starý
+`grounding_metadata` tvar, ve 52 z 52 odpovědí. Oprava v #11 je tedy pro
+dnešek správná a `_map_citations` na payloadu bez `grounding_metadata` vrátí
+`([], False)` místo pádu (pokryto testem).
+
+Až API/SDK tvar reálně přepne, bude potřeba detekce tvaru a druhá mapovací
+větev. Do té doby je to jen hlídané riziko: **nezakládat větev ani vlastní
+dokumenty**, jen sledovat, jestli se v `raw_payload` nezačne objevovat
+`steps`. `docs/TASKS_SEARCH_QUERIES.md` design decision 4 si téhož rozporu
+všiml už 2026-09-10 a uzavřel ho stejně.
 
 ## Mimo tuhle roadmapu, zaznamenáno pro pořádek
 
@@ -605,9 +669,10 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 8 | Gap/opportunity score | Čeká na 7 |
 | 9 | Frontend rebrand | Design hotový, implementace čeká; potvrzeno žádný přechod na SPA (2026-09-15) |
 | 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
-| 11 | Oprava extrakce citací (Gemini) | Navrženo 2026-09-15, čeká na branch |
-| 12 | LLM quote-verification skill | Navrženo 2026-09-15, čeká na 11 |
+| 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo a otestované na `feature/signalmap-gemini-citation-extraction` (2026-09-16) — 59 % ztracených claim-source vazeb obnoveno (551 → 1 354), plus rozdělení sémantiky spanu; historie přepočítaná migrací `0028`; čeká na merge |
+| 12 | LLM quote-verification skill | Navrženo 2026-09-15; #11 hotové, takže odblokované — vstupní předpoklady ale změněné, viz #12 |
 | 13 | Project/Brand entita | Navrženo 2026-09-15 |
 | 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15, čeká na 2, 3, 4, 5, 10 |
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
+| 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
