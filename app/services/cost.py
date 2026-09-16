@@ -325,6 +325,60 @@ def run_cost_sql_expr(
     )
 
 
+def raw_input_output_tokens(token_usage: dict | None) -> tuple[int | None, int | None]:
+    """The input/output token counts a run's payload reported, exactly as the provider reported
+    them — never netted against cache (design decision 7: tokens shown in the UI are the
+    provider's own raw figures; subtracting cached tokens is a *pricing* concern, handled inside
+    `estimate_run_cost`'s `billable_input`, not a *display* one). `(None, None)` when there's no
+    payload or its shape isn't recognized — same shape selection `estimate_run_cost` uses.
+
+    Used by `app.services.ops_dashboard.recent_runs`, which needs these per-row in Python (a
+    bounded ~15-row fetch, not the full-table aggregation `run_token_sql_expr` below backs).
+    """
+    if token_usage is None:
+        return None, None
+    shape = _select_shape(token_usage)
+    if shape is None:
+        return None, None
+    return token_usage.get(shape.input_key), token_usage.get(shape.output_key)
+
+
+def run_token_sql_expr(token_usage_col: ColumnElement, axis: str) -> ColumnElement:
+    """SQL-side raw token count for one axis (`"input"`, `"output"`, `"cache_read"`,
+    `"cache_write"` — the last summing every write tier, Anthropic's 5m + 1h included), for use
+    inside `SUM()` aggregations — the token-counting sibling of `run_cost_sql_expr`, built from the
+    exact same `TOKEN_USAGE_SHAPES` so the two can never independently drift on which keys/paths
+    they recognize.
+
+    Always the RAW reported count, never `run_cost_sql_expr`'s `billable_input` (design decision 7
+    — same reasoning as `raw_input_output_tokens` above). A field missing from an otherwise-present
+    payload defaults to 0, not NULL: "how many cache-write tokens did this run have" always has an
+    answer (0 tokens is a real answer, not an unknown one). But a row with NO payload at all
+    (`token_usage_col IS NULL`, no `RawResponse`) still yields SQL NULL here — not 0 — so `SUM()`
+    over a whole scope only comes back NULL when literally no run in scope has a `raw_responses`
+    row, exactly the distinction `OpsSummary.total_input_tokens` etc. document.
+    """
+    if axis == "input":
+        paths = dict.fromkeys((shape.input_key,) for shape in TOKEN_USAGE_SHAPES)
+        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)
+    elif axis == "output":
+        paths = dict.fromkeys((shape.output_key,) for shape in TOKEN_USAGE_SHAPES)
+        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)
+    elif axis == "cache_read":
+        paths = dict.fromkeys(shape.cache_read_path for shape in TOKEN_USAGE_SHAPES if shape.cache_read_path)
+        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)
+    elif axis == "cache_write":
+        write_paths = [path for shape in TOKEN_USAGE_SHAPES for path in shape.cache_write_paths.values()]
+        terms = [func.coalesce(_json_path_expr(token_usage_col, path), 0.0) for path in write_paths]
+        value = terms[0]
+        for term in terms[1:]:
+            value = value + term
+    else:
+        raise ValueError(f"unknown token axis: {axis!r}")
+
+    return case((token_usage_col.is_(None), None), else_=value)
+
+
 def load_price_components(db: Session, model_ids: list[int]) -> dict[int, list[AIModelPriceComponent]]:
     """Every `AIModelPriceComponent` row for the given models, one query, newest-first per model.
 
