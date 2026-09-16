@@ -4,10 +4,15 @@ Kept separate from app/services/dashboard.py — cost estimation is its own doma
 future billing engine independent of the client-facing dashboard.
 """
 
-from sqlalchemy import Float, case, cast, func
+from collections import defaultdict
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import Float, case, cast, func, select
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import AIModel
+from app.models import AIModel, AIModelPriceComponent
 
 # The provider adapters (app/adapters/*.py) dump each provider SDK's usage object onto
 # RawResponse.token_usage as-is, not through a shared shape — Anthropic and OpenAI happen to both
@@ -94,3 +99,55 @@ def run_cost_sql_expr(
         ),
         else_=(input_tokens_expr / 1000.0) * cost_per_1k_input + (output_tokens_expr / 1000.0) * cost_per_1k_output,
     )
+
+
+def load_price_components(db: Session, model_ids: list[int]) -> dict[int, list[AIModelPriceComponent]]:
+    """Every `AIModelPriceComponent` row for the given models, one query, newest-first per model.
+
+    Bulk-loads across every model in `model_ids` in a single round trip rather than one query per
+    model — same discipline as `app/routers/ai_models.py`'s `_model_rows`, which pulls run counts
+    for every model with one `GROUP BY` instead of a query per row.
+    """
+    if not model_ids:
+        return {}
+
+    rows = db.scalars(
+        select(AIModelPriceComponent)
+        .where(AIModelPriceComponent.ai_model_id.in_(model_ids))
+        .order_by(AIModelPriceComponent.effective_from.desc())
+    ).all()
+
+    by_model: dict[int, list[AIModelPriceComponent]] = defaultdict(list)
+    for row in rows:
+        by_model[row.ai_model_id].append(row)
+    return dict(by_model)
+
+
+def prices_at(components: list[AIModelPriceComponent], at: datetime) -> dict[str, Decimal]:
+    """The price of each component type effective as of `at`, from an already-loaded list.
+
+    Pure function over data already in hand, no DB access — same shape as `estimate_run_cost`.
+    For each `component_type`, keeps the row with the latest `effective_from <= at`; a component
+    type with no row effective by `at` is simply absent from the result, never defaulted to zero
+    (docs/TASKS_COST_COMPONENTS.md design decision 14 — "no row" means "price unknown"). Input
+    order doesn't matter; every row is considered.
+    """
+    latest_by_type: dict[str, AIModelPriceComponent] = {}
+    for component in components:
+        if component.effective_from > at:
+            continue
+        current = latest_by_type.get(component.component_type)
+        if current is None or component.effective_from > current.effective_from:
+            latest_by_type[component.component_type] = component
+    return {component_type: row.price_per_unit_usd for component_type, row in latest_by_type.items()}
+
+
+def current_prices(db: Session, model_ids: list[int]) -> dict[int, dict[str, Decimal]]:
+    """Each model's component prices effective right now — what the admin UI (CC-3) shows as
+
+    "today's price" per model. Every id in `model_ids` is a key in the result, even a model with
+    no price components at all (mapped to `{}`), so callers can index without a `.get(..., {})`.
+    """
+    components_by_model = load_price_components(db, model_ids)
+    now = datetime.now(timezone.utc)
+    return {model_id: prices_at(components_by_model.get(model_id, []), now) for model_id in model_ids}
