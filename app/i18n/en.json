@@ -342,6 +342,8 @@
   "run.raw_json_toggle": "Show / hide raw JSON",
   "run.citations_label": "Citations",
   "run.citations_empty": "No citations were returned for this run.",
+  "run.citation_claim_label": "Cited claim",
+  "run.citation_source_passage_label": "Source passage",
   "run.search_queries_label": "Search queries",
   "run.search_queries_empty": "The provider did not issue any search queries for this run.",
 
