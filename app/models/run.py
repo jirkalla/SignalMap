@@ -127,8 +127,12 @@ class Citation(Base):
     columns (docs/TASKS_GEMINI_CITATIONS.md design decision 6):
 
     - `cited_answer_span` (plus `answer_span_start`/`answer_span_end`) is the
-      span OF THE ANSWER that the source supports — the model's own claim,
-      locatable in `RawResponse.rendered_text` via the offsets.
+      span OF THE ANSWER that the source supports — the model's own claim.
+      The offsets are kept exactly as the provider returned them, so their
+      unit varies by provider: Gemini counts UTF-8 bytes, OpenAI characters
+      (measured 2026-09-16, see app/adapters/base.py). To locate a span in
+      `RawResponse.rendered_text` portably, match `cited_answer_span` as text
+      rather than slicing by offset.
     - `source_passage` is the passage FROM THE SOURCE PAGE that the provider
       quoted as backing for that claim.
 

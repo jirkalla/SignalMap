@@ -28,13 +28,46 @@ def extract_domain(url: str | None) -> str | None:
 
 @dataclass
 class AdapterCitation:
-    """One source extracted from a provider's grounding/citation metadata."""
+    """One claim-source link extracted from a provider's grounding/citation metadata.
+
+    An instance is one (answer segment, source) pair, not one source: when a
+    provider backs several answer segments with the same URL, or one segment
+    with several URLs, every pair gets its own instance. `citation_position`
+    is the running index of the pair in answer order, uniform across
+    providers.
+
+    This docstring is where the claim/source-passage boundary is defined for
+    all three adapters (docs/TASKS_GEMINI_CITATIONS.md design decision 6) —
+    the per-adapter docstrings point here instead of restating it:
+
+    - `cited_answer_span` + `answer_span_start`/`answer_span_end` describe the
+      span OF THE ANSWER the source supports: the model's own claim, and the
+      offsets that locate it in the rendered answer text. The offsets are
+      stored exactly as the provider returned them, and their UNIT IS
+      PROVIDER-SPECIFIC — measured against stored payloads 2026-09-16, Gemini
+      counts UTF-8 bytes (1316 of 1354 spans resolve only as bytes) while
+      OpenAI counts characters (71 of 71). Slicing a Python string with a
+      Gemini offset therefore goes wrong on the first non-ASCII character, and
+      any consumer must either decode per provider or, simpler, match
+      `cited_answer_span` as text — it always holds the exact span.
+    - `source_passage` is the passage FROM THE SOURCE PAGE the provider quoted
+      as backing for that claim.
+
+    No provider fills both halves — they expose different sides of the same
+    link (Gemini and OpenAI the answer span, Anthropic the source passage), so
+    every field defaults to None and an adapter sets only what its API returns.
+    Which adapter fills what, and why the gaps are permanent rather than
+    unfinished, is on each adapter's own `_map_citations`.
+    """
 
     source_url: str | None = None
     source_title: str | None = None
     source_domain: str | None = None
     citation_position: int | None = None
     cited_answer_span: str | None = None
+    answer_span_start: int | None = None
+    answer_span_end: int | None = None
+    source_passage: str | None = None
 
 
 @dataclass
