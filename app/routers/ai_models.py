@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, AIModelPriceComponent, AIModelPriceHistory, Provider, Run, User
+from app.models import AIModel, AIModelPriceComponent, Provider, Run, User
 from app.models.provider import COMPONENT_TYPES
 from app.services.cost import current_prices, prices_at
 from app.templating import get_t, render
@@ -34,11 +34,6 @@ _CAPABILITY_TIERS = ("flagship", "standard", "economy")
 # TASKS_COST_COMPONENTS.md design decision 11).
 _MAX_PRICE_PER_1M = Decimal(1_000_000)
 _PRICE_PER_1M_QUANTUM = Decimal("0.000001")
-
-# ai_models.cost_per_1k_input_usd/cost_per_1k_output_usd (Numeric(10, 5)) are the retiring flat
-# columns — still written alongside the new components until CC-8 removes them and the routers/
-# ops dashboard that still read them are repointed at app.services.cost (CC-4).
-_OLD_COLUMN_QUANTUM = Decimal("0.00001")
 
 
 def _get_model_or_404(db: Session, request: Request, model_id: int) -> AIModel:
@@ -71,28 +66,11 @@ def _provider_options(db: Session) -> list[tuple[int, str]]:
     return [(p.id, p.name) for p in providers]
 
 
-def _record_price_history(db: Session, model: AIModel, user: User) -> None:
-    """Append one AIModelPriceHistory row capturing `model`'s current price.
-
-    Call only after `model.cost_per_1k_*_usd` already holds the value that should be recorded —
-    unconditionally on creation, or only when the price actually changed on edit (see
-    create_ai_model/update_ai_model, the only two callers, for the two conditions).
-    """
-    db.add(
-        AIModelPriceHistory(
-            ai_model_id=model.id,
-            cost_per_1k_input_usd=model.cost_per_1k_input_usd,
-            cost_per_1k_output_usd=model.cost_per_1k_output_usd,
-            changed_by_user_id=user.id,
-        )
-    )
-
-
 def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceComponent, datetime | None]]:
     """Pair each of `model`'s price component rows (already newest-first via the relationship's
     own `order_by`) with its computed validity end, computed independently PER `component_type`.
 
-    `ai_model_price_components` stores only `effective_from` (same reasoning as the retiring
+    `ai_model_price_components` stores only `effective_from` (same reasoning as the now-dropped
     `ai_model_price_history`, see migration 0020's docstring) — a row's "valid until" is always
     the next-newer row's `effective_from` *for that same component_type*, or `None` (still in
     effect today) for that type's newest row. Computed within each type, not across all of them,
@@ -168,15 +146,6 @@ def _parse_component_price(raw: str, t) -> tuple[Decimal | None, str | None]:
     if value < 0 or value >= _MAX_PRICE_PER_1M:
         return None, t("errors.ai_model_price_out_of_range")
     return value.quantize(_PRICE_PER_1M_QUANTUM, rounding=ROUND_HALF_UP), None
-
-
-def _to_old_column_price(price_per_1m: Decimal | None) -> Decimal | None:
-    """Convert an already-validated per-1M component price into the per-1k value the retiring
-    `ai_models.cost_per_1k_*_usd` columns store — kept in sync until CC-8 removes them, since
-    `estimate_run_cost`/the ops dashboard still read them (CC-4 repoints those at components)."""
-    if price_per_1m is None:
-        return None
-    return (price_per_1m / 1000).quantize(_OLD_COLUMN_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def _parse_int(raw: str, t) -> tuple[int | None, str | None]:
@@ -300,10 +269,9 @@ def create_ai_model(
 ):
     """Create a new model under a provider. Model rows are pure data — no adapter change is required.
 
-    Writes the model's first `AIModelPriceHistory` row and an `AIModelPriceComponent` row for
-    every priced component (both, until CC-8 retires the flat columns) in the same commit, so
-    every model's price timeline starts at its own creation, never at the moment someone first
-    edits its price.
+    Writes an `AIModelPriceComponent` row for every priced component in the same commit, so every
+    model's price timeline starts at its own creation, never at the moment someone first edits
+    its price.
     """
     t = get_t(request)
     model_name = model_name.strip()
@@ -361,8 +329,6 @@ def create_ai_model(
         model_name=model_name,
         display_name=display_name or None,
         capability_tier=capability_tier,
-        cost_per_1k_input_usd=_to_old_column_price(parsed["prices"]["input"]),
-        cost_per_1k_output_usd=_to_old_column_price(parsed["prices"]["output"]),
         context_window_tokens=parsed["context_tokens"],
         max_output_tokens=parsed["max_tokens"],
         is_free=is_free,
@@ -370,8 +336,7 @@ def create_ai_model(
         notes=notes or None,
     )
     db.add(model)
-    db.flush()  # need model.id before the history/component rows can reference it
-    _record_price_history(db, model, user)
+    db.flush()  # need model.id before the component rows can reference it
     for component_type, value in parsed["prices"].items():
         if value is not None:
             db.add(
@@ -431,9 +396,7 @@ def update_ai_model(
 
     Writes a new `AIModelPriceComponent` row only for a component whose submitted price actually
     differs from today's (`app.services.cost.prices_at`) — editing an unrelated field like
-    `notes`, or resubmitting an unchanged price, never adds one. Still mirrors an input/output
-    change into a new `AIModelPriceHistory` row and the flat `cost_per_1k_*_usd` columns too,
-    until CC-8 retires them.
+    `notes`, or resubmitting an unchanged price, never adds one.
     """
     t = get_t(request)
     model = _get_model_or_404(db, request, model_id)
@@ -492,23 +455,15 @@ def update_ai_model(
             status_code=409,
         )
 
-    new_cost_in = _to_old_column_price(parsed["prices"]["input"])
-    new_cost_out = _to_old_column_price(parsed["prices"]["output"])
-    price_changed = new_cost_in != model.cost_per_1k_input_usd or new_cost_out != model.cost_per_1k_output_usd
-
     model.provider_id = provider_id
     model.model_name = model_name
     model.display_name = display_name or None
     model.capability_tier = capability_tier
-    model.cost_per_1k_input_usd = new_cost_in
-    model.cost_per_1k_output_usd = new_cost_out
     model.context_window_tokens = parsed["context_tokens"]
     model.max_output_tokens = parsed["max_tokens"]
     model.is_free = is_free
     model.supports_web_search = supports_web_search
     model.notes = notes or None
-    if price_changed:
-        _record_price_history(db, model, user)
 
     for component_type, value in parsed["prices"].items():
         if value is not None and value != current_component_prices.get(component_type):

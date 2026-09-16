@@ -194,10 +194,12 @@
     </p>
     <p class="text-sm text-stone-700 mb-3">
       <strong>Real per-run cost isn't fully captured in <a href="/ai-models" class="underline hover:no-underline">/ai-models</a> pricing</strong> —
-      web search itself costs <strong>$10 per 1,000 searches</strong>, on top of token costs. Our
-      <code class="bg-stone-100 px-1 rounded">cost_per_1k_input_usd</code>/<code class="bg-stone-100 px-1 rounded">output_usd</code>
-      fields only capture token price — a run's true cost is token cost + this flat search fee, currently
-      invisible in the UI.
+      web search itself costs <strong>$10 per 1,000 searches</strong>, on top of token costs. Model
+      prices are now per-component rows in
+      <code class="bg-stone-100 px-1 rounded">ai_model_price_components</code> (input, output, cache
+      read/write — see any model's edit form), but none of those components represent a search/
+      tool-call fee — a run's true cost is token cost + this flat search fee, still invisible in the
+      UI (tracked as a future task, CC-9 in <code class="bg-stone-100 px-1 rounded">docs/TASKS_COST_COMPONENTS.md</code>).
     </p>
     <p class="text-xs text-stone-400">Source: <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener noreferrer" class="underline hover:no-underline">platform.claude.com/docs/.../pricing</a></p>
   </article>

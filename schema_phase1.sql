@@ -60,14 +60,18 @@ CREATE TABLE providers (
     name    VARCHAR(100) NOT NULL
 );
 
+-- NOTE (2026-09-16, migration 0026): cost_per_1k_input_usd/cost_per_1k_output_usd below are
+-- historical — this file records the phase-1 design as originally agreed, not the current
+-- schema. Both columns were dropped once docs/TASKS_COST_COMPONENTS.md replaced them with the
+-- per-component, time-versioned ai_model_price_components table (added in migration 0025).
 CREATE TABLE ai_models (
     id                      SERIAL PRIMARY KEY,
     provider_id             INTEGER NOT NULL REFERENCES providers(id),
     model_name              VARCHAR(100) NOT NULL,
     display_name            VARCHAR(150),
     capability_tier         VARCHAR(20) NOT NULL,    -- 'flagship' | 'standard' | 'economy'
-    cost_per_1k_input_usd   NUMERIC(10,5),
-    cost_per_1k_output_usd  NUMERIC(10,5),
+    cost_per_1k_input_usd   NUMERIC(10,5),  -- retired by migration 0026, see note above
+    cost_per_1k_output_usd  NUMERIC(10,5),  -- retired by migration 0026, see note above
     supports_web_search     BOOLEAN NOT NULL DEFAULT FALSE,
     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
     notes                   TEXT,

@@ -12,7 +12,7 @@ from app.models.domain_classification import DomainClassification
 from app.models.market import Market
 from app.models.persona import Persona
 from app.models.prompt import Prompt, PromptSet
-from app.models.provider import AIModel, AIModelPriceComponent, AIModelPriceHistory, Provider
+from app.models.provider import AIModel, AIModelPriceComponent, Provider
 from app.models.run import Citation, RawResponse, Run, SearchQuery
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
@@ -29,7 +29,6 @@ __all__ = [
     "Prompt",
     "Provider",
     "AIModel",
-    "AIModelPriceHistory",
     "AIModelPriceComponent",
     "Run",
     "RawResponse",

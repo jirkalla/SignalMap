@@ -71,8 +71,6 @@ class AIModel(Base):
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(150))
     capability_tier: Mapped[str] = mapped_column(String(20), nullable=False)
-    cost_per_1k_input_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
-    cost_per_1k_output_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
     context_window_tokens: Mapped[int | None] = mapped_column(Integer)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer)
     supports_web_search: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -85,11 +83,6 @@ class AIModel(Base):
     )
 
     provider: Mapped["Provider"] = relationship(back_populates="ai_models")
-    price_history: Mapped[list["AIModelPriceHistory"]] = relationship(
-        back_populates="ai_model",
-        order_by="AIModelPriceHistory.effective_from.desc()",
-        cascade="all, delete-orphan",
-    )
     price_components: Mapped[list["AIModelPriceComponent"]] = relationship(
         back_populates="ai_model",
         order_by="AIModelPriceComponent.effective_from.desc()",
@@ -97,45 +90,24 @@ class AIModel(Base):
     )
 
 
-class AIModelPriceHistory(Base):
-    """One recorded price for an `AIModel`, effective from a point in time onward.
-
-    Append-only — a new row is added only when `AIModel.cost_per_1k_*_usd` actually changes
-    (`app/routers/ai_models.py`), never edited or deleted afterwards. Only `effective_from` is
-    stored; a row's validity end is always the next row's `effective_from` for the same model
-    (or "now" for the latest row) — computed where needed, not stored, so there is no second
-    value that could drift out of sync with it (see migration 0020's docstring).
-    """
-
-    __tablename__ = "ai_model_price_history"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ai_model_id: Mapped[int] = mapped_column(ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False)
-    cost_per_1k_input_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
-    cost_per_1k_output_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 5))
-    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    changed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-
-    ai_model: Mapped["AIModel"] = relationship(back_populates="price_history")
-
-
 class AIModelPriceComponent(Base):
     """One priced component of an `AIModel`'s cost (input, output, a cache tier, ...), effective
     from a point in time onward.
 
-    Replaces `AIModel.cost_per_1k_*_usd`/`AIModelPriceHistory` (2 fixed input/output columns)
-    with an open, per-provider set of components — Anthropic bills cache read plus two separate
+    An open, per-provider set of components — Anthropic bills cache read plus two separate
     cache-write tiers, Gemini/OpenAI each bill one cache-read tier, and none of that fits two
-    fixed columns (docs/TASKS_COST_COMPONENTS.md design decisions 1-4). Append-only, same
-    discipline as `AIModelPriceHistory`: a new price is a new row with a later `effective_from`,
-    never an edit to an existing row. The absence of a row for a given `(ai_model_id,
-    component_type)` as of a given date means "we don't know this component's price", never
-    "it's free" — a model that is genuinely free is marked via `AIModel.is_free` instead (design
-    decision 14; same distinction `AIModel`'s own docstring draws for that flag).
+    fixed columns (docs/TASKS_COST_COMPONENTS.md design decisions 1-4; this table replaced the
+    project's original `AIModel.cost_per_1k_input_usd`/`cost_per_1k_output_usd` plus
+    `AIModelPriceHistory`, both dropped in migration 0026 once nothing read them any more).
+    Append-only: a new price is a new row with a later `effective_from`, never an edit to an
+    existing row. The absence of a row for a given `(ai_model_id, component_type)` as of a given
+    date means "we don't know this component's price", never "it's free" — a model that is
+    genuinely free is marked via `AIModel.is_free` instead (design decision 14; same distinction
+    `AIModel`'s own docstring draws for that flag).
 
     `price_per_unit_usd` is USD per 1M tokens (`unit='per_1m_tokens'`), not per 1k — Gemini
-    3.1 flash-lite's cache-read price is $0.025/1M, which a per-1k NUMERIC(10,5) column (the type
-    `cost_per_1k_*_usd` uses) would round to a value ~20% too high (design decision 11).
+    3.1 flash-lite's cache-read price is $0.025/1M, which the project's original per-1k
+    NUMERIC(10,5) column would have rounded to a value ~20% too high (design decision 11).
     `unit='per_call'` is not used by any row this project currently writes — reserved ahead of
     time for a future per-call search/tool-call fee (CC-9) so that work is a data change, not a
     schema migration.
