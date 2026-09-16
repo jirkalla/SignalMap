@@ -282,6 +282,98 @@ def test_successful_run_stores_run_raw_response_and_citations(authed_client: Tes
     assert citations[0].source_domain == "example.com"
 
 
+def test_successful_run_stores_and_displays_the_cited_claim_with_its_offsets(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_GEMINI_CITATIONS.md GC-T5 — the answer-side half of a citation.
+
+    Shaped like what the Gemini and OpenAI adapters produce: the claim plus the
+    offsets locating it, and no source passage. The detail page must show the
+    claim label and not the source-passage one.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme is known for reliability."},
+        rendered_text="Acme is known for reliability.",
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a",
+                source_title="A",
+                source_domain="example.com",
+                citation_position=0,
+                cited_answer_span="Acme is known for reliability.",
+                answer_span_start=0,
+                answer_span_end=30,
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    assert citation.cited_answer_span == "Acme is known for reliability."
+    assert citation.answer_span_start == 0
+    assert citation.answer_span_end == 30
+    assert citation.source_passage is None
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Cited claim" in detail_response.text
+    assert "Source passage" not in detail_response.text
+
+
+def test_successful_run_stores_and_displays_the_source_passage(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_GEMINI_CITATIONS.md GC-T5 — the source-side half of a citation.
+
+    Shaped like what the Anthropic adapter produces: a passage quoted from the
+    page, no answer span and no offsets (its API exposes none). The detail page
+    must show the source-passage label and not the claim one.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme is known for reliability."},
+        rendered_text="Acme is known for reliability.",
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a",
+                source_title="A",
+                source_domain="example.com",
+                citation_position=0,
+                source_passage="Acme has topped reliability rankings since 2019.",
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    assert citation.source_passage == "Acme has topped reliability rankings since 2019."
+    assert citation.cited_answer_span is None
+    assert citation.answer_span_start is None
+    assert citation.answer_span_end is None
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Source passage" in detail_response.text
+    assert "Cited claim" not in detail_response.text
+
+
 def test_successful_run_stores_and_displays_search_queries_in_order(
     authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):

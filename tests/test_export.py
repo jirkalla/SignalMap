@@ -238,3 +238,75 @@ def test_client_export_with_no_runs_is_valid_and_empty(authed_client: TestClient
 
     response = authed_client.get(f"/clients/{empty_client.id}/runs/export", params={"format": "json"})
     assert json.loads(response.content) == []
+
+
+def test_export_carries_the_split_citation_columns_in_every_format(
+    authed_client: TestClient, seed: dict, sample_prompt: Prompt
+):
+    """docs/TASKS_GEMINI_CITATIONS.md GC-T5 — source_passage and the answer offsets.
+
+    One citation of each shape, so the assertions also pin down which provider
+    fills which half: the answer-side one carries the claim plus its offsets and
+    no passage, the source-side one exactly the reverse.
+    """
+    run_id = _trigger_run(
+        authed_client,
+        sample_prompt.id,
+        seed,
+        payload=RawResponsePayload(
+            raw_payload={"answer": "Test rendered answer."},
+            rendered_text="Test rendered answer.",
+            has_citations=True,
+            citations=[
+                AdapterCitation(
+                    source_url="https://claim.example/a",
+                    source_title="Claim side",
+                    source_domain="claim.example",
+                    citation_position=0,
+                    cited_answer_span="Test rendered answer.",
+                    answer_span_start=0,
+                    answer_span_end=21,
+                ),
+                AdapterCitation(
+                    source_url="https://passage.example/b",
+                    source_title="Passage side",
+                    source_domain="passage.example",
+                    citation_position=1,
+                    source_passage="Quoted from the source page.",
+                ),
+            ],
+            search_queries=["test search query"],
+            token_usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    )
+
+    new_columns = ["source_passage", "answer_span_start", "answer_span_end"]
+
+    csv_response = authed_client.get(f"/runs/{run_id}/export", params={"format": "csv"})
+    zf = zipfile.ZipFile(io.BytesIO(csv_response.content))
+    csv_rows = list(csv.DictReader(io.StringIO(zf.read("citations.csv").decode())))
+    assert [c for c in new_columns if c in csv_rows[0]] == new_columns
+    assert list(csv_rows[0]).index("source_passage") == list(csv_rows[0]).index("cited_answer_span") + 1
+    assert csv_rows[0]["cited_answer_span"] == "Test rendered answer."
+    assert csv_rows[0]["source_passage"] == ""
+    assert (csv_rows[0]["answer_span_start"], csv_rows[0]["answer_span_end"]) == ("0", "21")
+    assert csv_rows[1]["source_passage"] == "Quoted from the source page."
+    assert csv_rows[1]["cited_answer_span"] == ""
+    assert (csv_rows[1]["answer_span_start"], csv_rows[1]["answer_span_end"]) == ("", "")
+
+    xlsx_response = authed_client.get(f"/runs/{run_id}/export", params={"format": "xlsx"})
+    sheet = load_workbook(io.BytesIO(xlsx_response.content))["Citations"]
+    header = [cell.value for cell in sheet[1]]
+    assert [c for c in new_columns if c in header] == new_columns
+    xlsx_rows = [dict(zip(header, [cell.value for cell in row])) for row in sheet.iter_rows(min_row=2)]
+    assert xlsx_rows[0]["answer_span_end"] == 21
+    assert xlsx_rows[1]["source_passage"] == "Quoted from the source page."
+
+    json_citations = json.loads(authed_client.get(f"/runs/{run_id}/export", params={"format": "json"}).content)[0][
+        "citations"
+    ]
+    assert [c for c in new_columns if c in json_citations[0]] == new_columns
+    assert json_citations[0]["answer_span_start"] == 0
+    assert json_citations[0]["source_passage"] is None
+    assert json_citations[1]["source_passage"] == "Quoted from the source page."
+    assert json_citations[1]["cited_answer_span"] is None
