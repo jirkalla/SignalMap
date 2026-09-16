@@ -73,7 +73,7 @@
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_tokens') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? fmtTokens(summary.total_input_tokens) + ' / ' + fmtTokens(summary.total_output_tokens) : noData ]]</div>
-      <div class="text-xs text-stone-400 mt-1">[[ tokensCacheShareLabel ]]</div>
+      <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_tokens_sub') }}</div>
     </div>
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_latency') }}</div>
@@ -364,7 +364,6 @@
   const noData = {{ t('ops.no_data') | tojson }};
   const errorCountSuffix = {{ t('ops.error_count_suffix') | tojson }};
   const successRateOkLabel = {{ t('ops.kpi_success_rate_sub_ok') | tojson }};
-  const tokensCachedLabel = {{ t('ops.kpi_tokens_sub') | tojson }};
   const schedulerLabel = {{ t('ops.scheduler_label') | tojson }};
   const unknownAttributionLabel = {{ t('ops.unknown_attribution_label') | tojson }};
   const statusOkLabel = {{ t('ops.status_ok') | tojson }};
@@ -595,19 +594,6 @@
           .map((b) => ({ x: b.x + b.barW / 2, label: fmtDate(b.bucket) }));
       });
 
-      // Tokens KPI tile subtitle — the cache share of input tokens, shown only when nonzero
-      // (docs/TASKS_COST_COMPONENTS.md CC-6 step 1: no cache activity means nothing to report,
-      // not "0% cached").
-      const tokensCacheShareLabel = computed(() => {
-        if (!summary.value) return '';
-        const cacheTotal = (summary.value.total_cache_read_tokens || 0) + (summary.value.total_cache_write_tokens || 0);
-        if (!cacheTotal) return '';
-        const inputTotal = summary.value.total_input_tokens || 0;
-        if (!inputTotal) return '';
-        const pct = Math.round((100 * cacheTotal) / inputTotal);
-        return pct + '% ' + tokensCachedLabel;
-      });
-
       // Provider cost horizontal bar chart — global level only. Each row is now two lines tall
       // (provider name + a smaller token-totals line under it, CC-6 step 3), so rowH grew from 28
       // to 34 to fit both without the next row's label overlapping it.
@@ -640,7 +626,7 @@
         fmtInt, fmtCost, fmtTokens, fmtMs, fmtDate, truncate,
         statusLabel, runStatusLabel, userRowLabel, triggeredByLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH, providerBarPadL,
-        dailyBars, dailyXLabels, providerChartH, providerBars, tokensCacheShareLabel,
+        dailyBars, dailyXLabels, providerChartH, providerBars,
       };
     },
   });

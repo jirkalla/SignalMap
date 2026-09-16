@@ -491,7 +491,7 @@
   "ops.kpi_cost": "Cost estimate",
   "ops.kpi_cost_sub": "estimated from configured pricing, not exact billing",
   "ops.kpi_tokens": "Tokens",
-  "ops.kpi_tokens_sub": "cached",
+  "ops.kpi_tokens_sub": "as reported, not netted against cache",
   "ops.kpi_latency": "Avg latency",
   "ops.kpi_latency_sub": "across models",
   "ops.no_data": "—",

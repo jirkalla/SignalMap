@@ -491,7 +491,7 @@
   "ops.kpi_cost": "Kostenschätzung",
   "ops.kpi_cost_sub": "geschätzt anhand der hinterlegten Preise, keine exakte Abrechnung",
   "ops.kpi_tokens": "Token",
-  "ops.kpi_tokens_sub": "gecacht",
+  "ops.kpi_tokens_sub": "wie gemeldet, nicht um Cache bereinigt",
   "ops.kpi_latency": "Ø Latenz",
   "ops.kpi_latency_sub": "über alle Modelle",
   "ops.no_data": "—",

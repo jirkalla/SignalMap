@@ -271,26 +271,40 @@ def run_cost_sql_expr(
     input_tokens_expr = func.coalesce(*(cast(token_usage_col[input_key].astext, Float) for input_key, _ in unique_io_pairs))
     output_tokens_expr = func.coalesce(*(cast(token_usage_col[output_key].astext, Float) for _, output_key in unique_io_pairs))
 
-    anthropic_cache_read = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_read_path)
-    anthropic_write_5m = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_5m"])
-    anthropic_write_1h = _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_1h"])
-    openai_cache_read = _json_path_expr(token_usage_col, OPENAI_SHAPE.cache_read_path)
-    openai_cache_write = _json_path_expr(token_usage_col, OPENAI_SHAPE.cache_write_paths["cache_write"])
-    gemini_cache_read = _json_path_expr(token_usage_col, GEMINI_SHAPE.cache_read_path)
-
-    is_anthropic_shape = anthropic_cache_read.is_not(None) | anthropic_write_5m.is_not(None) | anthropic_write_1h.is_not(None)
-
-    cache_token_exprs = {
-        "cache_read": func.coalesce(anthropic_cache_read, openai_cache_read, gemini_cache_read),
-        "cache_write": openai_cache_write,
-        "cache_write_5m": anthropic_write_5m,
-        "cache_write_1h": anthropic_write_1h,
+    # Cache-component expressions, built generically from TOKEN_USAGE_SHAPES (code review finding
+    # — same discipline as run_token_sql_expr's axes below) rather than one hand-named local per
+    # provider/tier: a future shape's cache paths are picked up automatically here instead of
+    # needing a matching hand-edit that's easy to forget (the old per-provider-local version could
+    # silently under-price a new provider's cache tokens if someone added it to TOKEN_USAGE_SHAPES
+    # without also remembering to wire it into this function by hand).
+    cache_read_paths = dict.fromkeys(shape.cache_read_path for shape in TOKEN_USAGE_SHAPES if shape.cache_read_path)
+    cache_token_exprs: dict[str, ColumnElement] = {
+        "cache_read": func.coalesce(*(_json_path_expr(token_usage_col, p) for p in cache_read_paths))
     }
+    write_component_types = dict.fromkeys(ct for shape in TOKEN_USAGE_SHAPES for ct in shape.cache_write_paths)
+    for component_type in write_component_types:
+        write_paths = [shape.cache_write_paths[component_type] for shape in TOKEN_USAGE_SHAPES if component_type in shape.cache_write_paths]
+        cache_token_exprs[component_type] = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in write_paths))
+
+    # Anthropic's cache tokens are never inside input_tokens, at any tier (design decision 13) —
+    # detected from presence of any Anthropic-specific cache path, since Anthropic and OpenAI/plain
+    # share the same input_tokens/output_tokens key names and can't be told apart from those alone
+    # (same reasoning _select_shape's docstring gives for checking OTHER keys first).
+    is_anthropic_shape = (
+        _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_read_path).is_not(None)
+        | _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_5m"]).is_not(None)
+        | _json_path_expr(token_usage_col, ANTHROPIC_SHAPE.cache_write_paths["cache_write_1h"]).is_not(None)
+    )
 
     # Anthropic's cache tokens are never inside input_tokens, at any tier — subtract nothing for
     # it. Everyone else (Gemini's cache_read, OpenAI's cache_read + cache_write) has them folded
-    # in, so subtract whichever of those this row actually reports (0 where absent).
-    non_anthropic_subtraction = func.coalesce(cache_token_exprs["cache_read"], 0.0) + func.coalesce(openai_cache_write, 0.0)
+    # in, so subtract whichever of those this row actually reports (0 where absent). "cache_write"
+    # here is deliberately only OpenAI's tier (the only shape besides Anthropic's that defines
+    # one) — Anthropic's own cache_write_5m/cache_write_1h are handled by the is_anthropic_shape
+    # branch above, not this one.
+    non_anthropic_subtraction = func.coalesce(cache_token_exprs["cache_read"], 0.0) + func.coalesce(
+        cache_token_exprs["cache_write"], 0.0
+    )
     billable_input_expr = func.greatest(
         0.0, input_tokens_expr - case((is_anthropic_shape, 0.0), else_=non_anthropic_subtraction)
     )
@@ -351,19 +365,35 @@ def run_token_sql_expr(token_usage_col: ColumnElement, axis: str) -> ColumnEleme
     they recognize.
 
     Always the RAW reported count, never `run_cost_sql_expr`'s `billable_input` (design decision 7
-    — same reasoning as `raw_input_output_tokens` above). A field missing from an otherwise-present
-    payload defaults to 0, not NULL: "how many cache-write tokens did this run have" always has an
-    answer (0 tokens is a real answer, not an unknown one). But a row with NO payload at all
-    (`token_usage_col IS NULL`, no `RawResponse`) still yields SQL NULL here — not 0 — so `SUM()`
-    over a whole scope only comes back NULL when literally no run in scope has a `raw_responses`
-    row, exactly the distinction `OpsSummary.total_input_tokens` etc. document.
+    — same reasoning as `raw_input_output_tokens` above).
+
+    Two different "missing" cases, two different results, on purpose:
+    - `cache_read`/`cache_write` axes default a missing field to 0, not NULL: "how many
+      cache-write tokens did this run have" always has an answer once the payload's shape is
+      recognized at all (0 tokens is a real answer, not an unknown one — a shape that has no
+      cache activity this call is not the same as a shape that couldn't be identified).
+    - `input`/`output` axes do NOT default to 0: every recognized shape always reports an input
+      and an output key, so a NULL result there means the payload matched NO known shape at
+      all — that must propagate as "unknown" (same as `run_cost_sql_expr`'s `input_tokens_expr`/
+      `output_tokens_expr` and the `raw_input_output_tokens` Python sibling), not be masked as
+      "0 tokens" the way an unrelated field genuinely being absent would be.
+
+    Separately, a row with NO payload at all (`token_usage_col IS NULL`, no `RawResponse`) still
+    yields SQL NULL here regardless of axis — so `SUM()` over a whole scope only comes back NULL
+    when literally no run in scope has a `raw_responses` row, exactly the distinction
+    `OpsSummary.total_input_tokens` etc. document.
     """
     if axis == "input":
+        # No trailing 0.0 default here (unlike cache_read/cache_write below): every known shape
+        # always has an input_key, so a NULL result means the payload matched NO shape at all —
+        # that must propagate as "unknown", not be masked as "0 tokens" (code review finding,
+        # matches run_cost_sql_expr's input_tokens_expr and the raw_input_output_tokens Python
+        # sibling, both of which already treat an unrecognized shape as unknown, not zero).
         paths = dict.fromkeys((shape.input_key,) for shape in TOKEN_USAGE_SHAPES)
-        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)
+        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths))
     elif axis == "output":
         paths = dict.fromkeys((shape.output_key,) for shape in TOKEN_USAGE_SHAPES)
-        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)
+        value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths))
     elif axis == "cache_read":
         paths = dict.fromkeys(shape.cache_read_path for shape in TOKEN_USAGE_SHAPES if shape.cache_read_path)
         value = func.coalesce(*(_json_path_expr(token_usage_col, p) for p in paths), 0.0)

@@ -277,14 +277,12 @@ def create_ai_model(
     model_name = model_name.strip()
     display_name = display_name.strip()
     notes = notes.strip()
-    price_raw = {
-        "input": price_input,
-        "output": price_output,
-        "cache_read": price_cache_read,
-        "cache_write": price_cache_write,
-        "cache_write_5m": price_cache_write_5m,
-        "cache_write_1h": price_cache_write_1h,
-    }
+    # Positional zip against COMPONENT_TYPES, not a hand-typed dict literal (code review finding)
+    # — keeps this in lockstep with _price_form_fields' own COMPONENT_TYPES-driven mapping below,
+    # instead of two independently-maintained lists of the same six component names.
+    price_raw = dict(
+        zip(COMPONENT_TYPES, (price_input, price_output, price_cache_read, price_cache_write, price_cache_write_5m, price_cache_write_1h))
+    )
     form_state = {
         "provider_id": provider_id,
         "model_name": model_name,
@@ -403,14 +401,10 @@ def update_ai_model(
     model_name = model_name.strip()
     display_name = display_name.strip()
     notes = notes.strip()
-    price_raw = {
-        "input": price_input,
-        "output": price_output,
-        "cache_read": price_cache_read,
-        "cache_write": price_cache_write,
-        "cache_write_5m": price_cache_write_5m,
-        "cache_write_1h": price_cache_write_1h,
-    }
+    # Positional zip against COMPONENT_TYPES — see create_ai_model's identical construction.
+    price_raw = dict(
+        zip(COMPONENT_TYPES, (price_input, price_output, price_cache_read, price_cache_write, price_cache_write_5m, price_cache_write_1h))
+    )
     current_component_prices = prices_at(model.price_components, datetime.now(timezone.utc))
 
     parsed, error = _validate_and_parse_model_form(

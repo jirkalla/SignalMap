@@ -34,8 +34,8 @@ component appearing to have been priced "as of now". A safety-net pass then cove
 whose current `ai_models.cost_per_1k_*_usd` doesn't match its latest history row (or has no
 history row at all) — `app/routers/ai_models.py`'s `_record_price_history` keeps both in sync
 today, so this should be a no-op, but this migration runs against two independently-evolved
-databases (local PC + VPS, see docs/TASKS_COST_COMPONENTS.md "Kontext a zjištění"), which makes
-that guarantee worth checking rather than assuming.
+databases (local PC + VPS, see docs/TASKS_COST_COMPONENTS.md's "Context and findings" section),
+which makes that guarantee worth checking rather than assuming.
 
 Revision ID: 0025
 Revises: 0024

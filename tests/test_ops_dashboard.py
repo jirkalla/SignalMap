@@ -621,6 +621,30 @@ def test_token_totals_are_none_when_no_run_in_scope_has_a_raw_responses_row(auth
     assert resp["total_cache_write_tokens"] is None
 
 
+def test_token_totals_are_none_for_a_run_with_an_unrecognized_token_usage_shape(authed_client: TestClient, db_session: Session, seed: dict):
+    """Regression guard (code review finding): a RawResponse row that exists but whose
+    token_usage matches no known provider shape must make total_input_tokens/total_output_tokens
+    None, the same as "no RawResponse at all" — never a silent 0 that dilutes/hides an unknown run
+    (design decision 7's "no data is masked as zero" discipline, extended from cost to tokens).
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    run = Run(
+        prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        status="success", started_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(RawResponse(run_id=run.id, raw_payload={"answer": "..."}, token_usage={"some_other_provider_field": 123}))
+    db_session.commit()
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}").json()
+
+    assert resp["runs_count"] == 1
+    assert resp["total_input_tokens"] is None
+    assert resp["total_output_tokens"] is None
+
+
 def test_cache_token_totals_are_zero_not_none_when_a_run_has_no_cache_activity(authed_client: TestClient, db_session: Session, seed: dict):
     client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
     prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
