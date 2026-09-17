@@ -124,47 +124,85 @@ your Mac. Public HTTPS is enabled only after you apply the domain settings.
 ## Updating the deployed app
 
 The current deployment is at `https://expressyourself.ai`, on
-`2.29.23.252`, in `/opt/signalmap`. That directory is a deployed copy,
-not a Git checkout. After merging this deployment PR, the maintainer can
-update from a clean local checkout of `master`:
+`2.29.23.252`, in `/opt/signalmap`.
+
+### One-time: make the server a Git checkout
+
+Recommended, and what the routine below assumes. The repository is public,
+so the server needs no deploy key, and named volumes follow the Compose
+project name rather than the directory, so the database is untouched:
 
 ```bash
-git pull --ff-only origin master
-# Run the local tests described below before deploying.
-
-# Save a database backup on your workstation, outside the repository.
-umask 077
-mkdir -p ../signalmap-backups
-ssh root@2.29.23.252 'cd /opt/signalmap && docker compose exec -T postgres pg_dump -U signalmap_user -d signalmap -Fc' > "../signalmap-backups/signalmap-$(date +%Y%m%d-%H%M%S).dump"
-
-# Sync only this app directory; --delete removes obsolete source files.
-# Excluded .env and database dump files are preserved on the destination.
-rsync -az --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.dump' --exclude='docker-compose.override.yaml' ./ root@2.29.23.252:/opt/signalmap/
-ssh root@2.29.23.252 'cd /opt/signalmap && docker compose up -d --build --wait'
+ssh root@2.29.23.252 'cd /opt && mv signalmap signalmap.old && git clone https://github.com/jirkalla/SignalMap.git signalmap && cp signalmap.old/.env signalmap/.env && chmod 600 signalmap/.env'
+ssh root@2.29.23.252 'cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait'
 curl --fail --show-error https://expressyourself.ai/health
 ```
 
-Run these steps in order; stop if the backup, transfer, or deployment
-fails. Keep the server's `.env` and named volumes. Schema migrations run
-automatically; no separate migration command is needed. Rebuilding causes
-brief downtime, so avoid updates during provider runs.
+Delete `/opt/signalmap.old` once the app is verified. A checkout also makes
+`git rev-parse HEAD` answer what is actually deployed, and files listed in
+`.gitignore` - the local Compose override among them - can then never reach
+the server by accident.
+
+### The update routine
+
+Four steps, always in this order. Stop if any of them fails.
+
+```bash
+# 1. Test locally first. Nothing reaches the server that did not pass here.
+git checkout master && git pull --ff-only && docker compose up -d --build --wait
+
+# 2. Back up the server database to this workstation, outside the repository.
+ssh root@2.29.23.252 'cd /opt/signalmap && docker compose exec -T postgres pg_dump -U signalmap_user -d signalmap -Fc' > "/c/Backups/SignalMap/dumps/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
+
+# 3. Deploy: fetch the commit, reinstall the host scripts, rebuild.
+ssh root@2.29.23.252 'cd /opt/signalmap && git fetch origin && git reset --hard origin/master && ./tools/server/install.sh && docker compose up -d --build --wait && git log -1 --oneline'
+
+# 4. Verify.
+curl --fail --show-error https://expressyourself.ai/health
+```
+
+Step 3's `./tools/server/install.sh` is not optional: it reinstalls the
+host-side scripts (nightly backup, restricted SSH dispatcher) into
+`/usr/local/bin`. Skip it and they silently drift from the repository.
+
+Keep the server's `.env` and named volumes. Schema migrations run
+automatically on app startup; no separate migration command is needed.
+Rebuilding causes brief downtime, so avoid updates during provider runs.
+
+### Alternative: rsync
+
+Still valid, and the only way to deploy uncommitted changes. It copies the
+working tree verbatim, so line endings and untracked files travel with it
+and the exclude list has to be maintained by hand; a Git checkout has
+neither problem. Not shipped with Git Bash on Windows.
+
+```bash
+rsync -az --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.dump' --exclude='docker-compose.override.yaml' ./ root@2.29.23.252:/opt/signalmap/
+ssh root@2.29.23.252 'cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait'
+```
 
 SSH access must be handed over separately: install the maintainer's public
 key and allow their IP in the Hetzner firewall's port-22 rule. The commands
 above assume their SSH key is already configured. Do not put private keys
 or tokens in this repository.
 
-For an application rollback, sync the last known-good source revision and
-rebuild. If an upgrade changed the schema, assess compatibility first;
-restoring the pre-upgrade database may also be necessary. Restore into a
-fresh database as described below, not over the running database.
+For an application rollback, check out the last known-good commit and
+rebuild:
+
+```bash
+ssh root@2.29.23.252 'cd /opt/signalmap && git reset --hard <commit> && ./tools/server/install.sh && docker compose up -d --build --wait'
+```
+
+If an upgrade changed the schema, assess compatibility first; restoring the
+pre-upgrade database may also be necessary. Restore into a fresh database as
+described below, not over the running database.
 
 The maintainer should also periodically install Ubuntu security updates,
 reboot when required, and refresh the container images with
 `docker compose build --pull app`, `docker compose pull postgres caddy`,
 and `docker compose up -d --wait`, after a backup. Keep PostgreSQL on major
 version 18 unless planning a separate database upgrade. Automatic releases
-and scheduled off-server backups are not configured by this PR.
+are not configured; scheduled backups are, see **Automated backups** below.
 
 ## Day-to-day commands
 
@@ -198,9 +236,37 @@ docker compose exec -T postgres pg_dump -U signalmap_user -d signalmap -Fc > sig
 ```
 
 Copy the dump off the server and keep the private `.env` separately in a
-safe place. A named volume survives container replacement, not loss of
-the server. Backup scheduling and off-server storage are not configured
-by this Compose file.
+safe place. A named volume survives container replacement, not loss of the
+server.
+
+### Automated backups
+
+Scheduled backups are configured. The chain has three parts, all kept in
+`tools/`:
+
+| Where | What | When |
+|---|---|---|
+| server | `signalmap-backup.sh` under cron | 03:15 daily, keeps 14 days |
+| server | `signalmap-batch.sh`, a forced SSH command | on request, read-only |
+| workstation | `pull_backup.py` under Task Scheduler | 07:30 daily, keeps 90 days |
+
+Install the host side with `./tools/server/install.sh` and add the cron line
+from `tools/server/crontab.example`.
+
+The workstation pulls over a dedicated passphrase-less SSH key pinned in
+`authorized_keys` to `signalmap-batch.sh`, so it can list and read backups
+and do nothing else. Retention on the server stays a root job under cron: a
+key stored unattended on a workstation must never be able to delete backups.
+
+`pull_backup.py` downloads every dump the workstation is missing, so a day
+the PC was off is caught up rather than lost, and exits 2 when the newest
+backup on the server is older than 48 hours, which is how a stopped cron
+becomes visible instead of looking like "nothing new to download".
+
+Verify that a backup is actually restorable with
+`python tools/local/restore_local.py`. It restores into a separate database
+and leaves the working one alone; an unverified backup is only a file you
+believe is a backup.
 
 For a new, empty deployment (including moving this local database to
 Hetzner), copy `signalmap.dump` there, configure its `.env`, and restore
