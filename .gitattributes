@@ -3,3 +3,6 @@
 # fails at runtime with "required file not found".
 *.sh text eol=lf
 crontab.example text eol=lf
+.env.example text eol=lf
+docker-compose.yaml text eol=lf
+dockerfile text eol=lf
