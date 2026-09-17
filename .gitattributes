@@ -1,0 +1,5 @@
+# Shell scripts deployed to the Linux server must keep LF endings — a CRLF
+# shebang makes the kernel look for an interpreter named "/bin/sh\r", which
+# fails at runtime with "required file not found".
+*.sh text eol=lf
+crontab.example text eol=lf
