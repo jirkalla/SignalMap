@@ -19,3 +19,10 @@ Thumbs.db
 
 # Docker
 *.log
+
+# Database dumps — never commit, this repository is public
+*.dump
+*.sql.gz
+
+# Local Compose overrides — must never reach the server
+docker-compose.override.yaml

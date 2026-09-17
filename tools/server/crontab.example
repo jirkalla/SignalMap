@@ -1,0 +1,11 @@
+# SignalMap host cron entries. Install with `crontab -e` as root on the server.
+#
+# 03:15 is deliberately before the workstation pull (07:30) so the morning copy
+# always finds a fresh dump, and outside the hours when provider runs happen.
+
+15 3 * * * /usr/local/bin/signalmap-backup.sh >> /var/log/signalmap-backup.log 2>&1
+
+# Check that it actually ran:
+#   tail -20 /var/log/signalmap-backup.log
+#   ls -lht /var/backups/signalmap/ | head
+#   grep signalmap-backup /var/log/syslog | tail
