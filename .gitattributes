@@ -5,3 +5,4 @@
 crontab.example text eol=lf
 .env.example text eol=lf
 docker-compose.yaml text eol=lf
+dockerfile text eol=lf
