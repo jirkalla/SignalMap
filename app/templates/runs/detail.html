@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list %}
+{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list, local_time %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -38,11 +38,11 @@
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.started_label') }}</dt>
-      <dd>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+      <dd>{{ local_time(run.started_at, t('common.utc_suffix')) }}</dd>
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.finished_label') }}</dt>
-      <dd>{{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') if run.finished_at else t('common.none') }}</dd>
+      <dd>{{ local_time(run.finished_at, t('common.utc_suffix')) if run.finished_at else t('common.none') }}</dd>
     </div>
     <div class="flex justify-between sm:block">
       <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>
@@ -144,14 +144,25 @@
 {% endif %}
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
-  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}</h2>
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}{% if citations %} <span class="font-normal text-stone-400">({{ citations|length }})</span>{% endif %}</h2>
   {% if citations %}
   <ul class="space-y-3">
     {% for c in citations %}
     <li class="border-t border-stone-100 pt-3 first:border-t-0 first:pt-0">
       <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words">{{ c.source_title or c.source_url }}</a>
       <div class="text-xs text-stone-500 mt-1">{{ c.source_domain }}{% if c.citation_position is not none %} · #{{ c.citation_position }}{% endif %}</div>
-      {% if c.cited_answer_span %}<div class="text-sm text-stone-600 mt-1 italic">&ldquo;{{ c.cited_answer_span }}&rdquo;</div>{% endif %}
+      {% if c.cited_answer_span %}
+      <div class="mt-2">
+        <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide">{{ t('run.citation_claim_label') }}</div>
+        <div class="text-sm text-stone-600 italic break-words">&ldquo;{{ c.cited_answer_span }}&rdquo;</div>
+      </div>
+      {% endif %}
+      {% if c.source_passage %}
+      <div class="mt-2">
+        <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide">{{ t('run.citation_source_passage_label') }}</div>
+        <div class="text-sm text-stone-600 italic break-words">&ldquo;{{ c.source_passage }}&rdquo;</div>
+      </div>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>

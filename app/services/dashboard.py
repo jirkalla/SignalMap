@@ -7,6 +7,9 @@ Every function here is read-only: aggregates existing citations/runs/raw_respons
 analysis_results, writes nothing. `own_domain_rate`/`weekly_values`'s own_rate metric are the one
 figures that reuse another layer's output (the `mention_visibility` result from phase 3) rather
 than recomputing domain matching themselves — see design decision 6.
+
+`DashboardRange`/`range_bounds` live in `app.services.date_ranges` (docs/TASKS_OPS_DASHBOARD.md T1)
+and are re-exported here so this module's own callers don't need to change their import.
 """
 
 from dataclasses import dataclass
@@ -29,26 +32,12 @@ from app.models import (
     RawResponse,
     Run,
 )
+from app.services.date_ranges import DashboardRange, range_bounds, week_starts
 from app.utils import is_own_domain, normalize_domain
 
-DashboardRange = Literal["30d", "90d", "quarter", "all"]
+__all__ = ["DashboardRange", "range_bounds"]  # re-exported: app/routers/dashboard.py imports both from here
+
 DashboardMetric = Literal["citations", "runs", "own_rate", "share_of_voice", "position"]
-
-
-def range_bounds(range_: DashboardRange) -> tuple[datetime | None, datetime | None]:
-    """Translate a range shorthand into (date_from, date_to) bounds. `None, None` means "all time"."""
-    now = datetime.now(timezone.utc)
-    if range_ == "all":
-        return None, None
-    if range_ == "30d":
-        return now - timedelta(days=30), now
-    if range_ == "90d":
-        return now - timedelta(days=90), now
-    # "quarter": start of the current calendar quarter, not a rolling 90-day window — distinct from
-    # "90d" even though the two are close in length most of the year.
-    quarter_start_month = ((now.month - 1) // 3) * 3 + 1
-    quarter_start = now.replace(month=quarter_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
-    return quarter_start, now
 
 
 def previous_range_bounds(date_from: datetime | None, date_to: datetime | None) -> tuple[datetime, datetime] | None:
@@ -108,26 +97,16 @@ def scoped_run_ids_query(
     return query
 
 
-def week_starts(date_from: datetime, date_to: datetime) -> list[date]:
-    """Every Monday-aligned week start between `date_from` and `date_to`, inclusive of both ends'
-    weeks — the full x-axis a time series chart needs, independent of which weeks actually have data.
-    """
-    start = date_from.date() - timedelta(days=date_from.weekday())
-    end = date_to.date() - timedelta(days=date_to.weekday())
-    weeks = []
-    current = start
-    while current <= end:
-        weeks.append(current)
-        current += timedelta(days=7)
-    return weeks
-
-
 def resolve_week_range(
     db: Session, run_ids_query: Select, date_from: datetime | None, date_to: datetime | None
 ) -> list[date]:
     """The week-start x-axis for the timeseries endpoint: the requested bounds when given, falling
     back to the actual min/max `Run.started_at` in scope for whichever side is open-ended
     (`range=all`). Empty when there's no data and no bound to fall back on — nothing to plot.
+
+    `week_starts` (app.services.date_ranges, code review finding) is shared with
+    app.services.ops_dashboard's daily/weekly/monthly bucketing — one definition of "Monday-aligned
+    week start" for both dashboards, not two independently-maintained copies.
     """
     effective_from, effective_to = date_from, date_to
     if effective_from is None or effective_to is None:
@@ -138,7 +117,7 @@ def resolve_week_range(
             return []
         effective_from = effective_from or bounds[0]
         effective_to = effective_to or bounds[1]
-    return week_starts(effective_from, effective_to)
+    return week_starts(effective_from.date(), effective_to.date())
 
 
 def count_runs(db: Session, run_ids_query: Select) -> int:

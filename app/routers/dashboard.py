@@ -36,8 +36,8 @@ _CLIENT_ID_QUERY = Query(
 _RANGE_QUERY: DashboardRange = Query(
     "90d",
     alias="range",
-    description="Shorthand date window: 30d, 90d (rolling), quarter (start of the current calendar quarter to "
-    "now), or all.",
+    description="Shorthand date window: 7d, 30d (rolling), 90d (rolling), quarter (start of the current calendar "
+    "quarter to now), or all.",
 )
 _MARKET_ID_QUERY = Query(None, description="Restrict to runs targeting this market. Omitted: every market.")
 _PROVIDER_ID_QUERY = Query(

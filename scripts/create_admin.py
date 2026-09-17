@@ -19,7 +19,9 @@ is a deliberate one-time action, so silently succeeding on a typo'd duplicate wo
 mistake rather than surface it.
 
 Non-interactive alternative for local dev, reading DEV_ADMIN_EMAIL/DEV_ADMIN_NAME/
-DEV_ADMIN_PASSWORD from .env instead of prompting:
+DEV_ADMIN_PASSWORD from .env instead of prompting (refuses to run when ENVIRONMENT=production,
+same guard as scripts/seed_dev_users.py — this path reads a fixed, known password straight from
+.env, which is fine for a throwaway local database but must never run against a real one):
 
     docker compose exec app python -m scripts.create_admin --from-env
 
@@ -56,6 +58,13 @@ def _create(db, *, email: str, name: str, password: str, role: str) -> User:
 
 def _run_from_env(db) -> None:
     settings = get_settings()
+    if settings.environment == "production":
+        print(
+            "Refusing to run: ENVIRONMENT=production. --from-env reads a fixed password from "
+            "DEV_ADMIN_PASSWORD — use the interactive mode (no --from-env) in production."
+        )
+        sys.exit(1)
+
     if not settings.dev_admin_email or not settings.dev_admin_password or not settings.dev_admin_name:
         print("DEV_ADMIN_EMAIL, DEV_ADMIN_NAME, and DEV_ADMIN_PASSWORD must all be set in .env for --from-env.")
         sys.exit(1)

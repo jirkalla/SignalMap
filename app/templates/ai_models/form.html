@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button %}
+{% from "partials/macros.html" import text_field, textarea_field, select_field, checkbox_field, button, local_time %}
 {% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <h1 class="text-xl font-semibold mb-6">{{ title }}</h1>
@@ -18,10 +18,18 @@
   {{ text_field('display_name', t('ai_model.display_name_label'), model.display_name if model else '') }}
 
   <div class="grid sm:grid-cols-2 gap-x-4">
-    {{ text_field('cost_per_million_input_usd', t('ai_model.cost_input_label'), model.cost_per_million_input_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
-    {{ text_field('cost_per_million_output_usd', t('ai_model.cost_output_label'), model.cost_per_million_output_usd if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_input', t('ai_model.cost_component_input_label'), model.price_input if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_output', t('ai_model.cost_component_output_label'), model.price_output if model else '', placeholder=t('ai_model.cost_placeholder')) }}
   </div>
-  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.cost_hint') }}</p>
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('price_cache_read', t('ai_model.cost_component_cache_read_label'), model.price_cache_read if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_cache_write', t('ai_model.cost_component_cache_write_label'), model.price_cache_write if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+  </div>
+  <div class="grid sm:grid-cols-2 gap-x-4">
+    {{ text_field('price_cache_write_5m', t('ai_model.cost_component_cache_write_5m_label'), model.price_cache_write_5m if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+    {{ text_field('price_cache_write_1h', t('ai_model.cost_component_cache_write_1h_label'), model.price_cache_write_1h if model else '', placeholder=t('ai_model.cost_placeholder')) }}
+  </div>
+  <p class="text-xs text-stone-400 -mt-3 mb-4">{{ t('ai_model.cost_components_hint') }}</p>
 
   <div class="grid sm:grid-cols-2 gap-x-4">
     {{ text_field('context_window_tokens', t('ai_model.context_window_label'), model.context_window_tokens if model else '', placeholder=t('ai_model.context_window_placeholder')) }}
@@ -33,7 +41,37 @@
   {{ textarea_field('notes', t('ai_model.notes_label'), model.notes if model else '', rows=2) }}
 
   {% if model and model.created_at %}
-  <p class="text-xs text-stone-400 mb-4">{{ t('ai_model.created_at_label') }}: {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+  <p class="text-xs text-stone-400 mb-4">{{ t('ai_model.created_at_label') }}: {{ local_time(model.created_at, t('common.utc_suffix'), seconds=False) }}</p>
+  {% endif %}
+
+  {% if model %}
+  <div class="mt-2 mb-4 pt-4 border-t border-stone-200">
+    <h2 class="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">{{ t('ai_model.price_history_title') }}</h2>
+    {% if price_history %}
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-xs text-stone-400 uppercase tracking-wide">
+          <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_from_label') }}</th>
+          <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_until_label') }}</th>
+          <th class="pb-1 pr-3 font-medium">{{ t('ai_model.price_history_component_label') }}</th>
+          <th class="pb-1 font-medium">{{ t('ai_model.cost_label') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row, valid_until in price_history %}
+        <tr class="border-t border-stone-100">
+          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(row.effective_from, t('common.utc_suffix'), seconds=False) }}</td>
+          <td class="py-1 pr-3 text-stone-600 whitespace-nowrap">{{ local_time(valid_until, t('common.utc_suffix'), seconds=False) if valid_until else t('ai_model.price_history_current_label') }}</td>
+          <td class="py-1 pr-3 text-stone-600">{{ t('ai_model.cost_component_' ~ row.component_type ~ '_label') }}</td>
+          <td class="py-1 text-stone-600">${{ row.price_per_unit_usd | price }} {{ t('ai_model.cost_per_million_suffix') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-sm text-stone-500">{{ t('ai_model.price_history_empty') }}</p>
+    {% endif %}
+  </div>
   {% endif %}
 
   <div class="flex items-center gap-3 mt-2">

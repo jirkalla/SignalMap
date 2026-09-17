@@ -17,9 +17,15 @@
 {% if error %}
 <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
 {% endif %}
+{% if imported is not none %}
+<div class="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-md px-4 py-3 mb-4">{{ t('prompt_import.import_success').format(count=imported) }}</div>
+{% endif %}
 
 {% if can_edit(current_user) %}
-<h2 class="text-lg font-semibold mb-3">{{ t('prompt.create_title') }}</h2>
+<div class="flex items-center justify-between mb-3">
+  <h2 class="text-lg font-semibold">{{ t('prompt.create_title') }}</h2>
+  <a href="/prompt-sets/{{ prompt_set.id }}/prompts/import" class="text-sm text-stone-600 hover:underline">{{ t('prompt_import.title') }}</a>
+</div>
 <form method="post" action="/prompt-sets/{{ prompt_set.id }}/prompts" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 max-w-2xl">
   {{ textarea_field('text', t('prompt.text_label'), '', rows=3, required=True) }}
   <div class="grid sm:grid-cols-2 gap-x-4">
@@ -33,9 +39,34 @@
 
 <h2 class="text-lg font-semibold mb-3">{{ t('prompt.title') }}</h2>
 {% if prompts %}
-<div class="space-y-3">
+<div class="flex flex-wrap gap-2 mb-2">
+  <input type="text" id="prompt-search" placeholder="{{ t('prompt.search_placeholder') }}"
+         class="flex-1 min-w-[200px] rounded-md border border-stone-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+  <select id="prompt-filter-topic" class="rounded-md border border-stone-300 px-2 py-1.5 text-sm bg-white">
+    <option value="">{{ t('prompt.filter_all_topics') }}</option>
+    {% for topic in distinct_topics %}
+    <option value="{{ topic }}">{{ topic }}</option>
+    {% endfor %}
+    <option value="__none__">{{ t('prompt.filter_no_topic') }}</option>
+  </select>
+  <select id="prompt-filter-market" class="rounded-md border border-stone-300 px-2 py-1.5 text-sm bg-white">
+    <option value="">{{ t('prompt.filter_all_markets') }}</option>
+    {% for code in distinct_markets %}
+    <option value="{{ code }}">{{ code }}</option>
+    {% endfor %}
+  </select>
+  <select id="prompt-filter-active" class="rounded-md border border-stone-300 px-2 py-1.5 text-sm bg-white">
+    <option value="">{{ t('prompt.filter_all_status') }}</option>
+    <option value="yes">{{ t('common.yes') }}</option>
+    <option value="no">{{ t('common.no') }}</option>
+  </select>
+</div>
+<p class="text-xs text-stone-400 mb-3" id="prompt-filter-count"></p>
+<div class="space-y-3" id="prompt-list">
   {% for p in prompts %}
-  <a href="/prompts/{{ p.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white hover:border-stone-400">
+  <a href="/prompts/{{ p.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white hover:border-stone-400"
+     data-text="{{ p.text|lower }}" data-topic="{{ (p.topic or '')|lower }}" data-market="{{ p.market.code }}"
+     data-active="{{ 'yes' if p.is_active else 'no' }}">
     <div class="text-stone-900">{{ p.text }}</div>
     <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500 mt-2">
       <span>{{ p.market.code }}</span>
@@ -45,6 +76,57 @@
   </a>
   {% endfor %}
 </div>
+<p class="text-stone-500" id="prompt-filter-empty" hidden>{{ t('prompt.filter_empty') }}</p>
+<script>
+  // Client-side search/filter over the prompt list (conversation 2026-09-14) — deliberately not
+  // server-side: prompt sets stay in the dozens-to-low-hundreds range even after a bulk import,
+  // so filtering the already-rendered DOM is enough; revisit only if that stops being true.
+  // Search matches `text`/`topic` (data-text/data-topic, pre-lowercased server-side so this
+  // never re-lowercases on every keystroke); market/active are exact-match dropdowns, not
+  // search — they're categorical, not free text.
+  (function () {
+    var search = document.getElementById('prompt-search');
+    var topicFilter = document.getElementById('prompt-filter-topic');
+    var marketFilter = document.getElementById('prompt-filter-market');
+    var activeFilter = document.getElementById('prompt-filter-active');
+    var cards = document.querySelectorAll('#prompt-list > a');
+    var count = document.getElementById('prompt-filter-count');
+    var empty = document.getElementById('prompt-filter-empty');
+    if (!search || !cards.length) return;
+
+    function apply() {
+      var q = search.value.trim().toLowerCase();
+      var topic = topicFilter.value;
+      var market = marketFilter.value;
+      var active = activeFilter.value;
+      var shown = 0;
+
+      cards.forEach(function (card) {
+        var matchesQ = !q || card.dataset.text.includes(q) || card.dataset.topic.includes(q);
+        var matchesTopic = !topic || (topic === '__none__' ? card.dataset.topic === '' : card.dataset.topic === topic.toLowerCase());
+        var matchesMarket = !market || card.dataset.market === market;
+        var matchesActive = !active || card.dataset.active === active;
+        var visible = matchesQ && matchesTopic && matchesMarket && matchesActive;
+        // Not card.hidden — the card's own `block` Tailwind class sets `display: block` with
+        // equal-or-higher CSS specificity than the browser's default `[hidden]{display:none}`
+        // rule, so the attribute alone is silently ignored while the card stays visible
+        // (caught by an actual browser check, not just reading the DOM property back). An
+        // inline style always wins over any class, hidden or not.
+        card.style.display = visible ? '' : 'none';
+        if (visible) shown += 1;
+      });
+
+      count.textContent = shown + ' / ' + cards.length;
+      empty.hidden = shown !== 0;
+    }
+
+    search.addEventListener('input', apply);
+    topicFilter.addEventListener('change', apply);
+    marketFilter.addEventListener('change', apply);
+    activeFilter.addEventListener('change', apply);
+    apply();
+  })();
+</script>
 {% else %}
 <p class="text-stone-500">{{ t('prompt.empty_state') }}</p>
 {% endif %}

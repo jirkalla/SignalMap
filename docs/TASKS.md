@@ -269,6 +269,149 @@ re-verified (124/124 tests passing).
 Full task breakdown, design decisions, and rationale: `docs/TASKS_PHASE6.md`,
 `docs/PROMPTS_PHASE6.md`, and `docs/ROADMAP.md` §1.
 
+## ChatGPT adapter + persona placeholder + AI-model price history
+
+Branch `feature/signalmap-chatgpt-persona-pricehistory`, merged 2026-09-13
+([PR #10](https://github.com/jirkalla/SignalMap/pull/10)). Bundles three
+independent additions plus one small follow-up fix, per
+`docs/TASKS_CHATGPT_PERSONA_PRICING.md` — none of them depend on running live in production,
+same reasoning as `docs/TASKS_PHASE5.md` for why one branch, not four:
+
+- **Third AI provider — OpenAI ChatGPT** — same adapter pattern as Gemini/Anthropic (fázi 1/2),
+  Responses API with the `web_search` tool and real `user_location` geo-targeting (parity with
+  Anthropic, not just Gemini's text-only hint).
+- **Persona placeholder in the system-instruction template** — the previously hardcoded "The
+  person asking..." (`app/routers/settings.py`) becomes a data-driven `{persona}` placeholder
+  with full CRUD (`/personas`), selectable per run (same pattern as the existing market
+  override on `Run`).
+- **AI-model price history** — new `ai_model_price_history` table records every price change
+  instead of silently overwriting it, with a viewable "valid from–until" history on
+  `/ai-models/{id}/edit`.
+- **Duplicate-run guard** — `trigger_run` rejects a second submission on the same prompt while
+  one is still `status='pending'`, plus an immediate client-side button-disable (the run-trigger
+  form gives no other feedback while blocking synchronously on a slow provider call).
+
+A focused security review (SQL injection/XSS/authorization/format-string-injection) found no
+qualifying new vulnerabilities in the branch. A DRY pass found and fixed one duplication: a
+shared `_record_price_history()` helper (`app/routers/ai_models.py`) replacing two copies of the
+same `AIModelPriceHistory` insert. Also hardened `scripts/create_admin.py --from-env` to refuse
+running when `ENVIRONMENT=production`, matching `scripts/seed_dev_users.py`'s existing guard.
+
+Full task breakdown, design decisions, and rationale: `docs/TASKS_CHATGPT_PERSONA_PRICING.md`
+and `docs/PROMPTS_CHATGPT_PERSONA_PRICING.md`.
+
+## Local timezone display fix
+
+Branch `feature/signalmap-local-time-display`, merged 2026-09-14
+([PR #11](https://github.com/jirkalla/SignalMap/pull/11)). Fixes a bug found during manual
+production verification: every displayed timestamp (`.strftime()` on the stored UTC value,
+14 occurrences across 7 templates) was rendered as-is with no timezone conversion — a run
+showed 2 hours off from the real local time (UTC vs. CEST). Not one of the five roadmap
+phases; no new database/backend logic — conversion is purely client-side (viewer's own
+browser timezone via `Intl.DateTimeFormat`, not a fixed server zone), with a server-rendered
+UTC `<time>` fallback for when JS fails.
+
+A DRY-focused code review found the new `local_time()` macro hardcoded the "UTC" suffix in
+English instead of routing it through `t()` — fixed by adding a `common.utc_suffix` i18n key
+and passing it in from every call site.
+
+Full task breakdown and design decisions: `docs/TASKS_LOCAL_TIME.md` and
+`docs/PROMPTS_LOCAL_TIME.md`.
+
+## Bulk prompt import + multi-model runs
+
+Branch `feature/signalmap-bulk-import-multi-model`, merged 2026-09-15
+([PR #12](https://github.com/jirkalla/SignalMap/pull/12)). Two independent features bundled in
+one branch, neither dependent on the other: (1) **multi-model run triggering** — checkboxes
+instead of a single `<select>` on the run-trigger form, runs every checked model in parallel
+against the existing `POST /prompts/{id}/runs` endpoint, no new route; (2) **bulk CSV/XLSX/JSON
+prompt import** into an existing prompt set, with a preview step (duplicate detection, per-row
+market override) before anything is saved. Neither adds a database table or column — both reuse
+the existing `Prompt`/`Run`/`AIModel` models. "Run every prompt at once" (the roadmap's "Study"
+concept) is explicitly out of scope, deferred until the Scheduler exists.
+
+Two rounds of code-review remediation followed (19 findings, 18 fixed, 1 deliberately deferred):
+a DB-level partial unique index closing a TOCTOU race on run creation, CSV/XLSX row-shape
+validation hardening (including a bug found while testing — `openpyxl` pads a sheet's header row
+to its widest row, silently hiding a ragged-row check keyed off the raw header length), i18n
+hardening for row-level import errors, a locale-switch 405 fix affecting ~14 POST-rendered pages
+app-wide (not just this branch's own pages), and several correctness/DRY fixes in the bulk-import
+confirm flow (an overly broad `except IntegrityError`, a silently-dropped intentional-duplicate
+override, an unbounded `market_id` causing an unhandled 500, and blocking DB calls running on the
+event loop instead of a threadpool).
+
+Full task breakdown, design decisions, and the complete code-review remediation log:
+`docs/TASKS_BULK_IMPORT_MULTI_MODEL.md` and `docs/PROMPTS_BULK_IMPORT_MULTI_MODEL.md`.
+
+## Ops dashboard
+
+Branch `feature/signalmap-ops-dashboard`, merged 2026-09-16
+([PR #13](https://github.com/jirkalla/SignalMap/pull/13)). Internal `/ops` dashboard — cost,
+latency, and error visibility across every client, admin/editor only and never client-facing,
+entirely separate from the client-facing `/dashboard` (docs/ROADMAP.md #4; a prerequisite for the
+Scheduler, #5). Adds a `7d` range option to the existing client dashboard, a shared date-range
+resolver (`app/services/date_ranges.py`), run cost estimation (`app/services/cost.py`, reading
+whichever provider-specific token-usage key shape a given run's `token_usage` actually has), a
+9-endpoint SQL aggregation API (`app/services/ops_dashboard.py`/`app/routers/ops_dashboard.py`),
+and a Vue3 island page (`app/templates/ops/index.html`) with client/prompt-set/prompt drill-down
+plus an independent cross-client user axis — including a "Scheduler" pseudo-user
+(`trigger_type='scheduled'`) and a separate "unknown attribution" bucket for runs that predate
+phase 6's user-attribution tracking, found while implementing this rather than assumed upfront.
+Bundles one small unrelated fix found along the way: bulk-import's default market now comes from
+the prompt set's own existing prompts (or the browser's last choice), not always the
+alphabetically-first market.
+
+`/code-review high` on the full branch diff found and fixed 10 issues before merge: a
+prompt-detail "view all runs" link that undercounted against its own lineage-wide totals (closed
+via an additive `/prompts/{id}?scope=lineage` param, default behavior unchanged for every other
+caller), hardcoded English status text bypassing i18n, a daily-chart date off-by-one for
+negative-UTC-offset viewers, unhandled failed API responses rendered as if they were valid data, a
+stale-response race on rapid drill-down clicks, plus reuse/efficiency cleanup (shared
+day/week/month bucketing, a deduplicated Scheduler/unknown-attribution classifier, `ops_summary`
+cut from 3 DB round-trips to 1, `prompt_ops_rows` from 2 to 1, keyword-only scoping filters).
+
+Full task breakdown and design decisions: `docs/TASKS_OPS_DASHBOARD.md` and
+`docs/PROMPTS_OPS_DASHBOARD.md`.
+
+## Gemini citation extraction fix + claim/source-passage split
+
+Branch `feature/signalmap-gemini-citation-extraction` (2026-09-16), roadmap
+item #11 — not one of the five roadmap phases in the signalmap-conventions
+skill; it corrects extraction of data `raw_payload` already contained (FR-10)
+and adds the fields roadmap #12 will need.
+
+Two independent defects, both measured against production data rather than
+estimated. First, `app/adapters/google.py::_map_citations` walked the
+grounding chunks and kept only the first support referencing each one, so
+Gemini's many-to-many relation between answer segments and sources was
+flattened: 551 stored rows for 1354 real claim-source pairs, 59% of the links
+dropped, in 40 of 52 answers. It now walks the supports and emits one row per
+(segment, source) pair, ordered by position in the answer. Second,
+`citations.cited_answer_span` meant different things per provider — the answer
+span for Gemini and OpenAI, but the passage quoted from the source page for
+Anthropic, contradicting FR-12 (the stored value was findable in the answer
+for 551/551 Gemini and 71/71 OpenAI rows, but only 17/158 Anthropic ones).
+`citations` gained `source_passage`, `answer_span_start` and `answer_span_end`
+(migration `0027`), and the run detail page now labels the two separately.
+
+All three mappers moved from SDK objects onto the serialized payload dict, so
+migration `0028` could replay the exact same functions over stored
+`raw_payload` rows and recompute the whole archive (Gemini 583 → 1386,
+Anthropic 167 with the text moved, OpenAI 71 with offsets filled) instead of
+growing a second copy of the extraction logic — the one deliberate,
+user-confirmed exception to never rewriting evidence rows, legitimate only
+because `citations` is derived from a `raw_payload` this migration never
+touches. Dashboard code was deliberately left alone: `count(citations)` now
+uniformly means "claim-source links", which is what it always meant for the
+other two providers.
+
+Closes the test gap that let this survive three phases — `_map_citations` had
+no test for any provider, including a named regression test for the original
+`break` bug (243 tests, up from 221).
+
+Full task breakdown, measured figures and design decisions:
+`docs/TASKS_GEMINI_CITATIONS.md` and `docs/PROMPTS_GEMINI_CITATIONS.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

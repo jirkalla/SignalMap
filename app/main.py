@@ -26,6 +26,8 @@ from app.routers import (
     help,
     locale,
     markets,
+    ops_dashboard,
+    personas,
     prompt_sets,
     prompts,
     providers,
@@ -118,6 +120,7 @@ app.include_router(providers.router)
 app.include_router(ai_models.router)
 app.include_router(settings.router)
 app.include_router(account.router)
+app.include_router(ops_dashboard.router)
 
 # Every router below requires a logged-in session (any role) except `locale` — the language
 # switch must keep working even on the login page itself, before anyone is authenticated.
@@ -130,6 +133,7 @@ app.include_router(prompt_sets.router, dependencies=_login_required)
 app.include_router(prompts.router, dependencies=_login_required)
 app.include_router(runs.router, dependencies=_login_required)
 app.include_router(markets.router, dependencies=_login_required)
+app.include_router(personas.router, dependencies=_login_required)
 app.include_router(dashboard.router, dependencies=_login_required)
 app.include_router(locale.router)
 

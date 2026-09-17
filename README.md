@@ -88,7 +88,7 @@ No server is created by these files.
 
    ```bash
    ssh root@SERVER_IP 'mkdir -p /opt/signalmap'
-   rsync -az --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='__pycache__' --exclude='*.dump' ./ root@SERVER_IP:/opt/signalmap/
+   rsync -az --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='__pycache__' --exclude='*.dump' --exclude='docker-compose.override.yaml' ./ root@SERVER_IP:/opt/signalmap/
    ```
 
 4. On the server, `cd /opt/signalmap`, create `.env` as in local step 1
@@ -139,7 +139,7 @@ ssh root@2.29.23.252 'cd /opt/signalmap && docker compose exec -T postgres pg_du
 
 # Sync only this app directory; --delete removes obsolete source files.
 # Excluded .env and database dump files are preserved on the destination.
-rsync -az --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.dump' ./ root@2.29.23.252:/opt/signalmap/
+rsync -az --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.dump' --exclude='docker-compose.override.yaml' ./ root@2.29.23.252:/opt/signalmap/
 ssh root@2.29.23.252 'cd /opt/signalmap && docker compose up -d --build --wait'
 curl --fail --show-error https://expressyourself.ai/health
 ```

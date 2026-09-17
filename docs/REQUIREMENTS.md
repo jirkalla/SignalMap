@@ -41,9 +41,22 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 - FR-10: Every run stores the complete, unmodified raw provider response.
 - FR-11: Every run stores a human-readable rendered answer text, separate
   from the raw payload.
-- FR-12: Every citation/source the provider returns is stored individually
-  (URL, title, domain, position, and the answer span it supports, where the
-  provider exposes that link).
+- FR-12: Every claim-source link the provider returns is stored
+  individually: URL, title, domain, position, and — where the provider
+  exposes it — the text on each side of the link. Those are two different
+  texts and they live in two separate fields: the **answer span** the source
+  supports (`cited_answer_span`, plus `answer_span_start`/`answer_span_end`
+  locating it, both stored exactly as the provider returned them) and the
+  **passage quoted from the source page** (`source_passage`). No provider
+  fills both halves — Gemini and OpenAI expose the answer span, Anthropic
+  the source passage — so each field is optional and which one is populated
+  is a property of the provider's API, not a gap.
+  A stored row is one *(answer segment, source)* pair, not one source: an
+  answer may cite the same URL for several claims and several URLs for one
+  claim, and every such pair is its own row rather than being flattened.
+  Duplicate URLs within one response are therefore expected and are not
+  deduplicated — collapsing them would discard links the provider actually
+  returned.
 - FR-13: If a response has no citations, the system records that
   explicitly (has_citations = false) rather than leaving it ambiguous or
   silently omitting the field.
@@ -52,6 +65,18 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   the rendered answer, the raw JSON response, and the list of citations.
 - FR-15: User can view a list of all runs for a given prompt, showing
   model, provider, timestamp, and status at a glance.
+
+> **What a citation count means.** Because a row is one claim-source link
+> (FR-12), `count(citations)` answers *"how many times did a source back a
+> claim"*, not *"how many sources were used"*. The two numbers are
+> different and both are legitimate — for sources, count distinct
+> `source_domain` (or `source_url`) instead. Dashboard KPIs, the domain
+> league table and exports all use the link count, uniformly across
+> providers; a domain backing five claims is counted five times there by
+> design, since that is what its influence on the answer looks like.
+> Historical figures moved upward when this was corrected for Gemini
+> (`docs/TASKS_GEMINI_CITATIONS.md`), consistently across the whole
+> archive rather than as a step at the deploy date.
 
 ### 2.5 Error handling
 - FR-16: If a provider call fails (timeout, API error, rate limit), the
@@ -87,6 +112,33 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 - NFR-8 (Portability): The application must run identically via Docker
   Compose on the developer's PC and on a future VPS deployment — no
   environment-specific setup steps outside `.env` values.
+- NFR-9 (Measurement methodology limitation — API vs. deployed interface):
+  Every provider adapter calls the provider's API directly (with grounding/
+  `web_search` enabled where available), not the provider's deployed
+  consumer chat product (chatgpt.com, gemini.google.com, claude.ai).
+  External research (Wang, Baumann, Ho & Koyejo, "API Benchmark Scores Do
+  Not Reliably Transfer to Chatbot Interfaces," arXiv:2609.08861, Sept
+  2026) found that API-based evaluations of ChatGPT/Claude/Gemini diverge
+  from their deployed chat interfaces by ~3.4 percentage points in
+  accuracy and ~2.1 points in test-retest agreement — a bigger gap than
+  between consecutive model generations — and that exposed API controls
+  (system prompt, sampling, reasoning settings) could not reliably close
+  it. SignalMap's runs should therefore be read as "how the provider's API
+  answers with search grounding on," which is a close proxy for, but not
+  proven identical to, what an end user sees in the provider's consumer
+  chat product. This is a known limitation of the measurement approach
+  itself, not a defect — flag it if a future request assumes API results
+  are interchangeable with chat-interface behavior.
+- NFR-10 (Ops visibility is admin/editor only, never client-facing): The
+  `/ops` dashboard (docs/TASKS_OPS_DASHBOARD.md) surfaces cost, latency,
+  and error data — internal engineering/operations visibility, not a
+  client-facing report. It must never be reachable by the `viewer` role or
+  by any future external/client-scoped account (docs/ROADMAP.md #10), and
+  this must be enforced on every route and endpoint itself (`require_role`),
+  not just hidden in the navigation. This is a separate access-control
+  boundary from the client-facing `/dashboard` (phase 4), which viewers can
+  already reach — the two must never be merged into one screen or one
+  permission check.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 

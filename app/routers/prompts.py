@@ -3,7 +3,9 @@
 history, and lets it be edited — as a new version, never in place (NFR-6).
 """
 
-from fastapi import APIRouter, Depends, Form, Request
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -13,8 +15,9 @@ from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Market, Prompt, Provider, Run
+from app.services.cost import current_prices
 from app.templating import get_t, render
-from app.utils import market_options
+from app.utils import default_persona_id, market_options, persona_options
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -30,7 +33,7 @@ def _get_prompt_or_404(db: Session, request: Request, prompt_id: int) -> Prompt:
     return prompt
 
 
-def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
+def _runnable_model_groups(db: Session) -> list[tuple[str, list[tuple[AIModel, dict[str, Decimal]]]]]:
     """Active models, grouped by provider, for the run-trigger dropdown.
 
     A provider only contributes a group once it has both a registered
@@ -39,19 +42,20 @@ def _runnable_model_groups(db: Session) -> list[tuple[str, list[AIModel]]]:
     added ahead of its adapter), simply produces no group rather than a
     broken or dead option.
 
-    Returns full AIModel rows (not just id/label pairs) — prompts/detail.html
-    builds the <option>s itself (not select_grouped_field, which only knows
-    generic (value, text) pairs) so it can also pre-render each model's
-    cost_badge for the live price/free indicator below the dropdown.
+    Returns (AIModel, prices) pairs, not bare AIModel rows — prompts/detail.html builds the
+    <option>s itself (not select_grouped_field, which only knows generic (value, text) pairs) so
+    it can also pre-render each model's cost_badge for the live price/free indicator below the
+    dropdown, and cost_badge needs that model's current component prices (app.services.cost.
+    current_prices) alongside it (docs/TASKS_COST_COMPONENTS.md CC-3 step 6).
     """
     models = db.scalars(
         select(AIModel).join(Provider).where(AIModel.is_active.is_(True)).order_by(Provider.name, AIModel.display_name)
     ).all()
-    groups: dict[str, list[AIModel]] = {}
-    for model in models:
-        if not has_adapter(model.provider.code):
-            continue
-        groups.setdefault(model.provider.name, []).append(model)
+    runnable = [m for m in models if has_adapter(m.provider.code)]
+    prices = current_prices(db, [m.id for m in runnable])
+    groups: dict[str, list[tuple[AIModel, dict[str, Decimal]]]] = {}
+    for model in runnable:
+        groups.setdefault(model.provider.name, []).append((model, prices.get(model.id, {})))
     return list(groups.items())
 
 
@@ -102,14 +106,26 @@ def _delete_prompt_lineage(db: Session, versions: list[Prompt]) -> None:
 
 
 @router.get("/{prompt_id}")
-def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db)):
+def prompt_detail(
+    request: Request,
+    prompt_id: int,
+    scope: str | None = Query(
+        None,
+        description="Pass 'lineage' to list runs against every version of this prompt, not just this "
+        "exact version — used by the ops dashboard's \"view all runs\" link (code review finding: it "
+        "otherwise linked here while showing lineage-wide totals above the link) so the two agree. "
+        "Omitted or any other value: today's default, this exact version's own runs only.",
+    ),
+    db: Session = Depends(get_db),
+):
     """Show one prompt: its text/market/topic, a run-trigger form, past runs, and version history (FR-7, FR-15)."""
     prompt = _get_prompt_or_404(db, request, prompt_id)
     model_groups = _runnable_model_groups(db)
-    runs = db.scalars(
-        select(Run).where(Run.prompt_id == prompt_id).order_by(Run.started_at.desc())
-    ).all()
     versions = _version_history(db, prompt)
+    run_prompt_ids = [v.id for v in versions] if scope == "lineage" and len(versions) > 1 else [prompt_id]
+    runs = db.scalars(
+        select(Run).where(Run.prompt_id.in_(run_prompt_ids)).order_by(Run.started_at.desc())
+    ).all()
     return render(
         request,
         "prompts/detail.html",
@@ -117,6 +133,8 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
             "prompt": prompt,
             "model_groups": model_groups,
             "markets": market_options(db),
+            "personas": persona_options(db),
+            "default_persona_id": default_persona_id(db),
             "runs": runs,
             "versions": versions if len(versions) > 1 else [],
         },
@@ -125,7 +143,10 @@ def prompt_detail(request: Request, prompt_id: int, db: Session = Depends(get_db
 
 @router.get("/{prompt_id}/edit", dependencies=_editor_or_admin)
 def edit_prompt_form(request: Request, prompt_id: int, db: Session = Depends(get_db)):
-    """Render the prompt edit form. Saving creates version+1 — this row is never changed."""
+    """Render the prompt edit form. Saving a text/market/topic change creates version+1 — this
+    row is never changed for that. Toggling only `is_active` updates this same row in place
+    instead (see `update_prompt`'s docstring).
+    """
     prompt = _get_prompt_or_404(db, request, prompt_id)
     t = get_t(request)
     return render(
@@ -152,11 +173,16 @@ def update_prompt(
     is_active: bool = Form(False, description="Inactive prompts are kept for history but not offered for new runs."),
     db: Session = Depends(get_db),
 ):
-    """Save an edit as a new prompt version (FR-6's deferred edit UI, now built).
+    """Save an edit as a new prompt version (FR-6's deferred edit UI, now built) — but only when
+    the text, market, or topic actually changed.
 
-    The original row is never modified — a new row is inserted at
-    version+1 and the original is marked as no longer current, so every
-    past run still shows the exact text it actually ran against.
+    A new version exists so every past run keeps showing the exact text it actually ran
+    against — `Prompt.__doc__` already documents `is_active` as "a separate, user-controlled
+    concern... orthogonal to whether it's the current version," but this route didn't honor
+    that until now: saving the form with only the Active checkbox flipped used to create a new
+    version too, even though nothing about what a provider would be asked changes (found in
+    conversation, 2026-09-15 — a prompt ended up 4 versions deep from two is_active toggles with
+    identical text). Content unchanged now just flips `is_active` on the current row in place.
     """
     t = get_t(request)
     old = _get_prompt_or_404(db, request, prompt_id)
@@ -164,13 +190,22 @@ def update_prompt(
     if market is None:
         raise AppError("market_not_found", t("errors.market_not_found"), status_code=400)
 
+    new_text = text.strip()
+    new_topic = topic.strip() or None
+    content_changed = new_text != old.text or market.id != old.market_id or new_topic != old.topic
+
+    if not content_changed:
+        old.is_active = is_active
+        db.commit()
+        return RedirectResponse(url=f"/prompts/{old.id}", status_code=303)
+
     new_prompt = Prompt(
         prompt_set_id=old.prompt_set_id,
         root_prompt_id=old.root_prompt_id or old.id,
         version=old.version + 1,
-        text=text.strip(),
+        text=new_text,
         market_id=market.id,
-        topic=topic.strip() or None,
+        topic=new_topic,
         is_active=is_active,
     )
     old.is_current_version = False
@@ -205,6 +240,8 @@ def delete_prompt(request: Request, prompt_id: int, db: Session = Depends(get_db
                 "prompt": prompt,
                 "model_groups": model_groups,
                 "markets": market_options(db),
+                "personas": persona_options(db),
+                "default_persona_id": default_persona_id(db),
                 "runs": runs,
                 "versions": versions if len(versions) > 1 else [],
                 "error": t("errors.prompt_in_use").format(count=run_count),

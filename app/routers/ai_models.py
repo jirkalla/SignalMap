@@ -7,6 +7,7 @@ Client/Prompt/PromptSet (HD-T4): `runs.model_id` has no ondelete, so a model
 referenced by any Run can only be deactivated, never deleted.
 """
 
+from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -14,10 +15,12 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import AIModel, Provider, Run
+from app.models import AIModel, AIModelPriceComponent, Provider, Run, User
+from app.models.provider import COMPONENT_TYPES
+from app.services.cost import current_prices, prices_at
 from app.templating import get_t, render
 
 # Editor + admin (docs/ROADMAP.md §1 follow-up) — unlike providers.py/users.py, model
@@ -26,10 +29,11 @@ router = APIRouter(prefix="/ai-models", tags=["ai_models"], dependencies=[Depend
 
 _CAPABILITY_TIERS = ("flagship", "standard", "economy")
 
-# ai_models.cost_per_1k_*_usd is Numeric(10, 5) — 10 total digits, 5 after the
-# decimal point, so the largest representable value is just under 10**5.
-_MAX_PRICE_PER_1K = Decimal(100_000)
-_PRICE_QUANTUM = Decimal("0.00001")
+# ai_model_price_components.price_per_unit_usd is Numeric(12, 6) — 12 total digits, 6 after the
+# decimal point, so the largest representable value is just under 10**6 (docs/
+# TASKS_COST_COMPONENTS.md design decision 11).
+_MAX_PRICE_PER_1M = Decimal(1_000_000)
+_PRICE_PER_1M_QUANTUM = Decimal("0.000001")
 
 
 def _get_model_or_404(db: Session, request: Request, model_id: int) -> AIModel:
@@ -39,11 +43,14 @@ def _get_model_or_404(db: Session, request: Request, model_id: int) -> AIModel:
     return model
 
 
-def _model_rows(db: Session) -> list[tuple[AIModel, int]]:
-    """Every model, grouped/ordered by provider, with its total run count (for the delete-block state)."""
+def _model_rows(db: Session) -> list[tuple[AIModel, int, dict[str, Decimal]]]:
+    """Every model, grouped/ordered by provider, with its total run count (for the delete-block
+    state) and today's component prices (for cost_badge, app/templates/partials/macros.html).
+    """
     models = db.scalars(select(AIModel).join(Provider).order_by(Provider.name, AIModel.model_name)).all()
     run_counts = dict(db.execute(select(Run.model_id, func.count(Run.id)).group_by(Run.model_id)).all())
-    return [(m, run_counts.get(m.id, 0)) for m in models]
+    prices = current_prices(db, [m.id for m in models])
+    return [(m, run_counts.get(m.id, 0), prices.get(m.id, {})) for m in models]
 
 
 def _model_run_count(db: Session, model_id: int) -> int:
@@ -59,19 +66,51 @@ def _provider_options(db: Session) -> list[tuple[int, str]]:
     return [(p.id, p.name) for p in providers]
 
 
+def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceComponent, datetime | None]]:
+    """Pair each of `model`'s price component rows (already newest-first via the relationship's
+    own `order_by`) with its computed validity end, computed independently PER `component_type`.
+
+    `ai_model_price_components` stores only `effective_from` (same reasoning as the now-dropped
+    `ai_model_price_history`, see migration 0020's docstring) — a row's "valid until" is always
+    the next-newer row's `effective_from` *for that same component_type*, or `None` (still in
+    effect today) for that type's newest row. Computed within each type, not across all of them,
+    so a price change to `input` doesn't make an unrelated `cache_read` row look like it just
+    expired (docs/TASKS_COST_COMPONENTS.md CC-3 step 5). Computed here over the already-loaded
+    list, not a second query.
+    """
+    components = model.price_components  # newest-first overall, per the relationship's order_by
+    rows_by_type: dict[str, list[AIModelPriceComponent]] = {}
+    for component in components:
+        rows_by_type.setdefault(component.component_type, []).append(component)
+
+    valid_until: dict[int, datetime | None] = {}
+    for rows in rows_by_type.values():
+        for i, row in enumerate(rows):
+            valid_until[row.id] = rows[i - 1].effective_from if i > 0 else None
+
+    return [(row, valid_until[row.id]) for row in components]
+
+
+def _price_form_fields(prices: dict[str, str]) -> dict[str, str]:
+    """`{'input': '2.00', ...}` -> `{'price_input': '2.00', ...}` — the form field name prefix,
+    shared by every place that builds ai_models/form.html's re-render context."""
+    return {f"price_{component_type}": prices.get(component_type, "") for component_type in COMPONENT_TYPES}
+
+
 def _model_to_form_state(model: AIModel) -> dict:
     """Shape an AIModel ORM row into the same dict keys the create/edit forms re-render on
-    validation error, so ai_models/form.html only ever has one shape to read from — most
-    importantly, `cost_per_1k_*_usd` (DB/storage unit) becomes `cost_per_million_*_usd`
-    (the unit admins actually type, matching every provider's published pricing)."""
+    validation error, so ai_models/form.html only ever has one shape to read from — one
+    `price_<component_type>` field per entry in `COMPONENT_TYPES`, holding today's price
+    (app.services.cost.prices_at) already in the per-1M-token unit admins type, matching every
+    provider's published pricing (docs/TASKS_COST_COMPONENTS.md design decision 11)."""
+    today_prices = prices_at(model.price_components, datetime.now(timezone.utc))
     return {
         "id": model.id,
         "provider_id": model.provider_id,
         "model_name": model.model_name,
         "display_name": model.display_name or "",
         "capability_tier": model.capability_tier,
-        "cost_per_million_input_usd": str(model.cost_per_1k_input_usd * 1000) if model.cost_per_1k_input_usd is not None else "",
-        "cost_per_million_output_usd": str(model.cost_per_1k_output_usd * 1000) if model.cost_per_1k_output_usd is not None else "",
+        **_price_form_fields({ct: str(price) for ct, price in today_prices.items()}),
         "context_window_tokens": str(model.context_window_tokens) if model.context_window_tokens is not None else "",
         "max_output_tokens": str(model.max_output_tokens) if model.max_output_tokens is not None else "",
         "is_free": model.is_free,
@@ -81,30 +120,32 @@ def _model_to_form_state(model: AIModel) -> dict:
     }
 
 
-def _parse_price(raw: str, t) -> tuple[Decimal | None, str | None]:
-    """Parse an optional per-million-token price into the per-1k value the DB stores.
+def _parse_component_price(raw: str, t) -> tuple[Decimal | None, str | None]:
+    """Parse an optional USD-per-1M-token component price.
 
-    Empty input is valid (price not yet known — see docs/TASKS_PHASE2.md
-    design decision 7). Admins enter the per-million figure since that's how
-    every provider publishes pricing; storage stays per-1k for continuity
-    with the phase-1 schema (`cost_per_1k_input_usd`/`cost_per_1k_output_usd`).
+    Empty input is valid — "we don't know this component's price yet", or "this provider doesn't
+    bill this component" (docs/TASKS_PHASE2.md design decision 7; docs/TASKS_COST_COMPONENTS.md
+    design decision 14: no row is the correct representation of "unknown", never a zero price).
+    Stored directly per 1M tokens — unlike the retired `_parse_price`, this never divides by
+    1000 — because that's both the unit every provider publishes pricing in and the unit
+    `ai_model_price_components.price_per_unit_usd` is defined in (design decision 11).
 
-    Explicitly quantized to the column's actual scale (5 decimal places) and
-    range-checked before it ever reaches the database — otherwise a
-    sub-cent-per-million price (e.g. "0.075") gets silently rounded by
-    Postgres with no warning, and a wildly out-of-range typo raises an
-    uncaught NumericValueOutOfRange during commit instead of a clean 409.
+    Explicitly quantized to the column's actual scale (6 decimal places) and range-checked before
+    it ever reaches the database — otherwise a sub-cent-per-million price (e.g. Gemini 3.1
+    flash-lite's cache-read price, "0.025") gets silently rounded by Postgres with no warning, and
+    a wildly out-of-range typo raises an uncaught NumericValueOutOfRange during commit instead of
+    a clean 409.
     """
     raw = raw.strip()
     if not raw:
         return None, None
     try:
-        value = Decimal(raw) / 1000
+        value = Decimal(raw)
     except InvalidOperation:
         return None, t("errors.ai_model_invalid_price")
-    if value < 0 or value >= _MAX_PRICE_PER_1K:
+    if value < 0 or value >= _MAX_PRICE_PER_1M:
         return None, t("errors.ai_model_price_out_of_range")
-    return value.quantize(_PRICE_QUANTUM, rounding=ROUND_HALF_UP), None
+    return value.quantize(_PRICE_PER_1M_QUANTUM, rounding=ROUND_HALF_UP), None
 
 
 def _parse_int(raw: str, t) -> tuple[int | None, str | None]:
@@ -124,11 +165,11 @@ def _validate_and_parse_model_form(
     provider_id: int,
     model_name: str,
     capability_tier: str,
-    cost_per_million_input_usd: str,
-    cost_per_million_output_usd: str,
+    prices: dict[str, str],
     context_window_tokens: str,
     max_output_tokens: str,
     exclude_id: int | None = None,
+    current_component_prices: dict[str, Decimal] | None = None,
 ) -> tuple[dict, str | None]:
     """Validate + parse one create/edit submission. Shared by create_ai_model and
 
@@ -136,11 +177,20 @@ def _validate_and_parse_model_form(
     same shared-validator shape as app/routers/markets.py's
     _validate_iso_format (used by both create_market and update_market).
 
-    Returns (parsed, error). `parsed` always has keys cost_in/cost_out/
-    context_tokens/max_tokens; they're only meaningful when error is None.
-    `exclude_id` excludes the model being edited from the name-conflict check.
+    Returns (parsed, error). `parsed` always has keys prices/context_tokens/max_tokens; they're
+    only meaningful when error is None. `parsed["prices"]` has one entry per `COMPONENT_TYPES`
+    value, `None` where that component wasn't submitted. `exclude_id` excludes the model being
+    edited from the name-conflict check.
+
+    `current_component_prices` (from `app.services.cost.prices_at`, empty/`None` on create — a
+    new model has no prior price to clear) makes clearing an already-priced component a
+    validation error rather than a silent no-op: `ai_model_price_components` is append-only and
+    has no way to record "this component is no longer billed" except a new row, and an empty
+    field is indistinguishable from a typo (docs/TASKS_COST_COMPONENTS.md CC-3 step 4). If the
+    provider genuinely stopped billing a component, the admin enters 0, not a blank field.
     """
-    parsed: dict = {"cost_in": None, "cost_out": None, "context_tokens": None, "max_tokens": None}
+    parsed: dict = {"prices": {ct: None for ct in COMPONENT_TYPES}, "context_tokens": None, "max_tokens": None}
+    current_component_prices = current_component_prices or {}
 
     if db.get(Provider, provider_id) is None:
         return parsed, t("errors.provider_not_found")
@@ -149,12 +199,14 @@ def _validate_and_parse_model_form(
     if capability_tier not in _CAPABILITY_TIERS:
         return parsed, t("errors.ai_model_invalid_tier")
 
-    parsed["cost_in"], error = _parse_price(cost_per_million_input_usd, t)
-    if error:
-        return parsed, error
-    parsed["cost_out"], error = _parse_price(cost_per_million_output_usd, t)
-    if error:
-        return parsed, error
+    for component_type in COMPONENT_TYPES:
+        value, error = _parse_component_price(prices.get(component_type, ""), t)
+        if error:
+            return parsed, error
+        if value is None and component_type in current_component_prices:
+            return parsed, t("errors.ai_model_price_component_cannot_be_cleared")
+        parsed["prices"][component_type] = value
+
     parsed["context_tokens"], error = _parse_int(context_window_tokens, t)
     if error:
         return parsed, error
@@ -201,31 +253,42 @@ def create_ai_model(
     model_name: str = Form(..., description="Exact model string passed to the provider adapter, e.g. 'claude-sonnet-5'."),
     display_name: str = Form("", description="Human-readable name shown in the UI, e.g. 'Claude Sonnet 5'."),
     capability_tier: str = Form(..., description="One of: flagship, standard, economy."),
-    cost_per_million_input_usd: str = Form(
-        "", description="Price per 1M input tokens in USD, e.g. '2.00'. Leave empty if not yet known."
-    ),
-    cost_per_million_output_usd: str = Form(
-        "", description="Price per 1M output tokens in USD, e.g. '10.00'. Leave empty if not yet known."
-    ),
+    price_input: str = Form("", description="Price per 1M input tokens in USD, e.g. '2.00'. Leave empty if not yet known."),
+    price_output: str = Form("", description="Price per 1M output tokens in USD, e.g. '10.00'. Leave empty if not yet known."),
+    price_cache_read: str = Form("", description="Price per 1M cache-read tokens in USD. Leave empty if this provider doesn't bill it, or the price isn't yet known."),
+    price_cache_write: str = Form("", description="Price per 1M cache-write tokens in USD (single-tier providers). Leave empty if this provider doesn't bill it, or the price isn't yet known."),
+    price_cache_write_5m: str = Form("", description="Price per 1M cache-write tokens, 5-minute tier (Anthropic). Leave empty if not applicable."),
+    price_cache_write_1h: str = Form("", description="Price per 1M cache-write tokens, 1-hour tier (Anthropic). Leave empty if not applicable."),
     context_window_tokens: str = Form("", description="Total context window in tokens, e.g. '1000000'."),
     max_output_tokens: str = Form("", description="Maximum output tokens per response, e.g. '128000'."),
     is_free: bool = Form(False, description="Whether this model is genuinely free to call — never inferred from price."),
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes, e.g. pricing source and verification date."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Create a new model under a provider. Model rows are pure data — no adapter change is required."""
+    """Create a new model under a provider. Model rows are pure data — no adapter change is required.
+
+    Writes an `AIModelPriceComponent` row for every priced component in the same commit, so every
+    model's price timeline starts at its own creation, never at the moment someone first edits
+    its price.
+    """
     t = get_t(request)
     model_name = model_name.strip()
     display_name = display_name.strip()
     notes = notes.strip()
+    # Positional zip against COMPONENT_TYPES, not a hand-typed dict literal (code review finding)
+    # — keeps this in lockstep with _price_form_fields' own COMPONENT_TYPES-driven mapping below,
+    # instead of two independently-maintained lists of the same six component names.
+    price_raw = dict(
+        zip(COMPONENT_TYPES, (price_input, price_output, price_cache_read, price_cache_write, price_cache_write_5m, price_cache_write_1h))
+    )
     form_state = {
         "provider_id": provider_id,
         "model_name": model_name,
         "display_name": display_name,
         "capability_tier": capability_tier,
-        "cost_per_million_input_usd": cost_per_million_input_usd,
-        "cost_per_million_output_usd": cost_per_million_output_usd,
+        **_price_form_fields(price_raw),
         "context_window_tokens": context_window_tokens,
         "max_output_tokens": max_output_tokens,
         "is_free": is_free,
@@ -239,8 +302,7 @@ def create_ai_model(
         provider_id=provider_id,
         model_name=model_name,
         capability_tier=capability_tier,
-        cost_per_million_input_usd=cost_per_million_input_usd,
-        cost_per_million_output_usd=cost_per_million_output_usd,
+        prices=price_raw,
         context_window_tokens=context_window_tokens,
         max_output_tokens=max_output_tokens,
     )
@@ -265,8 +327,6 @@ def create_ai_model(
         model_name=model_name,
         display_name=display_name or None,
         capability_tier=capability_tier,
-        cost_per_1k_input_usd=parsed["cost_in"],
-        cost_per_1k_output_usd=parsed["cost_out"],
         context_window_tokens=parsed["context_tokens"],
         max_output_tokens=parsed["max_tokens"],
         is_free=is_free,
@@ -274,13 +334,24 @@ def create_ai_model(
         notes=notes or None,
     )
     db.add(model)
+    db.flush()  # need model.id before the component rows can reference it
+    for component_type, value in parsed["prices"].items():
+        if value is not None:
+            db.add(
+                AIModelPriceComponent(
+                    ai_model_id=model.id, component_type=component_type, price_per_unit_usd=value, changed_by_user_id=user.id
+                )
+            )
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 
 
 @router.get("/{model_id}/edit")
 def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(get_db)):
-    """Render the model edit form, pre-filled with current values, including read-only created_at."""
+    """Render the model edit form, pre-filled with current values, including read-only created_at
+    and its full price history (oldest changes at the bottom, each paired with the date range it
+    was actually in effect).
+    """
     model = _get_model_or_404(db, request, model_id)
     t = get_t(request)
     return render(
@@ -292,6 +363,7 @@ def edit_ai_model_form(request: Request, model_id: int, db: Session = Depends(ge
             "cancel_url": "/ai-models",
             "model": _model_to_form_state(model),
             "providers": _provider_options(db),
+            "price_history": _price_history_rows(model),
         },
     )
 
@@ -304,21 +376,36 @@ def update_ai_model(
     model_name: str = Form(..., description="Exact model string passed to the provider adapter."),
     display_name: str = Form("", description="Human-readable name shown in the UI."),
     capability_tier: str = Form(..., description="One of: flagship, standard, economy."),
-    cost_per_million_input_usd: str = Form("", description="Price per 1M input tokens in USD. Leave empty if not yet known."),
-    cost_per_million_output_usd: str = Form("", description="Price per 1M output tokens in USD. Leave empty if not yet known."),
+    price_input: str = Form("", description="Price per 1M input tokens in USD. Leave empty if not yet known."),
+    price_output: str = Form("", description="Price per 1M output tokens in USD. Leave empty if not yet known."),
+    price_cache_read: str = Form("", description="Price per 1M cache-read tokens in USD. Leave empty if this provider doesn't bill it, or the price isn't yet known."),
+    price_cache_write: str = Form("", description="Price per 1M cache-write tokens in USD (single-tier providers). Leave empty if this provider doesn't bill it, or the price isn't yet known."),
+    price_cache_write_5m: str = Form("", description="Price per 1M cache-write tokens, 5-minute tier (Anthropic). Leave empty if not applicable."),
+    price_cache_write_1h: str = Form("", description="Price per 1M cache-write tokens, 1-hour tier (Anthropic). Leave empty if not applicable."),
     context_window_tokens: str = Form("", description="Total context window in tokens."),
     max_output_tokens: str = Form("", description="Maximum output tokens per response."),
     is_free: bool = Form(False, description="Whether this model is genuinely free to call."),
     supports_web_search: bool = Form(False, description="Whether this model's adapter enables provider-side web search/grounding."),
     notes: str = Form("", description="Free-text admin notes."),
     db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
 ):
-    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id)."""
+    """Update an existing model. `model_name` stays editable — unlike Prompt, a model has no run-time evidence tying to its exact text, only to its id (Run.model_id).
+
+    Writes a new `AIModelPriceComponent` row only for a component whose submitted price actually
+    differs from today's (`app.services.cost.prices_at`) — editing an unrelated field like
+    `notes`, or resubmitting an unchanged price, never adds one.
+    """
     t = get_t(request)
     model = _get_model_or_404(db, request, model_id)
     model_name = model_name.strip()
     display_name = display_name.strip()
     notes = notes.strip()
+    # Positional zip against COMPONENT_TYPES — see create_ai_model's identical construction.
+    price_raw = dict(
+        zip(COMPONENT_TYPES, (price_input, price_output, price_cache_read, price_cache_write, price_cache_write_5m, price_cache_write_1h))
+    )
+    current_component_prices = prices_at(model.price_components, datetime.now(timezone.utc))
 
     parsed, error = _validate_and_parse_model_form(
         db,
@@ -326,11 +413,11 @@ def update_ai_model(
         provider_id=provider_id,
         model_name=model_name,
         capability_tier=capability_tier,
-        cost_per_million_input_usd=cost_per_million_input_usd,
-        cost_per_million_output_usd=cost_per_million_output_usd,
+        prices=price_raw,
         context_window_tokens=context_window_tokens,
         max_output_tokens=max_output_tokens,
         exclude_id=model_id,
+        current_component_prices=current_component_prices,
     )
 
     if error:
@@ -340,8 +427,7 @@ def update_ai_model(
             "model_name": model_name,
             "display_name": display_name,
             "capability_tier": capability_tier,
-            "cost_per_million_input_usd": cost_per_million_input_usd,
-            "cost_per_million_output_usd": cost_per_million_output_usd,
+            **_price_form_fields(price_raw),
             "context_window_tokens": context_window_tokens,
             "max_output_tokens": max_output_tokens,
             "is_free": is_free,
@@ -367,13 +453,20 @@ def update_ai_model(
     model.model_name = model_name
     model.display_name = display_name or None
     model.capability_tier = capability_tier
-    model.cost_per_1k_input_usd = parsed["cost_in"]
-    model.cost_per_1k_output_usd = parsed["cost_out"]
     model.context_window_tokens = parsed["context_tokens"]
     model.max_output_tokens = parsed["max_tokens"]
     model.is_free = is_free
     model.supports_web_search = supports_web_search
     model.notes = notes or None
+
+    for component_type, value in parsed["prices"].items():
+        if value is not None and value != current_component_prices.get(component_type):
+            db.add(
+                AIModelPriceComponent(
+                    ai_model_id=model.id, component_type=component_type, price_per_unit_usd=value, changed_by_user_id=user.id
+                )
+            )
+
     db.commit()
     return RedirectResponse(url="/ai-models", status_code=303)
 

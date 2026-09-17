@@ -29,9 +29,12 @@
       <a href="/clients" class="flex items-center gap-2">
         <span class="text-lg font-semibold tracking-tight">{{ t('app.title') }}</span>
       </a>
-      <nav class="flex items-center gap-4 text-sm">
+      <nav class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <a href="/clients" class="text-stone-600 hover:text-stone-900">{{ t('nav.clients') }}</a>
         <a href="/dashboard" class="text-stone-600 hover:text-stone-900">{{ t('nav.dashboard') }}</a>
+        {% if can_edit(current_user) %}
+        <a href="/ops" class="text-stone-600 hover:text-stone-900">{{ t('nav.ops') }}</a>
+        {% endif %}
 
         {% if can_edit(current_user) %}
         <div class="relative">
@@ -41,6 +44,7 @@
           </button>
           <div id="nav-config-menu" class="nav-dd-panel hidden absolute top-full left-1/2 -translate-x-1/2 mt-2 min-w-[160px] bg-white border border-stone-300 rounded-md shadow-md p-1 z-10">
             <a href="/markets" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.markets') }}</a>
+            <a href="/personas" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.personas') }}</a>
             <a href="/ai-models" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.ai_models') }}</a>
             <a href="/settings" class="block px-3 py-2 rounded text-stone-600 hover:bg-stone-50 hover:text-stone-900">{{ t('nav.settings') }}</a>
             {% if current_user.role == 'admin' %}
@@ -68,9 +72,9 @@
         {% endif %}
 
         <span class="flex items-center gap-1 text-stone-400">
-          <a href="/set-locale/en?next={{ request.url.path }}" class="hover:text-stone-900 {% if locale == 'en' %}font-semibold text-stone-900{% endif %}">EN</a>
+          <a href="/set-locale/en?next={{ locale_next }}" class="hover:text-stone-900 {% if locale == 'en' %}font-semibold text-stone-900{% endif %}">EN</a>
           <span>/</span>
-          <a href="/set-locale/de?next={{ request.url.path }}" class="hover:text-stone-900 {% if locale == 'de' %}font-semibold text-stone-900{% endif %}">DE</a>
+          <a href="/set-locale/de?next={{ locale_next }}" class="hover:text-stone-900 {% if locale == 'de' %}font-semibold text-stone-900{% endif %}">DE</a>
         </span>
 
         {% if current_user %}
@@ -132,6 +136,22 @@
       document.querySelectorAll('.nav-dd-panel').forEach(function (panel) { panel.classList.add('hidden'); });
       document.querySelectorAll('.nav-dd-trigger').forEach(function (btn) { btn.setAttribute('aria-expanded', 'false'); });
     });
+
+    // Server renders every timestamp as UTC text inside a <time datetime="...">
+    // element (see partials/macros.html local_time()) so the page stays usable
+    // without JS. Here we rewrite that text to the viewer's own browser
+    // timezone — deliberately not a fixed server-side zone, since users may be
+    // outside Central Europe. Re-run after every HTMX swap, not just on load,
+    // since swapped-in fragments carry their own untouched <time> elements.
+    function localizeTimes(root) {
+      root.querySelectorAll('[data-local-time]').forEach(function (el) {
+        var d = new Date(el.getAttribute('datetime'));
+        if (isNaN(d)) return;
+        el.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(d);
+      });
+    }
+    localizeTimes(document);
+    document.addEventListener('htmx:afterSettle', function (event) { localizeTimes(event.target); });
   </script>
 </body>
 </html>

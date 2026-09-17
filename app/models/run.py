@@ -11,7 +11,7 @@ which are only ever inserted once and never updated afterwards.
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.market import Market
+    from app.models.persona import Persona
     from app.models.prompt import Prompt
     from app.models.provider import AIModel
     from app.models.user import User
@@ -33,17 +34,42 @@ class Run(Base):
     run itself rather than inferred from `prompt.market`, so historical
     runs stay accurate even if that ever diverges.
 
+    `persona_id` is the same kind of per-run override, for who the
+    system_instruction template frames the asker as (app/models/persona.py)
+    — defaults to whichever persona is currently marked `is_default` at
+    trigger time, but can be swapped per run (e.g. to compare how the same
+    prompt is answered when framed as a "manager" vs. a "politician"), and
+    is likewise recorded on the run itself so historical runs stay accurate
+    even if the default persona changes later.
+
     `request_payload` records exactly what was sent to the provider (model,
     prompt text, system instruction), set before the adapter is called so
     it's present whether the run succeeds or fails.
+
+    The partial unique index below backstops the "one pending run per
+    prompt+model" check in app/routers/runs.py against a TOCTOU race
+    (two concurrent triggers both passing the SELECT check before either
+    INSERTs) — mirrored here at the ORM level, matching alembic migration
+    0024, so `Base.metadata.create_all()` (what the test suite uses) creates
+    the same constraint the migration creates against the real database.
     """
 
     __tablename__ = "runs"
+    __table_args__ = (
+        Index(
+            "idx_runs_one_pending_per_prompt_model",
+            "prompt_id",
+            "model_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prompt_id: Mapped[int] = mapped_column(ForeignKey("prompts.id"), nullable=False)
     model_id: Mapped[int] = mapped_column(ForeignKey("ai_models.id"), nullable=False)
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id"), nullable=False)
+    persona_id: Mapped[int] = mapped_column(ForeignKey("personas.id"), nullable=False)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual", server_default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -58,6 +84,7 @@ class Run(Base):
     prompt: Mapped["Prompt"] = relationship(back_populates="runs")
     model: Mapped["AIModel"] = relationship()
     market: Mapped["Market"] = relationship()
+    persona: Mapped["Persona"] = relationship()
     triggered_by: Mapped["User | None"] = relationship()
     raw_response: Mapped["RawResponse | None"] = relationship(
         back_populates="run", uselist=False, cascade="all, delete-orphan"
@@ -90,7 +117,38 @@ class RawResponse(Base):
 
 
 class Citation(Base):
-    """One source the provider cited in a raw response."""
+    """One claim-source link the provider returned for a raw response.
+
+    A row is one (answer segment, source) pair, not one source: a provider may
+    cite the same URL for several segments, and several sources for one segment,
+    and every such pair gets its own row.
+
+    Two different texts are involved in a citation and they live in two separate
+    columns (docs/TASKS_GEMINI_CITATIONS.md design decision 6):
+
+    - `cited_answer_span` (plus `answer_span_start`/`answer_span_end`) is the
+      span OF THE ANSWER that the source supports — the model's own claim.
+      The offsets are kept exactly as the provider returned them, so their
+      unit varies by provider: Gemini counts UTF-8 bytes, OpenAI characters
+      (measured 2026-09-16, see app/adapters/base.py). To locate a span in
+      `RawResponse.rendered_text` portably, match `cited_answer_span` as text
+      rather than slicing by offset.
+    - `source_passage` is the passage FROM THE SOURCE PAGE that the provider
+      quoted as backing for that claim.
+
+    Which provider fills which is not uniform, because the APIs expose different
+    halves of the link:
+
+    - Google Gemini — answer span + offsets (`grounding_supports[].segment`);
+      no source passage (the API returns none).
+    - OpenAI ChatGPT — answer span + offsets (`annotations[].start_index`/
+      `end_index` sliced out of the answer text); no source passage.
+    - Anthropic Claude — source passage only (`citations[].cited_text`). The
+      offset columns stay permanently NULL there: `web_search_result_location`
+      carries an `encrypted_index` into the search results, not an offset into
+      the answer, so there is nothing to fill them with. That is a property of
+      the API, not a gap to be closed later.
+    """
 
     __tablename__ = "citations"
 
@@ -101,6 +159,9 @@ class Citation(Base):
     source_domain: Mapped[str | None] = mapped_column(String(200))
     citation_position: Mapped[int | None] = mapped_column(Integer)
     cited_answer_span: Mapped[str | None] = mapped_column(Text)
+    answer_span_start: Mapped[int | None] = mapped_column(Integer)
+    answer_span_end: Mapped[int | None] = mapped_column(Integer)
+    source_passage: Mapped[str | None] = mapped_column(Text)
 
     raw_response: Mapped["RawResponse"] = relationship(back_populates="citations")
 
