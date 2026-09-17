@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,11 @@ DEST = Path(os.environ.get("SIGNALMAP_BACKUP_DIR", r"C:\Backups\SignalMap\dumps"
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DB_USER = os.environ.get("SIGNALMAP_DB_USER", "signalmap_user")
 CHECK_DB = "signalmap_restore_check"
+
+# Same pattern as tools/local/pull_backup.py. Without it, an older manually named
+# dump such as "signalmap-backup-20260916-062154.dump" sorts after the server's
+# own "signalmap-20260917-141043.dump" and would silently be picked as "newest".
+DUMP_RE = re.compile(r"^signalmap-\d{8}-\d{6}\.dump$")
 
 # Tables every populated SignalMap database has — used to report that the restore
 # produced actual content, not just an empty schema.
@@ -54,9 +60,9 @@ def psql(sql: str, *, database: str = "postgres") -> str:
 
 
 def newest_dump() -> Path:
-    dumps = sorted(DEST.glob("signalmap-*.dump"))
+    dumps = sorted(p for p in DEST.glob("signalmap-*.dump") if DUMP_RE.match(p.name))
     if not dumps:
-        sys.exit(f"zadne zalohy v {DEST} — spust nejdriv tools/local/pull_backup.py")
+        sys.exit(f"zadne zalohy v {DEST} - spust nejdriv tools/local/pull_backup.py")
     return dumps[-1]
 
 
@@ -74,7 +80,7 @@ def main() -> int:
 
     if args.into != CHECK_DB and not args.yes:
         sys.exit(
-            f"obnova do '{args.into}' prepise existujici data — zopakuj s --yes, "
+            f"obnova do '{args.into}' prepise existujici data - zopakuj s --yes, "
             f"nebo vynech --into a obnov do kontrolni databaze '{CHECK_DB}'"
         )
 
@@ -106,16 +112,16 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
         print(f"\nOBNOVA SELHALA: {stderr}", file=sys.stderr)
-        print("Tahle zaloha NENI pouzitelna — zjisti proc, nez se na ni spolehnes.", file=sys.stderr)
+        print("Tahle zaloha NENI pouzitelna - zjisti proc, nez se na ni spolehnes.", file=sys.stderr)
         return 1
     except FileNotFoundError:
-        sys.exit("prikaz 'docker' nenalezen — bezi Docker Desktop?")
+        sys.exit("prikaz 'docker' nenalezen - bezi Docker Desktop?")
 
     if args.into == CHECK_DB and not args.keep:
         psql(f'DROP DATABASE IF EXISTS "{CHECK_DB}"')
         print(f"\nkontrolni databaze '{CHECK_DB}' smazana (--keep ji zachova)")
 
-    print("\nOK — zaloha je obnovitelna")
+    print("\nOK - zaloha je obnovitelna")
     return 0
 
 
