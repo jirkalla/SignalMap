@@ -113,15 +113,39 @@ ssh signalmap 'touch /opt/signalmap/deploy/maintenance.on'
 chvíli přijímala data, rollback by o ně přišel. Když nejdřív zavřeš vstup,
 je záloha přesně tím stavem, do kterého se vracíš.
 
-### 2.2 Zastavit worker
+### 2.2 Ověřit, že neběží žádný run
 
 ```bash
-ssh signalmap 'cd /opt/signalmap && docker compose stop worker'
+ssh signalmap 'sh -s' <<'EOF'
+cd /opt/signalmap
+docker compose exec -T postgres psql -U signalmap_user -d signalmap -tAc "SELECT count(*) FROM runs WHERE status = 'pending'"
+EOF
 ```
 
-> ⚠️ **Zatím neexistuje** — přibude se schedulerem (`docs/TASKS_SCHEDULER.md`).
-> Pak bude povinný: worker se zastavuje jako první, aby uprostřed nasazení
-> neběžel placený run.
+Musí vyjít **`0`**.
+
+Run je dnes synchronní HTTP požadavek — `Run` se zakládá se stavem `pending`
+těsně před voláním providera a na `success`/`error` se přepne až po návratu
+odpovědi (5–28 s). Když kontejner zrecykluješ mezitím, výsledek se nemá kam
+zapsat a řádek **zůstane `pending` navždy**: nic ho dnes neuklidí a v
+`/ops` pak trvale straší jako nedokončený run.
+
+Když vyjde nenulové číslo, buď někdo právě spustil run — počkej a zopakuj —
+nebo tam takový uvízlý řádek z minula už je. Zjistíš to takhle:
+
+```bash
+ssh signalmap 'sh -s' <<'EOF'
+cd /opt/signalmap
+docker compose exec -T postgres psql -U signalmap_user -d signalmap -c "SELECT id, prompt_id, model_id, started_at FROM runs WHERE status = 'pending' ORDER BY started_at"
+EOF
+```
+
+Řádek starší než pár minut je uvízlý, ne běžící.
+
+> ⚠️ **Se schedulerem sem přibude zastavení workeru** jako první krok —
+> `docker compose stop worker` (`docs/TASKS_SCHEDULER.md`, SCH-T4). Zároveň
+> tenhle problém zmizí: rekonciliace (design decision 13) uvízlé `pending`
+> runy sama označí jako chybu.
 
 ### 2.3 Záloha
 
