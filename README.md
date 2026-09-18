@@ -162,7 +162,10 @@ ever becomes private, and if the server has no access to GitHub.
 
 Step 4's `./tools/server/install.sh` is not optional: it reinstalls the
 host-side scripts (nightly backup, restricted SSH dispatcher) into
-`/usr/local/bin`. Skip it and they silently drift from the repository.
+`/usr/local/bin`, and provisions `/var/lib/signalmap/maintenance` with the
+Caddy-served maintenance page. Skip it and they silently drift from the
+repository — on a fresh server, skipping it also leaves that directory
+missing, so Caddy has nothing to serve or mount.
 
 Step 5 is what makes the deployment traceable. An archive carries no
 reference to the commit it came from, so without `DEPLOYED_COMMIT` there is

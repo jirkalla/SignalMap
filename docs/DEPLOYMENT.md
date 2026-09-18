@@ -20,8 +20,8 @@ nepokračuj dalším**. Nasazení je postupné odemykání, ne seznam přání.
 1. PŘÍPRAVA          den předem, bez dopadu na provoz
 2. TĚSNĚ PŘED        odstávka, záloha, výchozí čísla
 3. NASAZENÍ          kód, skripty, migrace, restart
-4. OVĚŘENÍ           health, čísla, UI, logy
-5. UZAVŘENÍ          odstávka pryč, sledování, zápis, zpráva
+4. OVĚŘENÍ           interní kontrola, odstávka pryč, health, UI
+5. UZAVŘENÍ          sledování, zápis, zpráva
 6. ROLLBACK          jen když je potřeba
 ```
 
@@ -103,14 +103,13 @@ výpadku.
 ### 2.1 Odstávková stránka ZAP
 
 ```bash
-ssh signalmap 'touch /opt/signalmap/deploy/maintenance.on'
+ssh signalmap 'mkdir -p /var/lib/signalmap/maintenance && touch /var/lib/signalmap/maintenance/maintenance.on'
 ```
 
-> ⚠️ **Zatím neimplementováno.** Vyžaduje statickou stránku v Caddy
-> (HTML soubor + mount + `@maintenance` matcher v Caddyfile), vrácenou jako
-> HTTP 503 s hlavičkou `Retry-After`. Stránka musí patřit **Caddy, ne appce** —
-> stránka servírovaná appkou nefunguje právě ve chvíli, kdy appka neběží.
-> Do té doby tenhle krok přeskoč a spolehni se na oznámení z 1.4.
+`mkdir -p` je tu kvůli úplně prvnímu nasazení týhle mechaniky: adresář
+jinak vzniká až v kroku 3.3 (`install.sh`), a ten běží až po tomhle kroku.
+Na každém dalším nasazení už adresář existuje a `mkdir -p` jen potvrdí, že
+tam je.
 
 **Proč je odstávka před zálohou, ne za ní:** kdyby appka po záloze ještě
 chvíli přijímala data, rollback by o ně přišel. Když nejdřív zavřeš vstup,
@@ -224,11 +223,14 @@ commitu nenese. Je to jediné, co Khalidovu postupu chybělo.
 
 ## 4. Ověření
 
-### 4.1 Technická kontrola
+Rozdělené na dvě půlky schválně: appka jde zpátky ven (4.2) až poté, co
+interní kontrola (4.1) potvrdí, že migrace doběhly a appka nepadá — nemá
+smysl ji ukazovat světu dřív, než tohle víš.
 
-```bash
-curl --fail --show-error https://expressyourself.ai/health
-```
+### 4.1 Interní kontrola (appka je pořád v odstávce)
+
+Všechno tady jde přes SSH a `docker exec`, ne přes veřejnou doménu — na
+odstávkové stránce nezáleží.
 
 ```bash
 ssh signalmap 'cd /opt/signalmap && docker compose ps && docker compose exec -T postgres psql -U signalmap_user -d signalmap -tAc "SELECT version_num FROM alembic_version"'
@@ -244,7 +246,30 @@ Pak stejný dotaz na počty jako v 2.4 a porovnání:
 
 Jakýkoliv nečekaný pokles je důvod k zastavení a rollbacku.
 
-### 4.2 Kontrola v prohlížeči
+```bash
+ssh signalmap 'cd /opt/signalmap && docker compose logs --tail=100 app | grep -iE "error|traceback|exception" || echo "zadne chyby"'
+```
+
+### 4.2 Odstávková stránka VYP
+
+```bash
+ssh signalmap 'rm -f /var/lib/signalmap/maintenance/maintenance.on'
+```
+
+**Nejčastěji zapomenutý krok celého postupu** — ale teprve teď, po interní
+kontrole výše, dává smysl appku pustit ven. Pokud ho přeskočíš, další
+podkrok (4.3) na to okamžitě upozorní.
+
+### 4.3 Externí kontrola (appka je zpátky venku)
+
+```bash
+curl --fail --show-error https://expressyourself.ai/health
+```
+
+> Vrátí-li se tu `503` (`curl: (22) The requested URL returned error: 503`),
+> nejpravděpodobnější příčina je přeskočený krok 4.2 — zkontroluj
+> `ssh signalmap 'ls /var/lib/signalmap/maintenance/'`, jestli tam
+> `maintenance.on` pořád leží.
 
 - přihlášení stávajícím účtem
 - `/clients` — klienti jsou tam
@@ -252,26 +277,11 @@ Jakýkoliv nečekaný pokles je důvod k zastavení a rollbacku.
 - detail libovolného runu — odpověď i citace se vykreslí
 - obrazovka, které se nasazovaná změna týká
 
-### 4.3 Logy
-
-```bash
-ssh signalmap 'cd /opt/signalmap && docker compose logs --tail=100 app | grep -iE "error|traceback|exception" || echo "zadne chyby"'
-```
-
 ---
 
 ## 5. Uzavření
 
-### 5.1 Odstávková stránka VYP
-
-```bash
-ssh signalmap 'rm -f /opt/signalmap/deploy/maintenance.on'
-```
-
-**Nejčastěji zapomenutý krok celého postupu.** Až bude stránka
-implementovaná, dej si ho do seznamu jako první věc po ověření.
-
-### 5.2 Pět minut sledovat
+### 5.1 Pět minut sledovat
 
 ```bash
 ssh signalmap 'cd /opt/signalmap && docker compose logs -f --tail=20 app caddy'
@@ -280,7 +290,7 @@ ssh signalmap 'cd /opt/signalmap && docker compose logs -f --tail=20 app caddy'
 Zavřít terminál hned po `curl /health` je, jak se přehlédne chyba, která se
 projeví až při prvním skutečném požadavku uživatele.
 
-### 5.3 Zápis do deploy logu
+### 5.2 Zápis do deploy logu
 
 ```bash
 ssh signalmap 'echo "$(date -Is) $(cd /opt/signalmap && git rev-parse --short HEAD) OK" >> /var/log/signalmap-deploys.log'
@@ -288,7 +298,7 @@ ssh signalmap 'echo "$(date -Is) $(cd /opt/signalmap && git rev-parse --short HE
 
 Za půl roku je tohle jediné místo, kde zjistíš, kdy se co nasadilo.
 
-### 5.4 Úklid a zpráva
+### 5.3 Úklid a zpráva
 
 - `/opt/signalmap.old` smaž, až je vše ověřené (existuje jen po prvním převodu)
 - e-mail „hotovo" s popisem změn
@@ -296,6 +306,13 @@ Za půl roku je tohle jediné místo, kde zjistíš, kdy se co nasadilo.
 ---
 
 ## 6. Rollback
+
+> **Pokud selhání přišlo až ve 4.3** (appka byla mezitím puštěná ven,
+> veřejně dostupná), **než začneš rollback, znovu zapni odstávku:**
+> `ssh signalmap 'touch /var/lib/signalmap/maintenance/maintenance.on'` —
+> ať uživatelé nevidí rozbitou appku, zatímco vracíš kód (a případně
+> databázi) zpět. Pokud selhání přišlo dřív, ve 4.1, appka je pořád v
+> odstávce a nic zapínat nemusíš.
 
 Rollback = nasadit **starší commit** stejnou cestou jako kapitola 3, jen
 `HEAD` nahradíš tím commitem z kroku 1.2:
@@ -340,7 +357,6 @@ Pak celá kapitola 4 znovu — rollback se ověřuje stejně jako nasazení.
 
 ## Co runbook zatím nepokrývá
 
-- **odstávková stránka** (2.1, 5.1) — návrh hotový, implementace čeká
 - **zastavení workeru** (2.2) — přibude se schedulerem
 - **automatické nasazení** (CI/CD) — vědomě ne; jeden maintainer, jeden server,
   ruční postup s kontrolami je při téhle velikosti spolehlivější než pipeline,
