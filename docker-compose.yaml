@@ -70,6 +70,10 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+      - type: bind
+        source: /var/lib/signalmap/maintenance
+        target: /srv
+        read_only: true
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
       interval: 15s
@@ -82,7 +86,20 @@ configs:
     content: |
       ${SITE_ADDRESS:-:80} {
         encode gzip
-        reverse_proxy app:8000
+
+        root * /srv
+        @maintenance file /maintenance.on
+        handle @maintenance {
+          header Retry-After 300
+          rewrite * /index.html
+          file_server {
+            status 503
+          }
+        }
+
+        handle {
+          reverse_proxy app:8000
+        }
       }
 
 volumes:

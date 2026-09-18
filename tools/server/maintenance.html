@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Wartungsarbeiten / Scheduled maintenance — ExpressYourself.ai</title>
+<style>
+  /* Everything is inline and self-hosted on purpose. This page is served when
+     something is already down, so it must not depend on a font CDN, an icon
+     set or any other resource that could be unavailable at the same time. */
+  :root {
+    --yellow:  #ffe600;
+    --magenta: #ec008c;
+    --cyan:    #00aeef;
+    --ink:     #000000;
+    --muted:   #5b5b60;
+    --line:    #e4e4e7;
+    --surface: #ffffff;
+    --canvas:  #f6f6f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Brand bar ---- */
+  header {
+    background: var(--yellow);
+    border-bottom: 3px solid var(--ink);
+    padding: 14px 16px;
+  }
+  .brand {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .logo {
+    font-size: clamp(22px, 5.5vw, 30px);
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .logo .express { color: var(--ink); }
+  .logo .yourself {
+    color: var(--ink);
+    border-bottom: 5px solid var(--magenta);
+    padding-bottom: 1px;
+  }
+  .logo .dot-ai {
+    color: var(--ink);
+    border-bottom: 5px solid var(--cyan);
+    padding-bottom: 1px;
+  }
+  .tagline {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(0, 0, 0, 0.62);
+  }
+
+  /* ---- Layout ---- */
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 32px 16px 56px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: clamp(24px, 5vw, 44px);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--yellow);
+    border: 2px solid var(--ink);
+    border-radius: 999px;
+    padding: 6px 15px 6px 12px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    margin-bottom: 26px;
+  }
+  .pulse {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--magenta);
+    animation: blink 1.8s ease-in-out infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { animation: none; }
+  }
+
+  .lang + .lang {
+    margin-top: 34px;
+    padding-top: 34px;
+    border-top: 1px solid var(--line);
+  }
+  .lang-tag {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(26px, 6vw, 40px);
+    font-weight: 900;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin: 0 0 12px;
+  }
+  .lead {
+    font-size: clamp(16px, 2.4vw, 18px);
+    line-height: 1.6;
+    color: var(--muted);
+    margin: 0;
+    max-width: 62ch;
+  }
+  .lead strong { color: var(--ink); font-weight: 700; }
+
+  footer {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 16px 40px;
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+  }
+  footer .site { font-weight: 700; color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo">
+      <span class="express">EXPRESS</span><span class="yourself">YOURSELF</span><span class="dot-ai">.ai</span>
+    </div>
+    <div class="tagline">powered by AI Perception Layering&trade;</div>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <div class="badge"><span class="pulse"></span> WARTUNG &middot; MAINTENANCE</div>
+
+    <section class="lang" lang="de">
+      <p class="lang-tag">DEUTSCH</p>
+      <h1>Wir sind gleich zur&uuml;ck.</h1>
+      <p class="lead">
+        SignalMap wird gerade aktualisiert und ist f&uuml;r einige Minuten nicht
+        erreichbar. <strong>Es gehen keine Daten verloren</strong> &mdash; alle
+        Analysen, Antworten und Quellen bleiben unver&auml;ndert erhalten.
+        Bitte laden Sie die Seite in K&uuml;rze erneut.
+      </p>
+    </section>
+
+    <section class="lang" lang="en">
+      <p class="lang-tag">ENGLISH</p>
+      <h1>We&rsquo;ll be back shortly.</h1>
+      <p class="lead">
+        SignalMap is being updated and will be unavailable for a few minutes.
+        <strong>No data is affected</strong> &mdash; every run, response and
+        citation stays exactly as it was. Please reload this page in a moment.
+      </p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span class="site">expressyourself.ai</span>
+  <span>HTTP 503 &middot; Service Unavailable</span>
+</footer>
+
+</body>
+</html>
