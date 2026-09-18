@@ -175,28 +175,37 @@ jednoznačné).
 
 ## 2. Deploy hardening
 
-**Proč druhé:** appka dosud běžela jen lokálně (`docker compose up` na
-vývojářově PC). Nic z tohohle ještě není řešené.
+✅ **Hotovo 2026-09-18** ([PR #9](https://github.com/jirkalla/SignalMap/pull/9),
+nasazeno na `https://expressyourself.ai`). Původní zadání znělo: appka běží jen
+lokálně, nic z níže uvedeného není řešené. Stav po nasazení je u každé položky.
 
-- Doména + DNS A záznam na IP serveru.
-- Reverse proxy — **Caddy** (ne nginx+certbot, zbytečná komplikace pro první
+- ✅ Doména + DNS A záznam na IP serveru — `expressyourself.ai`.
+- ✅ Reverse proxy — **Caddy** (ne nginx+certbot, zbytečná komplikace pro první
   nasazení) — automatický Let's Encrypt certifikát, `reverse_proxy app:8000`
-  přes interní Docker síť.
-- Appka nesmí být přímo dostupná zvenku — dnešní `docker-compose.yaml`
-  (`"58000:8000"` bez bind adresy) naslouchá na `0.0.0.0`; po přidání proxy buď
-  mapping úplně zrušit (Caddy mluví s `app:8000` po interní síti), nebo omezit
-  na `127.0.0.1:58000:8000`.
-- Firewall na serveru — jen 80/443 (+ SSH) navenek.
+  přes interní Docker síť. Konfigurace je inline v `docker-compose.yaml`.
+- ✅ Appka není dostupná zvenku — porty publikuje **jen Caddy**, `app`
+  i `postgres` jsou dosažitelné pouze po interní Compose síti.
+- ⚠️ Firewall na serveru — jen 80/443 (+ SSH) navenek. Nastavoval Khalid při
+  zakládání serveru, **z naší strany neověřeno** — stojí za kontrolu
+  v Hetzner konzoli.
 - Produkční `.env` (secrets) na serveru, mimo git.
-- Zálohování `pgdata` volume — evidence data (`raw_responses`, `citations`) se
-  nikdy nepřepisují (NFR-6), ztráta bez zálohy = nevratná ztráta historie.
+- ✅ Zálohování — vyřešeno jinak, než tahle položka předpokládala: ne snímek
+  svazku, ale **noční `pg_dump`** (cron 03:15, retence 14 dní) + stažení na
+  pracovní stanici přes omezený SSH klíč (retence 90 dní). Obnova ověřená
+  (`tools/local/restore_local.py`). Zálohy zatím leží u vývojáře — pro ostrý
+  provoz s klientskými závazky je potřeba lepší umístění.
 - Repo bylo prověřené na secrets/citlivá data před sdílením přístupu
   kolegovi — čisté (žádný `.env`, žádné API klíče v historii).
 
 ## 3. Jít online
 
-Ověřit HTTPS funguje, auth blokuje neautorizovaný přístup, appka běží
-identicky jako lokálně (Docker Compose portabilita, NFR-8).
+✅ **Hotovo 2026-09-18.** HTTPS funguje (`https://expressyourself.ai/health`
+vrací `{"status":"ok"}` přes platný certifikát), auth blokuje neautorizovaný
+přístup (`/ops`, `/clients` i `/dashboard` vracejí 303 na login), appka běží
+ze stejného `docker-compose.yaml` jako lokálně (NFR-8) — lokální rozdíly řeší
+gitignorovaný `docker-compose.override.yaml`.
+
+Provozní postup pro další nasazení: `docs/DEPLOYMENT.md`.
 
 ## 4. Ops dashboard (interní)
 
@@ -685,19 +694,19 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | # | Krok | Status |
 |---|------|--------|
 | 1 | Auth + user management | Hotovo, smergnuto do `master` 2026-09-12 ([PR #8](https://github.com/jirkalla/SignalMap/pull/8)) — chybí jen systematické ověření na ~375/768px/desktop pro všechny obrazovky |
-| 2 | Deploy hardening | Neimplementováno — nová závislost: #14 (Knauf Client-view) na tom čeká |
-| 3 | Jít online | Čeká na 1–2 |
-| 4 | Ops dashboard (interní) | T0–T4 hotové a otestované na `feature/signalmap-ops-dashboard` (2026-09-15), čeká na merge |
-| 5 | Scheduler | Technický návrh hotový (2026-09-15), čeká na 4 |
+| 2 | Deploy hardening | ✅ Hotovo 2026-09-18 ([PR #9](https://github.com/jirkalla/SignalMap/pull/9)) — Caddy + HTTPS, porty jen přes proxy, noční zálohy s ověřenou obnovou. Firewall nastavoval Khalid, z naší strany neověřeno |
+| 3 | Jít online | ✅ Hotovo 2026-09-18 — `https://expressyourself.ai` běží, auth ověřená, runbook v `docs/DEPLOYMENT.md` |
+| 4 | Ops dashboard (interní) | ✅ Hotovo, smergnuto ([PR #13](https://github.com/jirkalla/SignalMap/pull/13)) a od 2026-09-18 nasazeno na produkci |
+| 5 | Scheduler | **Další na řadě.** Plán rozepsaný v `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md` (2026-09-17), 30 design decisions, SCH-T0…T11. Prerekvizity #1 a #4 splněné |
 | 6 | Brand-attribute tagging | Neimplementováno, čeká za #11/#12 |
 | 7 | Sentiment | Odemčeno, čeká za #11/#12 |
 | 8 | Gap/opportunity score | Čeká na 7 |
 | 9 | Nové UI | Přehodnoceno 2026-09-18 — hotový je jen screenshot a nápad, ne design systém; nejde o kosmetiku, ale o rozhraní ovladatelné na mobilu/tabletu, tedy velkou položku. Potvrzeno žádný přechod na SPA (2026-09-15) |
 | 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
-| 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo a otestované na `feature/signalmap-gemini-citation-extraction` (2026-09-16) — 59 % ztracených claim-source vazeb obnoveno (551 → 1 354), plus rozdělení sémantiky spanu; historie přepočítaná migrací `0028`; čeká na merge |
+| 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo, smergnuto ([PR #15](https://github.com/jirkalla/SignalMap/pull/15)) a nasazeno 2026-09-18 — lokálně 551 → 1 354 vazeb, na produkci 565 → 820; historie přepočítaná migrací `0028` |
 | 12 | LLM quote-verification skill | Navrženo 2026-09-15; #11 hotové, takže odblokované — vstupní předpoklady ale změněné, viz #12 |
 | 13 | Project/Brand entita | Navrženo 2026-09-15 |
-| 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15, čeká na 2, 3, 4, 5, 10 |
+| 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15; #2, #3 a #4 splněné, zbývá čekat na 5 a 10 |
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
