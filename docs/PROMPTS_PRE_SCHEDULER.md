@@ -4,8 +4,9 @@
 ##
 ## JAK POUŽÍVAT:
 ## 1. git checkout -b feature/signalmap-prescheduler-data-hygiene (z master)
-## 2. Tři kódové prompty (PRE-1 až PRE-3). PRE-1 a PRE-2 jsou nezávislé,
-##    pořadí mezi nimi je libovolné; PRE-3 až po obou.
+## 2. Čtyři kódové prompty (PRE-1, PRE-2, PRE-4, PRE-3 — v tomhle pořadí
+##    v souboru). PRE-1, PRE-2 a PRE-4 jsou nezávislé, pořadí mezi nimi je
+##    libovolné; PRE-3 je závěrečný průchod až po všech třech.
 ##    PRE-0 není prompt pro agenta — je to ruční SQL zásah na produkci,
 ##    který děláš ty (viz docs/TASKS_PRE_SCHEDULER.md PRE-0).
 ## 3. SESSION HEADER vlož jen JEDNOU na začátku nové konverzace pro tuhle
@@ -55,6 +56,10 @@ CO SE OPRAVUJE:
   2. Formulář ceny modelu neumí zadat "platí od", takže ceny zadané později
      než runy ty runy nikdy neocení (cena runu se řídí cenou platnou
      v okamžiku runu — app/services/cost.py).
+  3. Liga citovaných domén na /dashboard seskupuje podle syrové domény,
+     takže meag.com a www.meag.com jsou dva řádky s rozdělenými citacemi.
+     Změřeno na produkci: 26 domén, 312 citací, unikátních domén 258 místo
+     232.
 
 KRITICKÉ:
 - is_test skrývá klienta z AGREGACÍ, nikdy ze seznamů (decision 2). Tohle
@@ -72,6 +77,10 @@ KRITICKÉ:
 - Výpočet ceny v app/services/cost.py se NEMĚNÍ. Je správný; chybí mu jen
   data se správnou platností. Kdyby se zdálo, že je potřeba ho upravit —
   ZASTAV a zeptej se.
+- Doména se normalizuje UVNITŘ SQL agregace, nikdy v Pythonu nad hotovým
+  výsledkem (decision 10) — jinak se rozbije run_coverage_pct a LIMIT.
+- citations.source_domain se NIKDY nepřepisuje. Je to evidence (NFR-6) a
+  export ji vyváží klientovi jako doklad (decision 12).
 ```
 
 ---
@@ -172,6 +181,53 @@ feat(ai-models): allow backdating a model price change
 
 ---
 
+## PRE-4 — Normalizace domén v lize a v počtu unikátních domén
+
+Viz `docs/TASKS_PRE_SCHEDULER.md` PRE-4. Shrnutí: SQL dvojče
+`normalize_domain()` v `app/utils.py`, seskupení i `count(distinct)`
+v `app/services/dashboard.py` podle normalizovaného výrazu, testy proti
+driftu obou implementací.
+
+Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
+
+**Kritické:**
+- **Obě funkce najednou** — `citation_totals()` i `domain_league_rows()`.
+  Router `/dashboard` je vrací na téže stránce; opravit jednu znamená
+  vyrobit novou nesrovnalost mezi dlaždicí a tabulkou pod ní.
+- **Seskupení patří do SQL, před `LIMIT`.** Sloučení v Pythonu nad hotovým
+  výsledkem rozbije `run_coverage_pct` (run citující obě varianty by se
+  počítal dvakrát, pokrytí přes 100 %) a nikdy nenajde domény, které se do
+  top N dostanou až po sloučení.
+- **Nepřepisuj `citations.source_domain`.** Evidence se nemění (NFR-6),
+  export ji vyváží klientovi jako doklad. Normalizace je pohled, ne data.
+- **Nerozšiřuj normalizační pravidlo.** Na produkci je změřeno, že všech 26
+  případů je jen `www.` — žádná velká písmena, port ani kořenová tečka.
+  `lower()` + strip `www.` stačí. Složitější pravidlo by byl kód pro
+  hypotetická data (AI_INSTRUCTIONS §5).
+- **Subdomény se NESJEDNOCUJÍ.** `blog.meag.com` zůstává samostatný řádek.
+- Obě implementace (Python i SQL) bydlí v `app/utils.py` vedle sebe, podle
+  precedentu `estimate_run_cost` / `run_cost_sql_expr` v `cost.py`, a drží
+  je v souladu tabulkový test — ne dobrá vůle.
+
+**Po dokončení:**
+1. `docker compose up -d --build`
+2. `pytest -v` — včetně testu, že run citující obě varianty se do
+   `run_coverage_pct` započítá jednou, a testu dvojčat Python vs. SQL.
+3. V prohlížeči na `/dashboard` klienta podle mého zadání: v lize je
+   `meag.com` **jeden** řádek, KPI dlaždice „unikátní domény" sedí na
+   počet skupin v tabulce.
+4. Responsive ~375 / 768 / desktop na `/dashboard`.
+5. Implementation summary + navrhni commit message (nespouštěj git)
+
+**Expected commit:**
+```
+fix(dashboard): group cited domains by their normalized form
+```
+
+### (sem dopiš DONE — commit {hash} až bude hotovo)
+
+---
+
 ## PRE-3 — Závěrečný průchod: i18n, responsive, docs
 
 Viz `docs/TASKS_PRE_SCHEDULER.md` PRE-3. Shrnutí: kontrola úplnosti i18n,
@@ -181,13 +237,16 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 
 **Kritické:** responsive se **ověřuje v prohlížeči** na ~375 / 768 /
 desktop, ne konstatuje (AI_INSTRUCTIONS §7). Projdi: `/ops` s přepínačem i
-bez, formulář klienta, seznam klientů, formulář modelu s novým polem.
+bez, formulář klienta, seznam klientů, formulář modelu s novým polem a
+`/dashboard` s ligou domén.
 
-`docs/REQUIREMENTS.md` doplnit o dvě věci, které dnes nejsou nikde napsané a
-obě jsou netriviální: (a) čísla v `/ops` ve výchozím stavu nezahrnují
+`docs/REQUIREMENTS.md` doplnit o tři věci, které dnes nejsou nikde napsané a
+všechny jsou netriviální: (a) čísla v `/ops` ve výchozím stavu nezahrnují
 testovací klienty, (b) cena runu se řídí cenou platnou v okamžiku runu, a
-chybějící cena znamená „neznámá", nikdy „nula". To druhé je chování, na
-kterém stojí fakturace. Ukaž mi diff, neměň to potichu.
+chybějící cena znamená „neznámá", nikdy „nula" — na tom stojí fakturace,
+(c) doména se ve všech agregacích porovnává a seskupuje v normalizovaném
+tvaru, kdežto v evidenci a exportu zůstává syrová. Ukaž mi diff, neměň to
+potichu.
 
 **Po dokončení:**
 1. Grep přes změněné šablony na natvrdo psanou prosu mimo `t()`.
@@ -214,5 +273,8 @@ docs(requirements): record test-client exclusion and price validity
    OpenAI a Gemini runy), po nastavení `is_test` **nižší** o testovacího
    klienta. Když to nesedí, nespoléhej na to, že se to „nějak srovná" —
    najdi proč.
+3b. Ověřit, že počet unikátních domén spadl z 258 na 232 (PRE-4), a říct to
+   Philipovi **dopředu** — je to druhý přepočet čísel po citacích
+   565 → 820, tentokrát dolů a se změnou pořadí v lize.
 4. Teprve pak začít plánovač (`docs/PROMPTS_SCHEDULER.md`), a v jeho SCH-0
    použít číslo migrace **0030**.

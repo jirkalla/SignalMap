@@ -16,6 +16,12 @@
 >    formulář v `/ai-models` zapisuje `effective_from` vždycky jako „teď".
 >    Kdo zadá ceník den po prvních runech, ty runy už nikdy nedocení — a
 >    v UI se to projeví jen pomlčkou, kterou si člověk vyloží jako nulu.
+> 3. **Liga citovaných domén seskupuje podle syrové domény.** `meag.com` a
+>    `www.meag.com` jsou v tabulce dva řádky s rozděleným počtem citací.
+>    Změřeno na produkci 2026-09-18: 26 domén se takhle tříští, dotýká se to
+>    312 citací (~38 % archivu) a počet unikátních domén je nafouknutý z 232
+>    na 258. Není to jen špatné číslo — je to špatné **pořadí** v tabulce,
+>    která má říkat, koho si AI bere jako zdroj.
 >
 > **Proč před plánovačem, ne po něm:** obojí jsou vady v podkladu, ze kterého
 > se počítá, co klienta stojí provoz (a přes Philipovu 2–4× přirážku i to, co
@@ -85,6 +91,37 @@ dokumentech; číslo v nich neměň zpětně, řeš to při psaní SCH-0.
    pokoušela proběhnout i na prázdné vývojářské databázi a v testech.
    Zapsaná je v PRE-0 kvůli dohledatelnosti, protože vysvětluje, proč
    některé modely mají dvě ceny se stejnou hodnotou.
+10. **Doména se normalizuje v SQL, uvnitř agregace — nikdy v Pythonu nad
+    hotovým výsledkem.** Sloučit řádky až po dotazu vypadá lákavě a je to
+    špatně ze tří důvodů:
+    - `run_coverage_pct` stojí na `count(DISTINCT Run.id)`. Run, který
+      cituje `meag.com` i `www.meag.com`, je v obou řádcích — sečtením
+      vyjde pokrytí přes 100 %. Správný výsledek dá jen `DISTINCT` nad
+      sloučenou skupinou.
+    - `LIMIT` je dnes **před** sloučením. Dvě varianty se 4 + 3 citacemi
+      můžou obě spadnout pod hranici top N a v tabulce vůbec nebýt, i když
+      sloučené na 7 by se tam vešly. Sloučení po `limit` tenhle případ
+      nikdy nenajde.
+    - `app/services/ops_dashboard.py` má zapsanou disciplínu „agregace
+      v SQL, nikdy Python smyčka nad řádky" a tohle je přesně ten případ.
+11. **SQL dvojče `normalize_domain()` bydlí vedle něj v `app/utils.py`.**
+    Komentář na `app/services/dashboard.py` (domain_league_rows) správně
+    varuje, že druhá, SQL-side kopie normalizačního pravidla je drift
+    riziko. Řeší se to stejně jako u ceny runu: obě implementace v jednom
+    souboru vedle sebe (`estimate_run_cost` / `run_cost_sql_expr`
+    v `app/services/cost.py`) plus tabulkový test, který stejnou sadu
+    vstupů požene oběma cestami a porovná výsledky. Testy běží proti
+    reálnému Postgresu (`signalmap_test`), takže `regexp_replace` je
+    k dispozici a test je skutečný, ne simulovaný.
+    **Zvažováno a odloženo:** generovaný sloupec
+    `citations.source_domain_normalized GENERATED ALWAYS AS (...) STORED`
+    s indexem. Elegantnější, až se bude podle domény seskupovat na víc
+    místech (export, gap score) — na dvě volající místa je to nadbytek a
+    pravidlo by se přestěhovalo do DDL, kde se mění migrací.
+12. **`citations.source_domain` se nikdy nepřepisuje.** Je to evidence
+    (NFR-6), je to přesně to, co provider vrátil, a `app/services/export.py`
+    ji vyváží klientovi jako doklad. Normalizace je **pohled na data**, ne
+    data — proto výraz v dotazu, ne UPDATE.
 
 ---
 
@@ -98,7 +135,8 @@ clients
 ```
 
 Cenové komponenty ani nic dalšího se **nemění** — PRE-2 mění jen to, co do
-existující tabulky zapisuje formulář.
+existující tabulky zapisuje formulář, a PRE-4 nemění schéma vůbec
+(decision 12).
 
 ---
 
@@ -109,9 +147,11 @@ existující tabulky zapisuje formulář.
 | PRE-0 | Jednorázové zpětné doplnění platnosti cen (ruční SQL na produkci) | ⏳ |
 | PRE-1 | `clients.is_test` + vyloučení testovacích dat z `/ops` | ⏳ |
 | PRE-2 | Pole „platí od" ve formuláři ceny modelu | ⏳ |
+| PRE-4 | Normalizace domén v lize citovaných domén a v počtu unikátních domén | ⏳ |
 | PRE-3 | Závěrečný průchod: i18n, responsive, docs | ⏳ |
 
-PRE-1 a PRE-2 jsou nezávislé, pořadí je libovolné. PRE-3 je až po obou.
+PRE-1, PRE-2 a PRE-4 jsou nezávislé, pořadí mezi nimi je libovolné. PRE-3 je
+až po všech třech.
 
 ---
 
@@ -255,6 +295,87 @@ pomlčky; `pytest` zelený; responsive ověřené.
 
 ---
 
+## PRE-4 — Normalizace domén v lize a v počtu unikátních domén
+
+**Target:** `app/utils.py`, `app/services/dashboard.py`, `tests/`
+
+**Nález (2026-09-18):** `domain_league_rows()`
+(`app/services/dashboard.py`, ~ř. 269–321) seskupuje přes
+`.group_by(Citation.source_domain)`, tedy podle syrové hodnoty sloupce.
+`normalize_domain()` tam už je, ale používá se **jen** na dohledání
+`domain_type` a `is_own_domain`, ne na seskupení. Stejnou vadu má
+`citation_totals()` (~ř. 128–138): `count(distinct Citation.source_domain)`
+nad syrovým sloupcem.
+
+**Obě se musí opravit najednou.** Router `/dashboard` vrací na téže stránce
+KPI dlaždici z `citation_totals()` i tabulku z `domain_league_rows()`.
+Opravit jen jednu znamená vyrobit novou nesrovnalost — dlaždice by hlásila
+jiný počet domén, než kolik řádků ukazuje tabulka pod ní. Dnes jsou obě
+„stejně špatně", proto si toho nikdo nevšiml.
+
+**Symptom, který to prozradil:** ve screenshotu z produkce nesou oba řádky
+(`meag.com` i `www.meag.com`) stejný odznak „Corporate". `domain_classifications`
+je klíčovaná normalizovanou doménou (`app/models/domain_classification.py`)
+a `/api/classify` ukládá `normalize_domain(...)` — klasifikační vrstva ty
+dvě hodnoty tedy dávno považuje za jednu doménu, zatímco seskupení ne.
+Tabulka si odporuje sama v sousedních řádcích.
+
+**Změřený dopad na produkci** (2026-09-18, přes všechny klienty):
+
+| | |
+|---|---|
+| domén tříštěných na víc variant | 26 |
+| dotčených citací | 312 (~38 % archivu) |
+| unikátních domén dnes → po opravě | 258 → 232 |
+| jiný rozdíl než `www.` | **žádný** |
+
+Nejvyšší dotčená doména je `skoda-media.de` s 86 citacemi, druhá
+`skoda-storyboard.com` s 36 — obě klientovy vlastní zdroje, obě rozdělené.
+Že jsou všechny rozdíly jen `www.` (žádná velká písmena, port ani kořenová
+tečka) je samostatný závěr: **normalizační pravidlo nepotřebuje rozšířit**,
+`lower()` + strip `www.` na reálná data stačí. Nevymýšlej složitější.
+
+1. Do `app/utils.py` přidat SQL dvojče vedle `normalize_domain()`, např.
+   `normalized_domain_sql(col)` vracející
+   `func.regexp_replace(func.lower(col), '^www\.', '')`. Docstring vysvětlí,
+   proč existují dvě implementace a co je drží v souladu (decision 11).
+2. `citation_totals()` — `count(distinct <výraz>)` místo syrového sloupce.
+   Komentář o NULL semantice zůstává platný (`count(DISTINCT ...)` NULL
+   vynechává i nad výrazem).
+3. `domain_league_rows()` — `group_by`, tie-break v `order_by` i vracený
+   `domain` na normalizovaný výraz. **Seskupení musí být před `LIMIT`**
+   (decision 10), tedy v SQL, ne nad hotovým výsledkem.
+4. Lookup klasifikace se tím **zjednoduší**: klíč skupiny je už
+   normalizovaný, takže `normalize_domain()` na obou místech odpadá — i
+   s komentářem o drift riziku, který se stěhuje k novému dvojčeti.
+5. `is_own_domain(row.domain, client.domain)` nech být — normalizuje si
+   vstup sám, změna group key mu nevadí.
+6. Testy:
+   - tabulkový test dvojčat: stejná sada vstupů (`www.X.com`, `X.COM`,
+     `x.com`, `www2.x.com`, `blog.x.com`, prázdný řetězec) přes
+     `normalize_domain()` i přes SQL výraz, výsledky se musí shodovat;
+   - liga: citace na `www.x.com` a `x.com` ze **dvou různých runů** dají
+     jeden řádek se správným počtem citací **a** `run_coverage_pct` ≤ 100;
+   - run, který cituje obě varianty, se do `run_coverage_pct` započítá
+     **jednou** (regrese na decision 10, první odrážka);
+   - `citation_totals()` počítá domény sloučeně;
+   - řádek pod hranicí `limit`, který se sloučením do top N dostane, tam
+     skutečně je.
+
+**Vědomě mimo rozsah:** subdomény se **nesjednocují** — `blog.meag.com`
+zůstává samostatným řádkem, protože je to jiný zdroj. Důsledek, který je
+třeba znát: `is_own_domain()` bere subdoménu jako vlastní doménu, takže
+v tabulce můžou stát dva různé řádky, oba označené jako „vlastní". To je
+záměr, ne nedodělek.
+
+**Done when:** v lize na produkčních datech je `meag.com` **jeden** řádek se
+14 citacemi; KPI dlaždice u téhož klienta sedí na počet skupin v tabulce;
+`pytest` zelený včetně nových testů; responsive ověřené na `/dashboard`.
+
+**Expected commit:** `fix(dashboard): group cited domains by their normalized form`
+
+---
+
 ## PRE-3 — Závěrečný průchod
 
 **Target:** `app/i18n/en.json`, `app/i18n/de.json`, šablony, `tests/`,
@@ -263,12 +384,16 @@ pomlčky; `pytest` zelený; responsive ověřené.
 1. i18n úplnost — grep přes nové a změněné šablony na natvrdo psanou prosu
    mimo `t()` (AI_INSTRUCTIONS §3).
 2. Responsive ~375 / 768 / desktop: `/ops` s přepínačem i bez, formulář
-   klienta, seznam klientů, formulář modelu s novým polem. Skutečně
-   v prohlížeči, ne „mělo by fungovat" (AI_INSTRUCTIONS §7).
-3. `docs/REQUIREMENTS.md`: zaznamenat, že ops čísla ve výchozím stavu
-   testovací klienty nezahrnují, a že cena runu se řídí cenou platnou
-   v jeho čase (to druhé dnes není nikde napsané a je to netriviální
-   chování, na kterém stojí fakturace). Ukázat diff, neměnit potichu.
+   klienta, seznam klientů, formulář modelu s novým polem, `/dashboard`
+   s ligou domén. Skutečně v prohlížeči, ne „mělo by fungovat"
+   (AI_INSTRUCTIONS §7).
+3. `docs/REQUIREMENTS.md`: zaznamenat tři věci, které dnes nejsou nikde
+   napsané a všechny jsou netriviální: (a) ops čísla ve výchozím stavu
+   nezahrnují testovací klienty, (b) cena runu se řídí cenou platnou
+   v jeho čase a chybějící cena znamená „neznámá", nikdy „nula" — na tom
+   stojí fakturace, (c) doména se ve všech agregacích porovnává
+   a seskupuje v normalizovaném tvaru, kdežto v evidenci a exportu
+   zůstává syrová. Ukázat diff, neměnit potichu.
 4. Celý `pytest` zelený.
 
 **Done when:** vše výše ověřené a odškrtnuté s uživatelem.
@@ -290,6 +415,9 @@ pomlčky; `pytest` zelený; responsive ověřené.
   ručně; tahle větev jen dovolí zadat je se správným datem.
 - **Nemění výpočet ceny** (`app/services/cost.py`) — chování je správné,
   chybí mu jen data se správnou platností.
+- **Nesjednocuje subdomény** s doménou druhého řádu (PRE-4) a **nepřidává
+  generovaný sloupec** pro normalizovanou doménu (decision 11) — obojí je
+  vědomé odložení, ne opomenutí.
 
 ---
 
@@ -303,3 +431,8 @@ pomlčky; `pytest` zelený; responsive ověřené.
 - Zkontrolovat `/ops` po nasazení: Cost estimate musí být vyšší než před
   PRE-0 (poprvé započítané OpenAI a Gemini runy) a zároveň nižší o runy
   testovacího klienta.
+- Ověřit na produkci, že počet unikátních domén spadl z 258 na 232 (PRE-4)
+  — a **říct to Philipovi dopředu**. Je to druhý přepočet čísel po citacích
+  565 → 820, tentokrát směrem dolů a se změnou pořadí v tabulce. Formulace,
+  která nesvádí k panice: data se nemění, opravuje se způsob, jakým se
+  sčítají — `www.meag.com` a `meag.com` je jedna firma, ne dvě.
