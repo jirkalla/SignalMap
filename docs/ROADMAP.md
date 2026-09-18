@@ -280,12 +280,29 @@ podmínka je splněná. Implementace zatím neexistuje.
 Čeká na sentiment (#7) i na reálná konkurenční data (fáze 5) — bez obojího
 nemá skóre z čeho počítat.
 
-## 9. Frontend rebrand — ExpressYourself.AI
+## 9. Nové UI — ExpressYourself.AI
 
-Vizuální redesign appky podle nového brandu. **Návrh design systému a
-prototyp jsou hotové** (artefakt: https://claude.ai/code/artifact/579b74dd-1be1-424d-a54a-52a40060865c)
-— zbývá promítnout do skutečných Jinja2 šablon. Čistě kosmetická/frontendová
-práce, žádné nové schéma, může jet paralelně s kterýmkoliv krokem výše.
+**Přehodnoceno 2026-09-18.** Tahle položka se dřív popisovala jako „čistě
+kosmetická práce, design hotový, zbývá promítnout do šablon". **Obojí bylo
+nepřesné** a při plánování to svádělo k podcenění:
+
+- **Hotový je screenshot a nápad**, ne design systém. Tokeny, typografie a
+  komponenty zapsané níž jsou *návrh odvozený ze screenshotu*, ne
+  odsouhlasený a odzkoušený systém. Než se začne stavět, potřebuje to
+  vlastní návrhovou fázi.
+- **Není to rebrand, je to nové UI.** Cílem není přebarvit stávající
+  obrazovky, ale udělat rozhraní, které jde **skutečně ovládat na mobilu a
+  tabletu** — ne desktopová stránka, která se na telefonu jakžtakž vejde.
+  Dnešní obrazovky jsou stavěné primárně pro desktop; responzivita se u nich
+  ověřuje, ale nebyla výchozím požadavkem.
+
+Velikost je tedy **velká, ne malá**, a rozpadne se minimálně na: návrh a
+odsouhlasení UI → design systém v kódu → přestavba layoutu → převedení
+jednotlivých obrazovek. Žádné nové schéma to nepotřebuje a může jet
+paralelně s čímkoliv jiným, ale nejde o výplňovou práci mezi dvěma úkoly.
+
+Původní artefakt se screenshotem:
+https://claude.ai/code/artifact/579b74dd-1be1-424d-a54a-52a40060865c
 
 **Dodatečná úprava (2026-09-15):** Potvrzeno v konverzaci — appka **zůstává**
 na Jinja2 + HTMX + Vue3 ostrůvcích, žádný přechod na plnou SPA kvůli
@@ -371,6 +388,14 @@ i v HTML šabloně i ve Vue3 dashboard islandu.
 
 ### Co zbývá udělat
 
+Pořadí je podstatné — první dva body nejsou implementace, ale rozhodování,
+a bez nich se ostatní dělat nedají.
+
+- [ ] **Navrhnout UI**, ne jen barvy: jak se appka ovládá na telefonu, co je
+      na první obrazovce, co se na malém displeji schová. Screenshot na tohle
+      neodpovídá.
+- [ ] **Ověřit tokeny a komponenty níž** — jsou odvozené ze screenshotu, ne
+      odzkoušené na reálných obrazovkách appky
 - [ ] Promítnout tokeny do `app/templates/base.html` (Tailwind config nebo
       CSS custom properties vedle Tailwind utility tříd)
 - [ ] Ikonové makro v `app/templates/partials/macros.html`
@@ -667,7 +692,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 6 | Brand-attribute tagging | Neimplementováno, čeká za #11/#12 |
 | 7 | Sentiment | Odemčeno, čeká za #11/#12 |
 | 8 | Gap/opportunity score | Čeká na 7 |
-| 9 | Frontend rebrand | Design hotový, implementace čeká; potvrzeno žádný přechod na SPA (2026-09-15) |
+| 9 | Nové UI | Přehodnoceno 2026-09-18 — hotový je jen screenshot a nápad, ne design systém; nejde o kosmetiku, ale o rozhraní ovladatelné na mobilu/tabletu, tedy velkou položku. Potvrzeno žádný přechod na SPA (2026-09-15) |
 | 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
 | 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo a otestované na `feature/signalmap-gemini-citation-extraction` (2026-09-16) — 59 % ztracených claim-source vazeb obnoveno (551 → 1 354), plus rozdělení sémantiky spanu; historie přepočítaná migrací `0028`; čeká na merge |
 | 12 | LLM quote-verification skill | Navrženo 2026-09-15; #11 hotové, takže odblokované — vstupní předpoklady ale změněné, viz #12 |

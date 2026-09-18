@@ -418,5 +418,7 @@ Full task breakdown, measured figures and design decisions:
 
 See `docs/ROADMAP.md` for the full ordered plan beyond phase 6 — deploy
 hardening, going online, a cost/ops dashboard, a scheduler, brand-attribute
-tagging, sentiment, gap/opportunity score, and the ExpressYourself.AI frontend
-rebrand (design tokens and prototype already agreed, implementation pending).
+tagging, sentiment, gap/opportunity score, and a new ExpressYourself.AI
+interface (a screenshot and an idea so far, not an agreed design system —
+and aimed at a UI that works on a phone and tablet, not a repaint of the
+desktop screens).
