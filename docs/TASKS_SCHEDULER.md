@@ -1,10 +1,17 @@
 # SignalMap — Tasks: Scheduler
 
-## v1.0 | Září 2026
+## v1.1 | Září 2026
 ## Branch: feature/signalmap-scheduler
 ## Task ID prefix: SCH
 
-Status: navrženo v konverzaci (2026-09-16), čeká na vlastní branch. Realizuje
+Status: navrženo v konverzaci (2026-09-16), čeká na vlastní branch.
+
+**v1.1 (2026-09-18)** — revize po zpětné vazbě od Philipa (mail 2026-09-18:
+"standard should be let it run 3 days in a row, then once a week or once a
+month" a požadavek na srovnávací běh proti peecu). Přibyly design decisions
+31–35, task T5b, tři sloupce ukončení na `run_schedules`, `persona_ids`
+místo `persona_id`, dva sloupce na `clients` a rozšíření indexu z migrace
+0024. Decision 24 tím mění závěr, ne důvody. Realizuje
 `docs/ROADMAP.md` §5 (Scheduler) — automatické, opakované spouštění runů
 (`FR-9`, ve fázi 1 explicitně mimo scope).
 
@@ -92,10 +99,15 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     placených volání; (b) pondělní run vykonaný ve středu není opožděný
     pondělní run, je to středeční run se špatným datem — a evidence se
     nikdy nepřepisuje (NFR-6), takže by lhala natrvalo.
-12. **Idempotence zařazení: `UNIQUE (schedule_id, scheduled_for)`.** Ticker
+12. **Idempotence zařazení: unikátní klíč na řádku fronty.** Ticker
     může běžet dvakrát, spadnout mezi insertem a přepočtem `next_run_at`,
     restartovat se — druhý insert neprojde. Jediná spolehlivá obrana proti
     "zaplatili jsme run dvakrát" na straně plánování.
+    **Upřesněno ve v1.1:** klíč je
+    `(schedule_id, scheduled_for, prompt_id, model_id, persona_id)`, ne jen
+    dvojice. Se set-level rozvrhem (decision 32) a multi-select modely i
+    personami (decision 34) připadá na jedno okno N položek, ne jedna —
+    dvousloupcový klíč by je vzájemně vyřadil a z 225 runů by prošel jeden.
 13. **Idempotence vykonání: `run_id` se zapíše na řádek fronty PŘED voláním
     adaptéru a commitne.** Položka, která už `run_id` má, se nikdy nevolá
     znovu — místo toho ji převezme rekonciliace: `Run` ve stavu `pending`
@@ -171,6 +183,9 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     (40 promptů × 3 modely = 120 placených runů z jednoho kliknutí).
     Bezpečným ho dělá povinný **odhad ceny ve formuláři**, ne kód pro
     rozstřel — proto se schéma připraví teď a UI se doplní hned poté.
+    **AKTUALIZOVÁNO ve v1.1 → decision 32: set-level je v UI od v1.**
+    Rozbor rizika výš platí beze změny; mění se závěr, protože pojistky,
+    které ho dělají bezpečným, jsou součástí téže větve.
 25. **`notification_outbox` + `notify()` + kanály jako
     `app/notifications/<channel>.py`** — stejný vzor jako
     `app/adapters/<provider>.py`: přidat e-mail znamená přidat soubor, ne
@@ -179,6 +194,12 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     neztratí**. Chybové události se doručují jako **denní souhrn** — 40
     e-mailů při výpadku providera si lidi odfiltrují do koše a pak jim
     unikne i ten důležitý.
+    **Doplněno v v1.1:** `.env.example` dostane SMTP klíče (host, port,
+    uživatel, from-adresa) prázdné už teď, ať je zdokumentované, co bude
+    potřeba — adresy příjemců už existují (`users.email`). A až kanál
+    přibude, **nahromaděná historie se nedoručuje**: položky starší než pár
+    dní se označí `suppressed`, jinak první e-mail po zapnutí SMTP bude tři
+    měsíce starých oznámení.
 26. **Stropy se vynucují v `run_execution.py`, ne ve workeru**: denní limit
     runů na klienta, hloubka fronty na klienta, souběh na providera. Kdyby
     je vynucoval jen worker, obejde je ruční trigger a limit nic
@@ -202,12 +223,84 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     `Europe/Prague`. Pokud se v průběhu ukáže, že je potřeba APScheduler,
     Celery, dateutil nebo cokoliv dalšího — ZASTAV a zeptej se.
 
+### Doplněno ve v1.1 (2026-09-18)
+
+31. **Každý rozvrh má povinné ukončení — "donekonečna" nejde uložit.**
+    V databázi `CHECK (num_nonnulls(ends_on, max_occurrences) = 1)`: přesně
+    jedna z obou podmínek konce musí být vyplněná. Důvod (uživatel,
+    2026-09-18): rozvrhů bude přibývat a zapomenutý věčný rozvrh utrácí
+    tiše dál, aniž si toho kdokoliv všimne.
+    Nejzazší `ends_on` se řídí **frekvencí, ne pevným počtem měsíců** —
+    strop měří "kolik runů proběhne, aniž se na to někdo podívá", a ten
+    musí u denního i měsíčního rozvrhu vyjít zhruba nastejno (~30 runů):
+
+    | frekvence | nejzazší `ends_on` | ≈ runů |
+    |---|---|---|
+    | `daily`   | 30 dní     | ~30 |
+    | `weekly`  | 6 měsíců   | ~26 (3× týdně ~78) |
+    | `monthly` | 12 měsíců  | 12 |
+
+    Pojistky proti opačnému riziku (sběr dat tiše skončí a nikdo si
+    nevšimne): oznámení `schedule.expiring_soon` 7 dní / 3 výskyty předem,
+    akce **"prodloužit"** na `/schedules` (posune `ends_on` o další období
+    jedním kliknutím), a doběhlý rozvrh **zůstává v seznamu** se stavem
+    `inactive_reason='completed'` — nemizí.
+    Důsledek: **`clients.is_active` se nepřidává** (zvažováno a zamítnuto
+    2026-09-18). Povinné ukončení pokrývá i případ "klient utichl", zatímco
+    nový stav klienta by si vyžádal průřez šesti obrazovkami a otázku "kam
+    se poděl Knauf" u každé z nich. Archivace klientů je samostatné téma,
+    ne vedlejší efekt plánovače.
+
+32. **Set-level rozvrh je v UI od v1** — mění závěr decision 24. Důvod:
+    první reálný požadavek na plánovač je srovnávací běh proti peecu (25
+    promptů, jeden trh, jeden jazyk, denně 7 dní). S prompt-level rozvrhy
+    by to znamenalo 25 rozvrhů založit a 25 pohlídat — to nikdo dělat
+    nebude, takže by plánovač minul svůj první use case.
+    Bezpečným ho nedělá to, že UI tu volbu nenabídne, ale: povinný odhad
+    **počtu runů i ceny** před uložením (decision 29), `batch_id` na
+    položkách fronty, strop hloubky fronty a denní kvóta (decision 33).
+
+33. **Dva různé stropy, každý na jinou práci.**
+    (a) **Denní limit runů na klienta** — tvrdý, blokuje, vynucuje se
+    v `run_execution.py` (decision 26), počítá se deterministicky.
+    (b) **Měsíční finanční hranice na klienta** (`clients.monthly_budget_usd`,
+    NULL = žádná) — jen vyvolá `budget.threshold_exceeded`, **neblokuje.**
+    Skutečnou cenu runu známe až po něm (závisí na počtu output tokenů),
+    takže zastavovat na odhadu by shodilo běžící benchmark kvůli
+    nepřesnosti. Měna je USD — stejně jako `price_per_unit_usd`
+    (`app/models/provider.py`) a celý `app/services/cost.py`.
+
+34. **Jeden rozvrh smí mířit na víc modelů i víc person.** `model_ids` bylo
+    pole od začátku (původní "v1 UI vybírá právě jeden" se ruší —
+    porovnání napříč modely je jádro produktu). `persona_id` se ze stejného
+    důvodu mění na **`persona_ids`**: Philip chce tytéž prompty přes
+    několik person a `Run.persona_id` je na řádku runu, takže evidence je
+    rozliší a jdou porovnat.
+    Násobení je tím pádem trojí — prompty × modely × persony. 25 × 3 × 3 =
+    **225 runů z jednoho okna.** Proto odhad ve formuláři ukazuje **dvě
+    čísla**: za jedno okno a za celý rozvrh do jeho konce. To druhé je
+    vůbec spočitatelné jen proto, že konec je povinný (decision 31).
+
+35. **`idx_runs_one_pending_per_prompt_model` se rozšiřuje na
+    `(prompt_id, model_id, persona_id, market_id)`.** Index vznikl
+    v migraci 0024 jako TOCTOU pojistka proti dvojkliku na tlačítko, tedy
+    proti "nespouštěj dvakrát totéž naráz". S decision 34 by ale tři
+    persony nad týmž promptem a modelem byly tři **legitimní** runy, které
+    si navzájem překážejí: druhý a třetí by se podle decision 17 odkládaly
+    s backoffem 1/5/25 min, přestože jde o tři různé věci. Rozšířením se
+    původní záměr zachovává a jen se doplní definice "téhož". Zásah do
+    existujícího constraintu je vědomý a hlášený podle
+    `AI_INSTRUCTIONS.md` §4.
+
 ---
 
 ## Nové schéma (migrace 0029)
 
-Čtyři nové tabulky a jeden sloupec. Nic z toho není v `schema_phase1.sql` —
-odsouhlaseno v konverzaci 2026-09-16 podle `AI_INSTRUCTIONS.md` §4.
+Čtyři nové tabulky, tři sloupce na `clients` a úprava jednoho existujícího
+indexu. Nic z toho není v `schema_phase1.sql` — odsouhlaseno v konverzacích
+2026-09-16 (tabulky) a 2026-09-18 (sloupce ukončení, `persona_ids`,
+`daily_run_limit`, `monthly_budget_usd`, rozšíření indexu z 0024) podle
+`AI_INSTRUCTIONS.md` §4.
 
 ```
 run_schedules                 -- pravidlo opakování
@@ -215,29 +308,34 @@ run_schedules                 -- pravidlo opakování
   client_id            FK clients            -- denormalizované: priorita, kvóty, budoucí scoping
   target_type          varchar(20)           -- 'prompt' | 'prompt_set'  (decision 24)
   target_id            int                   -- root_prompt_id nebo prompt_set_id (decision 6)
-  model_ids            int[]                 -- které modely; v1 UI vybírá právě jeden
+  model_ids            int[]                 -- které modely; multi-select (decision 34)
   market_id            FK markets NULL       -- NULL = vlastní trh promptu
-  persona_id           FK personas
+  persona_ids          int[]                 -- které persony; multi-select (decision 34)
   frequency            varchar(10)           -- 'daily' | 'weekly' | 'monthly'
   days_of_week         smallint[]            -- weekly; 2x týdně = {1,4}
   day_of_month         smallint              -- monthly; 31 se ořízne (decision 8)
   time_of_day          time                  -- lokální nástěnný čas
   timezone             varchar(64)           -- IANA, v1 vždy 'Europe/Prague'
+  starts_on            date                  -- první den platnosti (default dnes)
+  ends_on              date NULL             -- konec kalendářem (decision 31)
+  max_occurrences      int NULL              -- nebo konec počtem výskytů (decision 31)
+  occurrences_count    int default 0         -- kolik už proběhlo; proti max_occurrences
   priority             int  default 100
   is_active            bool default true
-  inactive_reason      varchar(30) NULL      -- 'owner_deactivated' | 'user' (decision 23)
-  next_run_at          timestamptz           -- odvozená cache (decision 7)
+  inactive_reason      varchar(30) NULL      -- 'owner_deactivated' | 'user' | 'completed'
+  next_run_at          timestamptz NULL      -- odvozená cache (decision 7); NULL = doběhlo
   last_enqueued_at     timestamptz NULL
   created_by_user_id   FK users
   updated_by_user_id   FK users NULL
   created_at, updated_at
+  CHECK (num_nonnulls(ends_on, max_occurrences) = 1)          -- decision 31
   INDEX (next_run_at) WHERE is_active
 
 run_queue                     -- konkrétní výskyt + historie (decision 27)
   id
   schedule_id          FK run_schedules NULL -- NULL = ruční/dávkové (decision 5)
   source               varchar(10)           -- 'schedule' | 'manual' | 'batch'
-  batch_id             uuid NULL             -- pro set-level rozstřel (decision 24)
+  batch_id             uuid NULL             -- pro set-level rozstřel (decision 32)
   client_id, prompt_id, model_id, market_id, persona_id   -- vše resolvované
   scheduled_for        timestamptz           -- termín okna
   priority             int                   -- fixované při zařazení (decision 20)
@@ -249,7 +347,8 @@ run_queue                     -- konkrétní výskyt + historie (decision 27)
   leased_until         timestamptz NULL
   run_id               FK runs NULL          -- zapsáno PŘED voláním adaptéru (decision 13)
   queued_at, started_at, finished_at
-  UNIQUE (schedule_id, scheduled_for)                        -- decision 12
+  UNIQUE (schedule_id, scheduled_for,
+          prompt_id, model_id, persona_id)                   -- decision 12 + 32
   INDEX (priority DESC, scheduled_for) WHERE status='queued' -- decision 27
   INDEX (schedule_id, scheduled_for DESC)                    -- stránkovaná historie
 
@@ -262,7 +361,8 @@ worker_heartbeats             -- živost plánovače (decision 19)
 notification_outbox           -- decision 25
   id
   event_type           varchar(40)  -- schedule.run_failed | schedule.window_skipped |
-                                    -- schedule.owner_deactivated | worker.stale | quota.exceeded
+                                    -- schedule.owner_deactivated | worker.stale | quota.exceeded |
+                                    -- schedule.expiring_soon (d31) | budget.threshold_exceeded (d33)
   payload              jsonb
   recipient_user_id    FK users NULL -- NULL = všichni admini
   status               varchar(12)  -- pending|sent|failed|suppressed
@@ -272,6 +372,13 @@ notification_outbox           -- decision 25
 
 clients
   + priority           int default 100       -- decision 20
+  + daily_run_limit    int NULL              -- tvrdý denní strop; NULL = hodnota z configu
+  + monthly_budget_usd numeric(10,2) NULL    -- měkká hranice, jen oznámí (decision 33)
+
+runs                          -- existující tabulka, jen úprava indexu
+  ~ idx_runs_one_pending_per_prompt_model
+      (prompt_id, model_id)  ->  (prompt_id, model_id, persona_id, market_id)
+      WHERE status = 'pending'                                -- decision 35
 ```
 
 ---
@@ -280,22 +387,24 @@ clients
 
 | ID | Name | Status |
 |----|------|--------|
-| T0 | Migrace 0029 — čtyři tabulky, `clients.priority`, indexy | ⏳ |
-| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy | ⏳ |
+| T0 | Migrace 0029 — čtyři tabulky, sloupce na `clients`, indexy, rozšíření indexu z 0024 | ⏳ |
+| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy + konec rozvrhu | ⏳ |
 | T2 | `app/services/run_execution.py` — vytažení exekuce, beze změny chování | ⏳ |
 | T3 | `app/worker.py` — ticker, executor, lease, heartbeat, rekonciliace, dry-run | ⏳ |
 | T4 | `worker` služba v Compose + env + healthcheck | ⏳ |
-| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s náhledem termínů a ceny | ⏳ |
+| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s povinným koncem a náhledem termínů i ceny | ⏳ |
+| T5b | Set-level rozvrh (`target_type='prompt_set'`) + rozstřel přes `batch_id` | ⏳ |
 | T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru | ⏳ |
 | T7 | Dead letter: opakování chyb, hromadné akce | ⏳ |
-| T8 | `notification_outbox` + `notify()` + in-app oznámení | ⏳ |
+| T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ⏳ |
 | T9 | Pozastavení rozvrhů při deaktivaci uživatele | ⏳ |
-| T10 | Stropy: denní limit na klienta, hloubka fronty, souběh na providera | ⏳ |
+| T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ⏳ |
 | T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ⏳ |
 
 Pořadí je vynucené: T1 a T2 jsou nezávislé stavební kameny, které T3
 potřebuje oba; T4 bez T3 nemá co spouštět; T5 zakládá data, která T6
-zobrazuje; T7–T10 rozšiřují hotový základ.
+zobrazuje; T5b staví na hotovém formuláři z T5 a jen mění cíl rozvrhu;
+T7–T10 rozšiřují hotový základ.
 
 **`SCHEDULER_DRY_RUN` zůstává zapnutý až do dokončení T10.** Ostrý provoz se
 zapíná jedním env varem teprve tehdy, když jsou hotové stropy — do té doby
@@ -313,9 +422,19 @@ ne odložené na konec — T11 je jen závěrečné ověření úplnosti.
 `app/models/schedule.py`, `app/models/notification.py`, úprava
 `app/models/client.py`, `app/models/__init__.py`
 
-1. Alembic migrace podle schématu výše — čtyři tabulky, `clients.priority`,
-   všechny tři indexy na `run_queue` a jeden na `run_schedules`. Downgrade
-   musí být kompletní (drop v opačném pořadí kvůli FK).
+1. Alembic migrace podle schématu výše — čtyři tabulky, tři sloupce na
+   `clients`, všechny tři indexy na `run_queue` a jeden na `run_schedules`.
+   Downgrade musí být kompletní (drop v opačném pořadí kvůli FK).
+1b. `CHECK (num_nonnulls(ends_on, max_occurrences) = 1)` na `run_schedules`
+   (decision 31) — povinné ukončení se vynucuje v databázi, ne jen ve
+   formuláři. Formulář se dá obejít, constraint ne.
+1c. **Rozšířit existující `idx_runs_one_pending_per_prompt_model`** z
+   `(prompt_id, model_id)` na `(prompt_id, model_id, persona_id, market_id)`
+   (decision 35) — drop + create v migraci, a stejná změna v
+   `__table_args__` v `app/models/run.py`. Je to zásah do pojistky
+   z migrace 0024: v docstringu u indexu vysvětli PROČ se mění
+   (multi-persona rozvrhy, decision 34), ať to při příštím čtení nevypadá
+   jako oslabení ochrany.
 2. SQLAlchemy modely `RunSchedule`, `RunQueueItem`, `WorkerHeartbeat`,
    `NotificationOutbox` — včetně `__table_args__` s indexy a unique
    constraintem, aby `Base.metadata.create_all()` (co používá testovací
@@ -352,6 +471,16 @@ modelech); `\d run_queue` v psql ukazuje partial index.
    měsíční 31. v únoru; rozvrh, jehož `days_of_week` neobsahuje dnešek.
 4. Test na drift (decision 9): opakované volání s `after` = předchozí
    výsledek musí dát přesně stejný lokální čas, ne posunutý.
+5. **Konec rozvrhu (decision 31):** funkce vrací `None`, když je další
+   termín po `ends_on` nebo když `occurrences_count >= max_occurrences`.
+   `None` je pro ticker signál "rozvrh doběhl" → `is_active = false`,
+   `inactive_reason = 'completed'`, `next_run_at = NULL`. Testy na obě
+   podmínky zvlášť i na hranu (termín přesně v den `ends_on` se ještě
+   vykoná).
+6. Pomocná funkce `max_end_date(frequency, *, starts_on)` pro formulář —
+   vrací nejzazší přípustné `ends_on` podle tabulky v decision 31 (denně
+   30 dní, týdně 6 měsíců, měsíčně 12 měsíců). Taky čistá, taky bez
+   `now()`.
 
 **Done when:** `pytest tests/test_scheduling_recurrence.py -v` zelený;
 všechny DST případy pokryté explicitním očekávaným UTC timestampem, ne
@@ -484,17 +613,27 @@ registrace routeru v `app/main.py`
 2. CRUD: `GET/POST /schedules/new?prompt_id=`, `POST /schedules/{id}`,
    `POST /schedules/{id}/toggle`, `POST /schedules/{id}/delete`. Plain form
    POST → 303, HTMX → `HX-Redirect` (vzor z `trigger_run`).
-3. Formulář (v1 jen `target_type='prompt'`, decision 24): frekvence
-   (denně / týdně + checkboxy dnů / měsíčně + den), čas, model, trh,
-   persona, priorita. Reuse maker z `app/templates/partials/macros.html`.
-   Pole `timezone` se **nezobrazuje** (v1 pevně `Europe/Prague`,
-   decision 7), ale ukládá se.
+3. Formulář (v T5 jen `target_type='prompt'`; set-level přidá T5b):
+   frekvence (denně / týdně + checkboxy dnů / měsíčně + den), čas,
+   **modely a persony jako multi-select** (decision 34), trh, priorita.
+   Reuse maker z `app/templates/partials/macros.html`. Pole `timezone` se
+   **nezobrazuje** (v1 pevně `Europe/Prague`, decision 7), ale ukládá se.
+3b. **Povinné ukončení (decision 31):** přepínač "konec datem" / "konec
+   počtem opakování", jedno z obou musí být vyplněné — validace v routeru
+   přes `AppError`, ne jen `required` v HTML. Výchozí hodnota i horní mez
+   `ends_on` se berou z `max_end_date()` (T1) a mění se se zvolenou
+   frekvencí. Uživateli se vysvětlí proč ("rozvrh bez konce by utrácel i
+   poté, co si na něj nikdo vzpomene") — jinak to vypadá jako šikana
+   formuláře.
 4. **Náhled příštích pěti termínů** a **odhad ceny** živě ve formuláři
    (decision 29) — náhled volá `compute_next_run_at` z T1, cena
-   `estimate_run_cost` / cost components (PR #14). HTMX partial, žádný nový
-   JS framework.
+   `estimate_run_cost` / cost components (PR #14). Odhad ukazuje **dvě
+   čísla**: za jedno okno a za celý rozvrh do konce (decision 34), spolu
+   s počtem runů — při více modelech a personách se násobí. HTMX partial,
+   žádný nový JS framework.
 5. Seznam rozvrhů jako partial na detailu promptu a detailu klienta:
-   frekvence, příští spuštění, poslední výsledek, přepínač aktivní.
+   frekvence, příští spuštění, **konec rozvrhu**, poslední výsledek,
+   přepínač aktivní, filtr podle vlastníka rozvrhu.
    Pravidlo se zobrazuje v zóně rozvrhu s popiskem, konkrétní termín v zóně
    prohlížeče (decision 28).
 6. Delete s `data-confirm="{{ t('schedules.delete_confirm') }}"` přes
@@ -507,6 +646,52 @@ prohlížeče; náhled termínů odpovídá tomu, co spočítá T1; viewer dosta
 na všech `/schedules*` routách; responsive ověřené na všech třech šířkách.
 
 **Expected commit:** `feat(scheduler): add schedule CRUD with occurrence and cost preview`
+
+---
+
+## T5b — Set-level rozvrh
+
+**Target:** `app/routers/schedules.py`, `app/services/queue.py`,
+`app/templates/schedules/form.html`, `app/templates/prompt_sets/detail.html`,
+i18n, testy
+
+Realizuje decision 32. Staví na hotovém formuláři z T5 — mění se cíl
+rozvrhu a rozstřel při zařazení, ne celý tok.
+
+1. `target_type='prompt_set'` ve formuláři: volba "celý prompt set" na
+   detailu prompt setu (`GET /schedules/new?prompt_set_id=`). `target_id`
+   je `prompt_sets.id`; jednotlivé prompty se resolvují **až při zařazení**
+   (decision 6), takže prompt přidaný do setu příští týden se do rozvrhu
+   zahrne sám.
+2. `enqueue_due_schedules` (T3) pro set-level rozstřelí okno na **aktivní
+   prompty setu × `model_ids` × `persona_ids`** a všem položkám dá společné
+   `batch_id` (uuid). Neaktivní prompty se přeskočí bez chyby
+   (decision 18) — set je živý seznam, ne zmražený.
+3. Unique constraint `(schedule_id, scheduled_for)` z decision 12 na
+   set-level **nestačí** — položek na jedno okno je N. Idempotence je tedy
+   `(schedule_id, scheduled_for, prompt_id, model_id, persona_id)`; v T0 to
+   znamená unique přes pět sloupců, ne dva. **Ověř, že to migrace opravdu
+   má** — bez toho by restart tickeru uprostřed rozstřelu založil dávku
+   podruhé a zaplatila by se dvakrát.
+4. Odhad ve formuláři (T5 bod 4) musí pro set-level počítat přes všechny
+   prompty setu: "25 promptů × 3 modely × 3 persony = 225 runů na okno,
+   7 oken, odhadem $X celkem". Tohle číslo je jediná ochrana, kterou
+   uživatel uvidí **před** uložením.
+5. Strop hloubky fronty na klienta (T10) se kontroluje **před** rozstřelem,
+   ne po něm — jinak se 225 položek vloží a teprve pak zjistí, že se
+   nevešly.
+6. Na `/schedules` (T6) zobrazit dávku jako jeden řádek s rozpadem podle
+   `batch_id`, ne 225 samostatných řádků historie.
+7. Testy: rozstřel dá přesně N × M × P položek se shodným `batch_id`;
+   opakované zařazení téhož okna nevytvoří duplicitu; neaktivní prompt
+   v setu se přeskočí; prompt přidaný do setu po založení rozvrhu se
+   v dalším okně zahrne.
+
+**Done when:** rozvrh na celý prompt set se dá založit z detailu setu,
+formulář před uložením ukáže počet runů i odhad ceny za celý rozvrh, a
+v dry-runu vznikne správný počet položek s jedním `batch_id`.
+
+**Expected commit:** `feat(scheduler): add prompt-set level schedules`
 
 ---
 
@@ -581,11 +766,20 @@ záznam zůstane nedotčený.
    `send(notification) -> None`, `inapp.py` je jediná dnešní implementace
    (označí řádek `sent`, obsah se čte z DB). **SMTP kanál se v této větvi
    nepíše** — jen se nechá místo, kam přibude soubor.
+2b. `.env.example` dostane prázdné SMTP klíče (`SMTP_HOST`, `SMTP_PORT`,
+   `SMTP_USER`, `SMTP_FROM`) s komentářem, že kanál zatím neexistuje — ať
+   je v den zapínání jasné, co bude potřeba. Do rozhraní v `base.py`
+   zapsat, že se při zapnutí doručovatele **nevyprazdňuje nahromaděná
+   historie** (položky starší než pár dní → `suppressed`, decision 25).
 3. Události zapojit na místa vzniku: `schedule.run_failed` (po vyčerpání
    pokusů), `schedule.window_skipped` (souhrnně za jeden průchod tickeru),
    `worker.stale` (heartbeat starší než 30 min — detekuje ho webová
    aplikace při zobrazení, ne mrtvý worker sám o sobě),
-   `quota.exceeded` (T10), `schedule.owner_deactivated` (T9).
+   `quota.exceeded` (T10), `schedule.owner_deactivated` (T9),
+   **`schedule.expiring_soon`** (7 dní nebo 3 výskyty před koncem,
+   decision 31 — pojistka proti tomu, aby sběr dat tiše skončil) a
+   **`budget.threshold_exceeded`** (měsíční rozpočet klienta, decision 33;
+   **neblokuje**, jen upozorní).
 4. In-app zobrazení: odznak s počtem nepřečtených na `/schedules` + seznam.
 5. Testy: `notify` zapíše řádek; opakované selhání téhož rozvrhu
    negeneruje řádek na každý pokus, jen na finální selhání.
@@ -628,13 +822,22 @@ limit), i18n, testy
    `quota.exceeded`. Vynuceno v `run_execution.py`, takže platí i pro ruční
    trigger (decision 26). Limit jako sloupec na klientovi, výchozí hodnota
    z configu.
+1b. **Měsíční finanční hranice na klienta** (`clients.monthly_budget_usd`,
+   decision 33) — při překročení se vyvolá `budget.threshold_exceeded` a
+   **nic se nezastaví**. Počítá se ze skutečných cen už proběhlých runů
+   (`app/services/cost.py`), ne z odhadu. Jedno oznámení za měsíc a
+   klienta, ne za každý run nad hranicí.
 2. **Hloubka fronty na klienta** (default 500 čekajících) — další zařazení
-   se odmítne s oznámením místo neomezeného růstu.
+   se odmítne s oznámením místo neomezeného růstu. U set-level rozvrhu se
+   kontroluje **před** rozstřelem (T5b bod 5).
 3. **Souběh na providera** — semafor v workeru (default 1, konfigurovatelné
    na 2–3). Kapacitní výpočet pro dokumentaci: run ~15 s → jeden worker
    sekvenčně ~240 runů/h → set-level rozvrh 120 runů ≈ 30 min, denní dávka
    600 runů ≈ 2,5 h; jeden worker tedy stačí, souběh je rezerva.
-4. Admin UI pro prioritu klienta (`clients.priority`) a denní limit.
+4. Admin UI na detailu klienta: priorita (`clients.priority`), denní limit
+   runů (`clients.daily_run_limit`) a měsíční rozpočet v USD
+   (`clients.monthly_budget_usd`). Prázdné pole = beze změny chování
+   (limit z configu, rozpočet žádný).
 5. Testy: 21. run při limitu 20 → `skipped`/`quota_exceeded` + oznámení;
    ruční trigger při vyčerpaném limitu → 409 se srozumitelnou hláškou přes
    `AppError`, ne 500.
@@ -671,8 +874,10 @@ limit), i18n, testy
 
 - **Ruční run přes frontu** (varianta B) — schéma je připravené
   (decision 5), přepnutí je samostatný pozdější úkol.
-- **Set-level rozvrhy v UI** — schéma připravené (decision 24), UI až po
-  odhadu ceny a reálné zkušenosti s prompt-level.
+- **Archivaci klientů (`clients.is_active`)** — zvažováno a zamítnuto
+  2026-09-18 (decision 31). Povinné ukončení rozvrhu pokrývá případ
+  "klient utichl"; nový stav klienta je průřez šesti obrazovkami a patří
+  do vlastní větve.
 - **"Study"** (dávka promptů × modelů) — `run_queue.batch_id` a
   `source='batch'` jsou přípravou, ne implementací.
 - **SMTP kanál oznámení** — outbox a rozhraní kanálu ano, doručovatel ne
