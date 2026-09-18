@@ -126,71 +126,62 @@ your Mac. Public HTTPS is enabled only after you apply the domain settings.
 The current deployment is at `https://expressyourself.ai`, on
 `2.29.23.252`, in `/opt/signalmap`.
 
-### One-time: make the server a Git checkout
+That directory is a deployed copy, not a Git checkout: releases are shipped
+there as an archive built from a commit. `docs/DEPLOYMENT.md` is the runbook
+to deploy by, with the pre-flight checks, the expected numbers and the
+rollback; this section is the shape of it.
 
-Recommended, and what the routine below assumes. The repository is public,
-so the server needs no deploy key, and named volumes follow the Compose
-project name rather than the directory, so the database is untouched:
-
-```bash
-ssh root@2.29.23.252 'cd /opt && mv signalmap signalmap.old && git clone https://github.com/jirkalla/SignalMap.git signalmap && cp signalmap.old/.env signalmap/.env && chmod 600 signalmap/.env'
-ssh root@2.29.23.252 'cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait'
-curl --fail --show-error https://expressyourself.ai/health
-```
-
-Delete `/opt/signalmap.old` once the app is verified. A checkout also makes
-`git rev-parse HEAD` answer what is actually deployed, and files listed in
-`.gitignore` - the local Compose override among them - can then never reach
-the server by accident.
-
-### The update routine
-
-Four steps, always in this order. Stop if any of them fails.
+### Ship a release
 
 ```bash
 # 1. Test locally first. Nothing reaches the server that did not pass here.
 git checkout master && git pull --ff-only && docker compose up -d --build --wait
 
-# 2. Back up the server database to this workstation, outside the repository.
-ssh root@2.29.23.252 'cd /opt/signalmap && docker compose exec -T postgres pg_dump -U signalmap_user -d signalmap -Fc' > "/c/Backups/SignalMap/dumps/pre-deploy-$(date +%Y%m%d-%H%M%S).dump"
+# 2. Back up the server database and pull it to this workstation.
+ssh signalmap '/usr/local/bin/signalmap-backup.sh' && python tools/local/pull_backup.py
 
-# 3. Deploy: fetch the commit, reinstall the host scripts, rebuild.
-ssh root@2.29.23.252 'cd /opt/signalmap && git fetch origin && git reset --hard origin/master && ./tools/server/install.sh && docker compose up -d --build --wait && git log -1 --oneline'
+# 3. Build an archive of the commit, not of the working tree.
+STAMP=$(date +%Y%m%d-%H%M%S) && SHA=$(git rev-parse HEAD) && ARCHIVE="/tmp/signalmap-$STAMP.tar.gz"
+git archive --format=tar.gz -o "$ARCHIVE" HEAD
+scp "$ARCHIVE" signalmap:/tmp/
 
-# 4. Verify.
+# 4. Unpack it over the deployed copy, reinstall the host scripts, rebuild.
+ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.tar.gz -C /tmp/signalmap-$STAMP && rsync -a --delete --exclude='.env' --exclude='*.dump' --exclude='DEPLOYED_COMMIT' /tmp/signalmap-$STAMP/ /opt/signalmap/ && cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait"
+
+# 5. Record what was deployed, clean up, verify.
+ssh signalmap "echo $SHA > /opt/signalmap/DEPLOYED_COMMIT && echo \"\$(date -Is) $SHA\" >> /var/log/signalmap-deploys.log && rm -rf /tmp/signalmap-$STAMP /tmp/signalmap-$STAMP.tar.gz"
 curl --fail --show-error https://expressyourself.ai/health
 ```
 
-Step 3's `./tools/server/install.sh` is not optional: it reinstalls the
+Why an archive rather than `rsync` straight from the working directory:
+`git archive` exports from Git's object store, so uncommitted edits,
+untracked files and CRLF line endings cannot travel with it. The `rsync`
+in step 4 runs on the server, which is also why a Windows workstation does
+not need `rsync` installed. The approach works unchanged if the repository
+ever becomes private, and if the server has no access to GitHub.
+
+Step 4's `./tools/server/install.sh` is not optional: it reinstalls the
 host-side scripts (nightly backup, restricted SSH dispatcher) into
 `/usr/local/bin`. Skip it and they silently drift from the repository.
+
+Step 5 is what makes the deployment traceable. An archive carries no
+reference to the commit it came from, so without `DEPLOYED_COMMIT` there is
+no way to answer what is running, and no target to roll back to.
 
 Keep the server's `.env` and named volumes. Schema migrations run
 automatically on app startup; no separate migration command is needed.
 Rebuilding causes brief downtime, so avoid updates during provider runs.
-
-### Alternative: rsync
-
-Still valid, and the only way to deploy uncommitted changes. It copies the
-working tree verbatim, so line endings and untracked files travel with it
-and the exclude list has to be maintained by hand; a Git checkout has
-neither problem. Not shipped with Git Bash on Windows.
-
-```bash
-rsync -az --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='*.dump' --exclude='docker-compose.override.yaml' ./ root@2.29.23.252:/opt/signalmap/
-ssh root@2.29.23.252 'cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait'
-```
 
 SSH access must be handed over separately: install the maintainer's public
 key and allow their IP in the Hetzner firewall's port-22 rule. The commands
 above assume their SSH key is already configured. Do not put private keys
 or tokens in this repository.
 
-For an application rollback, check out the last known-good commit and
-rebuild:
+For an application rollback, ship the last known-good commit the same way,
+building the archive from it instead of `HEAD`:
 
 ```bash
-ssh root@2.29.23.252 'cd /opt/signalmap && git reset --hard <commit> && ./tools/server/install.sh && docker compose up -d --build --wait'
+git archive --format=tar.gz -o /tmp/rollback.tar.gz <commit-from-DEPLOYED_COMMIT>
 ```
 
 If an upgrade changed the schema, assess compatibility first; restoring the

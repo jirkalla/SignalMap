@@ -48,7 +48,7 @@ změna týká.
 ### 1.2 Co běží na serveru teď
 
 ```bash
-ssh signalmap 'cd /opt/signalmap && git rev-parse --short HEAD && git log -1 --format=%s'
+ssh signalmap 'cat /opt/signalmap/DEPLOYED_COMMIT 2>/dev/null || echo "soubor chybi - nasazeno pred zavedenim evidence"'
 ```
 
 ```bash
@@ -57,8 +57,11 @@ ssh signalmap 'cd /opt/signalmap && docker compose exec -T postgres psql -U sign
 
 **Ten commit si zapiš** — je to cíl případného rollbacku.
 
-*(Pokud první příkaz řekne, že to není git checkout, provede se jednorázový
-převod podle README, sekce „One-time: make the server a Git checkout".)*
+`/opt/signalmap` **není git checkout**, je to rozbalená kopie (viz kapitola 3),
+takže `git rev-parse` tam nefunguje. Verzi drží soubor `DEPLOYED_COMMIT`, který
+zapisuje krok 3.4. U nasazení staršího než zavedení téhle evidence se verze
+zpětně nezjistí — pak se orientuj podle `alembic_version` a data v
+`/var/log/signalmap-deploys.log`.
 
 ### 1.3 Které migrace poběží a je deploy vratný
 
@@ -173,21 +176,49 @@ Opiš si výsledek. Po nasazení poběží ten samý příkaz a čísla se porov
 
 ## 3. Nasazení
 
-Jeden příkaz — stáhne commit, přeinstaluje hostitelské skripty, přestaví
-a nastartuje:
+Postup podle Khalidova předání (2026-09-17), doplněný o instalaci hostitelských
+skriptů a evidenci nasazené verze. Server **není git checkout** a nemusí mít
+přístup na GitHub — kód se tam dopravuje jako archiv z tvého počítače.
+
+### 3.1 Vyrobit archiv z commitu
 
 ```bash
-ssh signalmap 'cd /opt/signalmap && git fetch origin && git reset --hard origin/master && ./tools/server/install.sh && docker compose up -d --build --wait && git log -1 --oneline'
+STAMP=$(date +%Y%m%d-%H%M%S) && SHA=$(git rev-parse HEAD) && ARCHIVE="/tmp/signalmap-$STAMP.tar.gz" && git archive --format=tar.gz -o "$ARCHIVE" HEAD && ls -lh "$ARCHIVE" && echo "commit: $SHA"
 ```
 
-Co se děje uvnitř a proč v tomhle pořadí:
+`git archive` exportuje **z gitu, ne z pracovního adresáře**. Necommitnuté
+změny, netrackované soubory (`docker-compose.override.yaml`, `.claude/`) ani
+CRLF konce řádků se tím pádem na server nedostanou. To je důvod, proč se
+nepoužívá `rsync` přímo z Windows.
+
+### 3.2 Nahrát na server
+
+```bash
+scp "$ARCHIVE" signalmap:/tmp/
+```
+
+### 3.3 Rozbalit, promítnout, přestavět
+
+```bash
+ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.tar.gz -C /tmp/signalmap-$STAMP && rsync -a --delete --exclude='.env' --exclude='*.dump' --exclude='DEPLOYED_COMMIT' /tmp/signalmap-$STAMP/ /opt/signalmap/ && cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait"
+```
 
 | | |
 |---|---|
-| `git reset --hard` | netrackované soubory (`.env`!) nemaže — **`git clean` nikdy nespouštěj** |
+| `rsync --delete` | běží **na serveru**, ne z Windows; smaže soubory, které v nové verzi nejsou |
+| `--exclude='.env'` | produkční tajemství zůstávají nedotčená |
 | `./tools/server/install.sh` | bez něj se hostitelské skripty tiše rozejdou s repem |
 | `docker compose up -d --build --wait` | staví **zatímco starý kontejner obsluhuje**, teprve pak prohodí — appku předem nezastavuj, jen by to prodloužilo výpadek o dobu buildu |
 | migrace | běží automaticky ze `CMD` v `dockerfile`; když selžou, **appka nenaběhne** — nedostaneš polovičně zmigrovanou běžící databázi |
+
+### 3.4 Zaznamenat verzi a uklidit
+
+```bash
+ssh signalmap "echo $SHA > /opt/signalmap/DEPLOYED_COMMIT && echo \"\$(date -Is) $SHA\" >> /var/log/signalmap-deploys.log && rm -rf /tmp/signalmap-$STAMP /tmp/signalmap-$STAMP.tar.gz && cat /opt/signalmap/DEPLOYED_COMMIT"
+```
+
+Bez tohohle kroku se **nedá zjistit, co je nasazené** — archiv žádnou stopu po
+commitu nenese. Je to jediné, co Khalidovu postupu chybělo.
 
 ---
 
@@ -266,20 +297,26 @@ Za půl roku je tohle jediné místo, kde zjistíš, kdy se co nasadilo.
 
 ## 6. Rollback
 
-### 6.1 Deploy neobsahoval destruktivní migraci
+Rollback = nasadit **starší commit** stejnou cestou jako kapitola 3, jen
+`HEAD` nahradíš tím commitem z kroku 1.2:
 
 ```bash
-ssh signalmap 'cd /opt/signalmap && git reset --hard <commit-z-kroku-1.2> && ./tools/server/install.sh && docker compose up -d --build --wait'
+OLD=<commit-z-kroku-1.2> && STAMP=$(date +%Y%m%d-%H%M%S)-rollback && ARCHIVE="/tmp/signalmap-$STAMP.tar.gz" && git archive --format=tar.gz -o "$ARCHIVE" "$OLD" && scp "$ARCHIVE" signalmap:/tmp/
+```
+
+### 6.1 Deploy neobsahoval destruktivní migraci
+
+Stačí vrátit kód:
+
+```bash
+ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.tar.gz -C /tmp/signalmap-$STAMP && rsync -a --delete --exclude='.env' --exclude='*.dump' --exclude='DEPLOYED_COMMIT' /tmp/signalmap-$STAMP/ /opt/signalmap/ && cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait && echo $OLD > /opt/signalmap/DEPLOYED_COMMIT"
 ```
 
 ### 6.2 Deploy obsahoval destruktivní migraci
 
 Samotný návrat kódu **nestačí** — starší appka by sahala na sloupce, které
-migrace zahodila. Nejdřív kód, pak databáze ze zálohy z kroku 2.3:
-
-```bash
-ssh signalmap 'cd /opt/signalmap && git reset --hard <commit-z-kroku-1.2> && ./tools/server/install.sh'
-```
+migrace zahodila. Nejdřív kód (příkaz z 6.1, ale **bez** `docker compose up`),
+pak databáze ze zálohy z kroku 2.3:
 
 ```bash
 ssh signalmap 'cd /opt/signalmap && docker compose exec -T postgres pg_restore --clean --if-exists --no-owner --no-privileges -U signalmap_user -d signalmap' < "C:/Backups/SignalMap/dumps/<zaloha-z-2.3>.dump"
