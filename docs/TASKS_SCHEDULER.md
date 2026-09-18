@@ -296,6 +296,11 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
 
 ## Nové schéma (migrace 0029)
 
+> **Číslo migrace:** `docs/TASKS_PRE_SCHEDULER.md` (krátká větev, která jde
+> vědomě před plánovačem) si bere 0029. Pokud je smergnutá dřív — a to je
+> záměr — je tahle migrace **0030**. Čísla níž v textu neměň zpětně, vyřeš to
+> při psaní SCH-0.
+
 Čtyři nové tabulky, tři sloupce na `clients` a úprava jednoho existujícího
 indexu. Nic z toho není v `schema_phase1.sql` — odsouhlaseno v konverzacích
 2026-09-16 (tabulky) a 2026-09-18 (sloupce ukončení, `persona_ids`,

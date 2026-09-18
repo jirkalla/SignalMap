@@ -37,6 +37,9 @@
 ##     člověka u klávesnice. Dvě idempotence (decisions 12 a 13) a dry-run
 ##     (decision 15) nejsou "nice to have" — jsou důvod, proč je bezpečné to
 ##     vůbec pustit. Pokud by kterýkoliv krok znamenal je obejít, ZASTAV.
+## 10b. ČÍSLO MIGRACE. docs/TASKS_PRE_SCHEDULER.md si bere 0029 a jde před
+##     touhle větví. Pokud je smergnutá dřív, je plánovačova migrace 0030 —
+##     ne 0029, jak je psáno v SCH-0 a v TASKS dokumentu. Ověř to při SCH-0.
 ## 11. SCHEDULER_DRY_RUN zůstává zapnutý až do dokončení SCH-10 (stropy).
 ##     Ostrý provoz zapíná uživatel, ne agent.
 ## 12. ŽÁDNÝ ROZVRH BEZ KONCE (decision 31). `CHECK (num_nonnulls(ends_on,
