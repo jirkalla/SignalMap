@@ -103,14 +103,8 @@ výpadku.
 ### 2.1 Odstávková stránka ZAP
 
 ```bash
-ssh signalmap 'touch /opt/signalmap/deploy/maintenance.on'
+ssh signalmap 'touch /var/lib/signalmap/maintenance/maintenance.on'
 ```
-
-> ⚠️ **Zatím neimplementováno.** Vyžaduje statickou stránku v Caddy
-> (HTML soubor + mount + `@maintenance` matcher v Caddyfile), vrácenou jako
-> HTTP 503 s hlavičkou `Retry-After`. Stránka musí patřit **Caddy, ne appce** —
-> stránka servírovaná appkou nefunguje právě ve chvíli, kdy appka neběží.
-> Do té doby tenhle krok přeskoč a spolehni se na oznámení z 1.4.
 
 **Proč je odstávka před zálohou, ne za ní:** kdyby appka po záloze ještě
 chvíli přijímala data, rollback by o ně přišel. Když nejdřív zavřeš vstup,
@@ -230,6 +224,13 @@ commitu nenese. Je to jediné, co Khalidovu postupu chybělo.
 curl --fail --show-error https://expressyourself.ai/health
 ```
 
+> **Tenhle příkaz zároveň ověřuje, že je odstávková stránka vypnutá.** Se
+> zapnutým příznakem vrací `/health` `503`, a `--fail` z toho udělá chybu
+> (`curl: (22) The requested URL returned error: 503`). Zapomenutý příznak
+> z kroku 2.1 je nejpravděpodobnější příčina selhání téhle kontroly — appka
+> přitom běží a je zdravá, jen ji nikdo zvenčí nevidí. Než začneš hledat
+> chybu v appce, zkontroluj `ssh signalmap 'ls /var/lib/signalmap/maintenance/'`.
+
 ```bash
 ssh signalmap 'cd /opt/signalmap && docker compose ps && docker compose exec -T postgres psql -U signalmap_user -d signalmap -tAc "SELECT version_num FROM alembic_version"'
 ```
@@ -265,11 +266,12 @@ ssh signalmap 'cd /opt/signalmap && docker compose logs --tail=100 app | grep -i
 ### 5.1 Odstávková stránka VYP
 
 ```bash
-ssh signalmap 'rm -f /opt/signalmap/deploy/maintenance.on'
+ssh signalmap 'rm -f /var/lib/signalmap/maintenance/maintenance.on'
 ```
 
-**Nejčastěji zapomenutý krok celého postupu.** Až bude stránka
-implementovaná, dej si ho do seznamu jako první věc po ověření.
+**Nejčastěji zapomenutý krok celého postupu.** Dej si ho do seznamu jako
+první věc po ověření (kapitola 4) — a pokud přece jen zapomeneš, kontrola
+v 4.1 na to upozorní sama.
 
 ### 5.2 Pět minut sledovat
 
@@ -340,7 +342,6 @@ Pak celá kapitola 4 znovu — rollback se ověřuje stejně jako nasazení.
 
 ## Co runbook zatím nepokrývá
 
-- **odstávková stránka** (2.1, 5.1) — návrh hotový, implementace čeká
 - **zastavení workeru** (2.2) — přibude se schedulerem
 - **automatické nasazení** (CI/CD) — vědomě ne; jeden maintainer, jeden server,
   ruční postup s kontrolami je při téhle velikosti spolehlivější než pipeline,
