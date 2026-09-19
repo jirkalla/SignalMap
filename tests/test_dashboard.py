@@ -456,3 +456,128 @@ def test_share_of_voice_and_position_timeseries_fill_gap_weeks_with_zero(authed_
     assert [w["week_start"] for w in sov_weeks] == ["2026-01-05", "2026-01-12", "2026-01-19"]
     assert [w["value"] for w in sov_weeks] == [50.0, 0.0, 100.0]  # gap week is 0, not missing
     assert [w["value"] for w in pos_weeks] == [2.0, 0.0, 1.0]
+
+
+# --- PRE-4: cited domains are grouped by their normalized form ----------------------------------
+
+
+def test_normalize_domain_sql_matches_the_python_twin(db_session: Session):
+    """Table test run against real Postgres (`regexp_replace` is available there, unlike SQLite) —
+    the guard against the two implementations drifting apart that docs/TASKS_PRE_SCHEDULER.md
+    design decision 11 requires, since normalized_domain_sql exists only to let GROUP BY do what
+    normalize_domain does for a single value elsewhere in this codebase.
+    """
+    from sqlalchemy import literal, select
+
+    from app.utils import normalize_domain, normalized_domain_sql
+
+    cases = ("www.x.com", "X.COM", "x.com", "www2.x.com", "blog.x.com", "www.meag.com", "meag.com", "")
+    for raw in cases:
+        sql_result = db_session.execute(select(normalized_domain_sql(literal(raw)))).scalar_one()
+        assert sql_result == normalize_domain(raw), f"mismatch for {raw!r}"
+
+
+def test_domain_league_merges_www_variant_citations_from_different_runs(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """'meag.com' and 'www.meag.com' cited from two SEPARATE runs must become one row with the
+    combined citation count, and run_coverage_pct must stay a legitimate percentage (<= 100) —
+    the two things a Python-side merge after the query cannot guarantee (docs/
+    TASKS_PRE_SCHEDULER.md PRE-4).
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("www.meag.com",))
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("meag.com",))
+
+    rows = authed_client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+
+    assert len(rows) == 1, "must be one merged row, not two split by www."
+    assert rows[0]["domain"] == "meag.com"
+    assert rows[0]["citations_count"] == 2
+    assert rows[0]["run_coverage_pct"] == round(100 * 2 / 2, 1)
+    assert rows[0]["run_coverage_pct"] <= 100.0
+
+
+def test_a_run_citing_both_variants_is_counted_once_in_run_coverage(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """The regression grouping-in-Python would create: ONE run citing both 'meag.com' and
+    'www.meag.com' must count as one run toward coverage, not two — this is exactly why the
+    COUNT(DISTINCT Run.id) has to run inside the already-merged SQL group (design decision 10,
+    first bullet), not be summed across two raw groups afterward.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("meag.com", "www.meag.com"))
+
+    rows = authed_client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+
+    assert len(rows) == 1
+    assert rows[0]["citations_count"] == 2
+    assert rows[0]["run_coverage_pct"] == 100.0, "one run in scope, cited once — never 200%"
+
+
+def test_citation_totals_counts_domains_merged(authed_client: TestClient, db_session: Session, seed: dict):
+    """The KPI tile (`/api/summary`'s distinct_domains_count) and the league table render on the
+    same page — they must agree on how many distinct domains exist, not just on how the table
+    groups its rows.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("www.meag.com", "wikipedia.org"))
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("meag.com",))
+
+    summary = authed_client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all").json()
+    league = authed_client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+
+    assert summary["distinct_domains_count"] == 2  # meag.com (merged) + wikipedia.org
+    assert summary["distinct_domains_count"] == len(league), "the tile and the table must agree"
+
+
+def test_a_domain_below_the_limit_is_promoted_once_merged(authed_client: TestClient, db_session: Session, seed: dict):
+    """Two variants with 2 citations each can both sit below a domain with 3 — until merged, where
+    their combined 4 belongs above it. LIMIT applied before merging can never recover this row
+    (design decision 10, second bullet); LIMIT=1 here makes the failure mode unambiguous.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    # 3 citations for a domain that must NOT win once merging is correct.
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("wikipedia.org", "wikipedia.org", "wikipedia.org"))
+    # 2 + 2 = 4 citations for the domain split across its www./bare variants.
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=1),
+              citation_domains=("www.meag.com", "www.meag.com"))
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1 + timedelta(hours=2),
+              citation_domains=("meag.com", "meag.com"))
+
+    rows = authed_client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all&limit=1").json()
+
+    assert len(rows) == 1
+    assert rows[0]["domain"] == "meag.com"
+    assert rows[0]["citations_count"] == 4
+
+
+def test_subdomains_are_not_unified_with_the_parent_domain(authed_client: TestClient, db_session: Session, seed: dict):
+    """Deliberately out of scope (design decision 10): 'blog.meag.com' is a different source from
+    'meag.com' and must stay its own row, even though only the leading 'www.' is stripped.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _make_run(db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+              citation_domains=("meag.com", "blog.meag.com"))
+
+    rows = authed_client.get(f"/dashboard/api/domains?client_id={acme.id}&range=all").json()
+    domains = {row["domain"] for row in rows}
+
+    assert domains == {"meag.com", "blog.meag.com"}, "a subdomain is a different source, not merged"
