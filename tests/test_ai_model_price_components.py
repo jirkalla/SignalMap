@@ -8,12 +8,14 @@ its own scenarios independently — this file is its component-table equivalent,
 CC-8 retires the old file once the old columns themselves are dropped.
 """
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, AIModelPriceComponent
+from app.routers.ai_models import _price_history_rows
 
 
 def _components(db_session: Session, model_id: int) -> list[AIModelPriceComponent]:
@@ -155,3 +157,148 @@ def test_price_0_025_round_trips_without_precision_loss(authed_client: TestClien
     cache_read = next(c for c in _components(db_session, model.id) if c.component_type == "cache_read")
 
     assert cache_read.price_per_unit_usd == Decimal("0.025000")
+
+
+# --- Price history display: grouped per component, adjacent equal prices coalesced --------------
+
+
+def _edit_model(authed_client: TestClient, model: AIModel, provider_id: int, **prices: str):
+    data = {
+        "provider_id": provider_id,
+        "model_name": model.model_name,
+        "capability_tier": "standard",
+    }
+    data.update(prices)
+    return authed_client.post(f"/ai-models/{model.id}/edit", data=data, follow_redirects=False)
+
+
+def _model(db_session: Session, name: str) -> AIModel:
+    return db_session.query(AIModel).filter_by(model_name=name).one()
+
+
+def test_two_records_at_the_same_price_show_as_one_continuous_span(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """Two records, one span.
+
+    The rows are written directly rather than through the form: the edit route only writes a row
+    when the submitted price differs from the one in effect, so this shape cannot be produced by
+    ordinary editing. It exists in production anyway — docs/TASKS_PRE_SCHEDULER.md PRE-0 backfilled
+    earlier validity for prices that were already current, by hand, in SQL. Displayed one row per
+    record, that draws a boundary at the moment the price was RECORDED, where the price itself
+    never changed, and a reader stops to look for a change that isn't there (reported from the edit
+    page, 2026-09-19).
+    """
+    _create_model(authed_client, seed["provider"].id, "history-model", price_input="2.00")
+    model = _model(db_session, "history-model")
+    backdated = (datetime.now(timezone.utc) - timedelta(days=10)).replace(microsecond=0)
+    db_session.add(
+        AIModelPriceComponent(
+            ai_model_id=model.id, component_type="input",
+            price_per_unit_usd=Decimal("2.00"), effective_from=backdated,
+        )
+    )
+    db_session.commit()
+    db_session.refresh(model)
+
+    assert len(_components(db_session, model.id)) == 2, "both records are kept; only the display merges"
+
+    spans = dict(_price_history_rows(model))["input"]
+    assert len(spans) == 1, "one price, one span — no boundary where nothing changed"
+    assert spans[0].valid_from == backdated, "the span reaches back to the earlier record"
+    assert spans[0].valid_until is None, "and is still in effect"
+    assert spans[0].price_per_unit_usd == Decimal("2.000000")
+
+
+def test_a_real_price_change_is_not_merged_away(authed_client: TestClient, db_session: Session, seed: dict):
+    """The other half of the same rule: coalescing must not hide a change that did happen."""
+    _create_model(authed_client, seed["provider"].id, "changed-model", price_input="2.00")
+    model = _model(db_session, "changed-model")
+    _edit_model(authed_client, model, seed["provider"].id, price_input="3.00")
+    db_session.refresh(model)
+
+    spans = dict(_price_history_rows(model))["input"]
+    assert [s.price_per_unit_usd for s in spans] == [Decimal("3.000000"), Decimal("2.000000")]
+    assert spans[0].valid_until is None
+    assert spans[1].valid_until == spans[0].valid_from, "the older span ends where the newer starts"
+
+
+def test_a_price_that_returns_to_an_earlier_value_keeps_both_spans(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """2.00 -> 3.00 -> 2.00 is three spans, not two. Only ADJACENT equal prices merge; a price that
+    goes away and comes back is two separate stretches and has to read as such.
+    """
+    _create_model(authed_client, seed["provider"].id, "roundtrip-model", price_input="2.00")
+    model = _model(db_session, "roundtrip-model")
+    _edit_model(authed_client, model, seed["provider"].id, price_input="3.00")
+    _edit_model(authed_client, model, seed["provider"].id, price_input="2.00")
+    db_session.refresh(model)
+
+    spans = dict(_price_history_rows(model))["input"]
+    assert [s.price_per_unit_usd for s in spans] == [
+        Decimal("2.000000"), Decimal("3.000000"), Decimal("2.000000")
+    ]
+
+
+def test_history_is_grouped_per_component_so_each_has_its_own_current(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """Three components priced at once means three spans reading "current" — one per component,
+    which is correct and is exactly what a single date-ordered list made unreadable.
+    """
+    _create_model(
+        authed_client, seed["provider"].id, "grouped-model",
+        price_input="2.00", price_output="10.00", price_cache_read="0.025",
+    )
+    model = _model(db_session, "grouped-model")
+    _edit_model(
+        authed_client, model, seed["provider"].id,
+        price_input="2.00", price_output="10.00", price_cache_read="0.030",  # only cache_read moves
+    )
+    db_session.refresh(model)
+
+    groups = _price_history_rows(model)
+    assert [component_type for component_type, _ in groups] == ["input", "output", "cache_read"], (
+        "groups follow COMPONENT_TYPES order, not the order rows happen to come back in"
+    )
+
+    by_type = dict(groups)
+    assert len(by_type["input"]) == 1 and len(by_type["output"]) == 1
+    assert len(by_type["cache_read"]) == 2, "the component that actually changed keeps both spans"
+    assert all(spans[0].valid_until is None for spans in by_type.values()), (
+        "every component's newest span is current — three at once is correct, not a conflict"
+    )
+
+
+def test_components_that_never_changed_are_not_given_a_table(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """An Anthropic model prices five components and typically changes two of them ever, so a table
+    per component would put three header rows above three single values. Those render as one line
+    each instead; only a component with more than one span earns a table.
+    """
+    _create_model(
+        authed_client, seed["provider"].id, "five-component-model",
+        price_input="2.00", price_output="10.00", price_cache_read="0.10",
+        price_cache_write_5m="1.25", price_cache_write_1h="2.00",
+    )
+    model = _model(db_session, "five-component-model")
+    _edit_model(
+        authed_client, model, seed["provider"].id,
+        price_input="3.00", price_output="10.00", price_cache_read="0.10",
+        price_cache_write_5m="1.25", price_cache_write_1h="2.00",
+    )
+    db_session.refresh(model)
+
+    by_type = dict(_price_history_rows(model))
+    assert len(by_type["input"]) == 2, "the one component that changed gets a table"
+    assert [len(by_type[ct]) for ct in ("output", "cache_read", "cache_write_5m", "cache_write_1h")] == [1, 1, 1, 1]
+
+    page = authed_client.get(f"/ai-models/{model.id}/edit")
+    assert page.status_code == 200
+    # The price fields above are a grid, not a table, so the only <table> on the page is the
+    # history of the one component that actually changed.
+    assert page.text.count("<table") == 1, "the four unchanged components must not each get a table"
+    assert "Unchanged since entered" in page.text, "they are listed as single lines instead"
+    assert "$0.1 " in page.text and "$1.25 " in page.text, "with their price on that line"
