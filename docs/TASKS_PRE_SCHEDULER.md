@@ -145,10 +145,10 @@ existující tabulky zapisuje formulář, a PRE-4 nemění schéma vůbec
 | ID | Name | Status |
 |----|------|--------|
 | PRE-0 | Jednorázové zpětné doplnění platnosti cen (ruční SQL na produkci) | ⏳ |
-| PRE-1 | `clients.is_test` + vyloučení testovacích dat z `/ops` | ⏳ |
-| PRE-2 | Pole „platí od" ve formuláři ceny modelu | ⏳ |
-| PRE-4 | Normalizace domén v lize citovaných domén a v počtu unikátních domén | ⏳ |
-| PRE-3 | Závěrečný průchod: i18n, responsive, docs | ⏳ |
+| PRE-1 | `clients.is_test` + vyloučení testovacích dat z `/ops` | ✅ |
+| PRE-2 | Historie cen modelu: seskupení po komponentách, sloučení beze změny — **zpětná platnost zamítnuta**, viz níže | ✅ |
+| PRE-4 | Normalizace domén v lize citovaných domén a v počtu unikátních domén | ✅ |
+| PRE-3 | Závěrečný průchod: i18n, responsive, docs | ✅ |
 
 PRE-1, PRE-2 a PRE-4 jsou nezávislé, pořadí mezi nimi je libovolné. PRE-3 je
 až po všech třech.
@@ -292,6 +292,43 @@ ukáže správně, a run z doby před zadáním ceny má v `/ops` číslo místo
 pomlčky; `pytest` zelený; responsive ověřené.
 
 **Expected commit:** `feat(ai-models): allow backdating a model price change`
+
+---
+
+### Skutečný výsledek (2026-09-19) — zpětná platnost zamítnuta
+
+Pole „platí od" bylo implementováno podle zadání výše, ověřeno na reálných
+datech (69 ze 72 neoceněných runů dostalo cenu), a pak **zrušeno** —
+rozhodnutí uživatele po ukázání historie cen v UI.
+
+**Důvod:** `ai_model_price_components` je append-only a nemá mazání ani
+`voided_at`. Dokud formulář uměl zapsat jen `now()`, minulost se nedala
+pokazit. Pole „platí od" tenhle bezpečnostní plot samo o sobě odstranilo:
+překlep v datu (např. rok 2020 místo 2026) by vytvořil trvalý řádek, který
+by nešlo opravit ani smazat přes UI — jen ručním zásahem do databáze. To je
+nová expozice, kterou zadání výše nezohlednilo, a riziko převážilo přínos.
+
+**Co zůstalo:** oprava zobrazení historie cen (commit `ebc2ddb`) —
+seskupení `_price_history_rows()` po komponentách místo jednoho
+plochého seznamu řazeného napříč typy (tři ceny platné najednou dřív
+vypadaly jako tři si odporující odpovědi), a slučování sousedních řádků se
+shodnou cenou do jednoho úseku (backfill kvůli PRE-0 zapisuje řádek i
+tehdy, když se cena nemění — zobrazený jako samostatný řádek to vytvářelo
+předěl v místě, kde se nic nezměnilo). Komponenta dostane tabulku jen když
+má víc než jeden úsek; jinak je řádek pod „Unchanged since entered" — u
+modelu s pěti komponentami (typicky Anthropic) tak nevzniká pět
+prázdných tabulek.
+
+**Dopad:** cena zadaná později než run tenhle run **navždy** neocení —
+formulář to už neumožní opravit. Lokálně se to týká 3 runů u
+`gemini-3.5-flash` (8.–9. 9. 2026), které v `/ops` zůstávají s pomlčkou.
+Na produkci žádný další zásah po PRE-0 nebyl potřeba, protože ten už byl
+proveden ručním SQL právě proto, že UI cestu tehdy nemělo.
+
+**Případná budoucí oprava** (mimo tuhle větev): buď `voided_at` na
+existujícím řádku (oprava = supersede, ne smazání), nebo bitemporální
+`recorded_at` vedle `effective_from` — obojí je migrace a vlastní úkol,
+ne oprava zobrazení.
 
 ---
 

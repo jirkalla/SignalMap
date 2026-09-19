@@ -139,6 +139,45 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   boundary from the client-facing `/dashboard` (phase 4), which viewers can
   already reach — the two must never be merged into one screen or one
   permission check.
+- NFR-11 (Ops aggregates exclude test clients by default): `/ops` (NFR-10)
+  runs, success rate, and cost figures never include a client flagged
+  `clients.is_test` unless the analyst explicitly asks for them
+  (`?include_test=1`, docs/TASKS_PRE_SCHEDULER.md PRE-1) — a client used to
+  validate the app against real providers is not real client work, and
+  counting it inflates run volume and the cost estimate the service is
+  priced from. The flag is evaluated per query, not stored on the run, so
+  flagging or unflagging a client changes what its ENTIRE run history
+  contributes to these totals, not just runs from that point on. It never
+  hides the client anywhere else — `/clients`, its own detail page, every
+  client selector, and the client-facing `/dashboard` (NFR-10's own
+  boundary) show it exactly like any other client, badged as a test
+  client. Only an admin may set the flag.
+- NFR-12 (A run's cost is priced at its own time, and "unknown" is never
+  "zero"): `ai_model_price_components` is append-only — a price change is
+  always a new row, never an edit to an existing one (NFR-6's evidence
+  discipline extended to pricing data) — and a run's cost is computed from
+  whichever price row was effective at that run's own `started_at`, never
+  from today's price (docs/TASKS_COST_COMPONENTS.md). A run made before any
+  price was ever recorded for its model has no computable cost and must
+  show as such (`null`/a dash), never as `$0` — a missing price is a gap in
+  what we know, not a claim that the run was free. `/ai-models`'s price
+  history displays this per-component timeline grouped and merged for
+  readability (docs/TASKS_PRE_SCHEDULER.md PRE-2), but every underlying
+  record stays exactly as entered, including two records that carry the
+  same price with different validity — expected wherever a price was later
+  backfilled for a period before it was entered.
+- NFR-13 (Domains are normalized for comparison and grouping, never in
+  evidence): Everywhere a domain is aggregated, grouped, or compared — the
+  cited-domains league table and its unique-domain count (`/dashboard`),
+  `domain_classifications` lookups, and `is_own_domain` matching — it is
+  lowercased with a leading `www.` stripped first, so `meag.com` and
+  `www.meag.com` are treated as one source
+  (docs/TASKS_PRE_SCHEDULER.md PRE-4). `citations.source_domain` itself is
+  never rewritten: it is evidence of exactly what the provider returned
+  (NFR-6), and `app/services/export.py` exports it to the client raw, in
+  its original form. Subdomains are a deliberate exception — `blog.acme.com`
+  is never unified with `acme.com`, since it is a different source, not a
+  formatting variant of the same one.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 
