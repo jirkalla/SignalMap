@@ -122,6 +122,48 @@ dokumentech; číslo v nich neměň zpětně, řeš to při psaní SCH-0.
     (NFR-6), je to přesně to, co provider vrátil, a `app/services/export.py`
     ji vyváží klientovi jako doklad. Normalizace je **pohled na data**, ne
     data — proto výraz v dotazu, ne UPDATE.
+13. **Boolean `is_test`, ne enum `client_type` — zvažováno a odloženo.**
+    Nabízelo se místo příznaku zavést typ klienta
+    (`production` / `test` / `demo` / `internal`), protože klientský záznam
+    už tak sbírá pole (po plánovači k němu přibude `priority`,
+    `daily_run_limit`, `monthly_budget_usd`). Odloženo: dnes existuje
+    **jedna** otázka — počítat ho do souhrnů, nebo ne — a enum by si
+    vynutil rovnou vymyslet, čím se `demo` liší od `internal`. To je přesně
+    „design for hypothetical future requirements" (AI_INSTRUCTIONS §5).
+    Levným ho dělá decision 3: rozhodnutí je na jednom místě, takže pozdější
+    přechod na enum je jedna migrace a jeden `WHERE`, ne dvacet volajících
+    míst — stejné pravidlo, jaké si repo zapsalo u `can_edit()`.
+    Pozor na rozlišení: „testovací klient" je vlastnost **našeho používání
+    appky**; „prospect / aktivní / bývalý klient" je životní cyklus
+    **obchodu** a do stejného pole nepatří.
+14. **Příznak smí přepnout jen admin, a to samostatnou akcí, ne polem ve
+    formuláři klienta.** Editor klienta založí i edituje (`_editor_or_admin`
+    v `app/routers/clients.py`), ale `is_test` mění, co říkají **všechna**
+    čísla v `/ops`, a to zpětně (decision 15) — rozhodnuto 2026-09-18, že
+    tohle je admin.
+    Forma je **vlastní toggle route** (`POST /clients/{id}/toggle-test`)
+    s odznakem na detailu klienta, podle vzoru `toggle_ai_model_active`
+    (`app/routers/ai_models.py`) a aktivace uživatele (`app/routers/users.py`)
+    — **ne checkbox ve sdíleném formuláři**. Důvod je konkrétní past:
+    neodškrtnutý checkbox se v HTML formuláři neodesílá vůbec, takže kdyby
+    se pole editorovi jen skrylo, jeho první uložení klienta by `is_test`
+    tiše shodilo na false. Samostatná akce tuhle třídu chyby ruší, ne
+    ošetřuje.
+    V šablonách se ptej přes nový helper `can_flag_test_client(user)`
+    v `app/templating.py` vedle `can_edit()`, nikde ne `role == "admin"`
+    natvrdo. Skrytí v UI **nenahrazuje** serverovou kontrolu — route má
+    `require_role("admin")` nezávisle.
+    Praktický důsledek, který je třeba přijmout: dnes je admin **jediný
+    účet** (Philip i Andrew jsou editoři), takže testovacího klienta založí
+    editor a označit ho musí přijít admin. U věci, která se děje párkrát za
+    rok, je to přijatelná cena; kdyby začala vadit, levnější než měnit role
+    je dát `can_flag_test_client()` jinou podmínku — na jednom místě.
+15. **Příznak působí zpětně, ne „od teď".** Filtr se vyhodnocuje při každém
+    dotazu a nikam se nic neukládá, takže označením klienta zmizí z `/ops`
+    **celá jeho historie**, ne jen runy od té chvíle — a odškrtnutím se celá
+    vrátí. Je to správné chování (testovací runy do souhrnů nikdy nepatřily,
+    ani ty včerejší), ale je netriviální a musí být vidět v UI: u přepínače
+    krátká nápověda, že se to týká i minulých runů.
 
 ---
 
@@ -220,12 +262,19 @@ cen u každého modelu dvakrát stejná cena a nikdo nebude vědět proč.
    sloupec zahodí. Model `Client` dostane pole + docstring, který říká, co
    příznak dělá **a co nedělá** (decision 2) — jinak ho někdo za rok použije
    na skrývání klienta ze seznamu.
-2. Formulář klienta (create i edit): checkbox „Testovací klient" s nápovědou
-   „runy tohoto klienta se nezapočítávají do souhrnů v Ops". Reuse maker
-   z `app/templates/partials/macros.html`.
+2. **Samostatná admin akce, ne pole ve formuláři** (decision 14):
+   `POST /clients/{client_id}/toggle-test` s `require_role("admin")`,
+   přepínač na detailu klienta, podle vzoru `toggle_ai_model_active`
+   v `app/routers/ai_models.py`. Formulář klienta (create i edit) se
+   **nemění** — a nesmí `is_test` nijak zapisovat ani nulovat.
+   Nápověda u přepínače řekne obojí: že se runy klienta nepočítají do
+   souhrnů v `/ops`, a že to platí **i zpětně** (decision 15).
+2b. Helper `can_flag_test_client(user)` v `app/templating.py` vedle
+   `can_edit()` + registrace do `templates.env.globals`. V šablonách nikde
+   `role == "admin"` natvrdo (decision 14).
 3. Odznak „Test" v `/clients` a na detailu klienta — vizuálně stejný jazyk
    jako `Active`/`Inactive` u uživatelů v `/users`, ať se to nemusí učit
-   podruhé.
+   podruhé. Odznak vidí **všichni** včetně viewera; přepínat smí jen admin.
 4. `ops_scoped_run_ids_query()` (`app/services/ops_dashboard.py`) dostane
    keyword-only `include_test: bool = False` a při `False` přidá
    `WHERE clients.is_test IS FALSE`. Query dnes joinuje `Prompt` a
@@ -242,16 +291,20 @@ cen u každého modelu dvakrát stejná cena a nikdo nebude vědět proč.
    (decision 5). Když je zapnutý, musí to být na stránce **vidět** i po
    scrollu k tabulkám — ne jen podle stavu jednoho checkboxu nahoře.
 7. Datový krok při nasazení: existujícímu klientovi „Test Skoda Auto"
-   nastavit `is_test = true` (přes UI, ne SQL — je to jedno kliknutí).
+   nastavit `is_test = true` (přes UI pod admin účtem, ne SQL — je to jedno
+   kliknutí).
 8. Testy: agregace bez parametru testovacího klienta nevidí; s
    `include_test=true` ho vidí; součet runů obou variant sedí na celkový
    počet; osa „podle klienta" testovacího klienta v základním stavu
-   nevypíše.
+   nevypíše; **editor dostane na toggle route 403** a **editorova editace
+   klienta příznak nezmění** (regrese na past z decision 14).
 
 **Done when:** `/ops` bez přepínače neobsahuje runy testovacího klienta
 v žádném z pohledů (souhrn, graf, providerři, klienti, uživatelé), s
 přepínačem ano; `/clients` klienta pořád normálně ukazuje s odznakem;
-`pytest` zelený; responsive ~375 / 768 / desktop ověřené v prohlížeči.
+přepínač vidí a použije jen admin, editor na něj dostane 403 a jeho editace
+klienta příznak nezmění; `pytest` zelený; responsive ~375 / 768 / desktop
+ověřené v prohlížeči.
 
 **Expected commit:** `feat(clients): exclude test clients from ops aggregates`
 

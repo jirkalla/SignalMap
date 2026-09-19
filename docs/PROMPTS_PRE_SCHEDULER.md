@@ -64,6 +64,9 @@ CO SE OPRAVUJE:
 KRITICKÉ:
 - is_test skrývá klienta z AGREGACÍ, nikdy ze seznamů (decision 2). Tohle
   není clients.is_active — ten byl vědomě zamítnutý.
+- is_test přepíná JEN ADMIN, a to samostatnou toggle route, ne polem ve
+  formuláři klienta (decision 14). Příznak působí ZPĚTNĚ na celou historii
+  klienta, ne jen na nové runy (decision 15).
 - Filtr patří do JEDNOHO místa: ops_scoped_run_ids_query()
   v app/services/ops_dashboard.py (decision 3). Ne do jednotlivých agregací.
 - /dashboard se nemění — je vždycky zúžený na jednoho klienta (decision 4).
@@ -96,6 +99,15 @@ Nejdřív navrhni CO uděláš + PROČ (AI_INSTRUCTIONS §2: přesné cesty soub
 + zdůvodnění) a počkej na potvrzení, než začneš psát kód.
 
 **Kritické:**
+- **`is_test` se přepíná vlastní admin akcí** `POST /clients/{id}/toggle-test`
+  s `require_role("admin")`, podle vzoru `toggle_ai_model_active`
+  v `app/routers/ai_models.py`. **Do formuláře klienta pole NEPŘIDÁVEJ** —
+  neodškrtnutý checkbox se v HTML neodesílá, takže skryté pole by při první
+  editorově editaci klienta příznak tiše shodilo na false (decision 14).
+  V šablonách se ptej přes nový `can_flag_test_client()` v
+  `app/templating.py`, nikde `role == "admin"` natvrdo.
+- Nápověda u přepínače musí říct, že filtr platí **i zpětně** — označením
+  klienta zmizí z `/ops` celá jeho historie, ne jen nové runy (decision 15).
 - `ops_scoped_run_ids_query()` dostane **keyword-only `include_test: bool =
   False`**. Výchozí `False` znamená, že volající místo, které na parametr
   zapomene, je pořád chráněné — ne naopak.
@@ -116,10 +128,13 @@ Nejdřív navrhni CO uděláš + PROČ (AI_INSTRUCTIONS §2: přesné cesty soub
 1. `docker compose up -d --build`
 2. `docker compose exec app alembic upgrade head`, pak `downgrade -1`, pak
    znovu `upgrade head` — obojí bez ruční opravy.
-3. V prohlížeči: založit testovacího klienta, spustit na něm run (model
-   `gemini-3.1-flash-lite`, klienta a prompt podle mého zadání), pak na
-   `/ops` ověřit, že se v souhrnu **neobjeví**, a s přepínačem že **objeví**.
-   Projdi všech pět pohledů, ne jen KPI dlaždice.
+3. V prohlížeči: založit testovacího klienta, označit ho pod **admin**
+   účtem, spustit na něm run (model `gemini-3.1-flash-lite`, klienta a
+   prompt podle mého zadání), pak na `/ops` ověřit, že se v souhrnu
+   **neobjeví**, a s přepínačem že **objeví**. Projdi všech pět pohledů, ne
+   jen KPI dlaždice.
+3b. Pod editorem: přepínač není vidět, POST na toggle route vrátí 403, a po
+   editaci klienta zůstane `is_test` beze změny.
 4. `/clients` — klient je pořád vidět, s odznakem.
 5. `pytest -v`
 6. Responsive ~375 / 768 / desktop na `/ops` (s přepínačem i bez) a na
