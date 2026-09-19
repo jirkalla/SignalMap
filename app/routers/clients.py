@@ -21,6 +21,11 @@ from app.utils import unique_slugify
 # everything on this router, but not change anything.
 _editor_or_admin = [Depends(require_role("admin", "editor"))]
 
+# Narrower than _editor_or_admin, and used by exactly one route below (docs/TASKS_PRE_SCHEDULER.md
+# design decision 14): marking a client as a test client rewrites every figure on /ops for that
+# client's entire history, which is an admin decision even though ordinary client editing is not.
+_admin_only = [Depends(require_role("admin"))]
+
 router = APIRouter(prefix="/clients", tags=["clients"])
 
 
@@ -201,6 +206,28 @@ def update_client(
     client.industry = industry.strip() or None
     client.notes = notes.strip() or None
     client.domain = domain.strip().lower() or None
+    db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/toggle-test", dependencies=_admin_only)
+def toggle_client_test(request: Request, client_id: int, db: Session = Depends(get_db)):
+    """Flip a client's `is_test` flag — whether its runs count into the `/ops` aggregates.
+
+    Admin-only, and deliberately its own action rather than a field on the client form: an
+    unchecked HTML checkbox is not submitted at all, so a hidden-from-editors field on the shared
+    form would silently reset the flag to false the first time an editor saved that client
+    (docs/TASKS_PRE_SCHEDULER.md design decision 14). A separate route removes that class of bug
+    instead of guarding against it.
+
+    Takes effect on the client's WHOLE history, not just runs from now on: the flag is applied as a
+    filter when each ops query runs and is never written onto a run, so turning it on drops every
+    past run of this client out of the `/ops` totals and turning it off brings them all back
+    (design decision 15). Never touches evidence — no run, raw response or citation is modified,
+    and the client stays fully visible in `/clients` and on `/dashboard` either way.
+    """
+    client = _get_client_or_404(db, request, client_id)
+    client.is_test = not client.is_test
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 

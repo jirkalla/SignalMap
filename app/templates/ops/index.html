@@ -15,6 +15,23 @@
     </div>
   </div>
 
+  {# Test-data toggle (docs/TASKS_PRE_SCHEDULER.md PRE-1). Off by default — a flagged client's runs
+     are validation traffic, not client work, and counting them inflates run volume and the cost
+     estimate the service is priced from. Its state is mirrored into the page URL so the view can
+     be linked to a colleague (design decision 5). #}
+  <div class="flex items-center gap-2 mb-2">
+    <button type="button" @click="filters.includeTest = !filters.includeTest"
+            :class="filters.includeTest ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-white text-stone-600 border-stone-300'"
+            class="px-3 py-1 rounded-full text-xs font-medium border">{{ t('ops.include_test') }}</button>
+  </div>
+
+  {# Sticky, because the toggle above scrolls out of sight long before the reader reaches the
+     client/user tables — and a number that silently includes test runs is exactly the kind of
+     thing that gets screenshotted and quoted (PRE-1 step 6). #}
+  <div v-if="filters.includeTest" class="sticky top-0 z-10 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg px-3 py-2 mb-4">
+    {{ t('ops.include_test_banner') }}
+  </div>
+
   {# Error banner — a failed /ops/api/* request (session expired, transient 500) surfaces here
      instead of silently rendering garbled/NaN tiles from a swallowed error (code review finding). #}
   <div v-if="loadError" class="bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-lg px-4 py-3 mb-4">
@@ -384,7 +401,12 @@
   const app = createApp({
     setup() {
       const ranges = ['7d', '30d', '90d', 'all'].map((value) => ({ value, label: rangeLabels[value] }));
-      const filters = reactive({ range: '30d' });
+      // Seeded from the URL so a shared /ops link reproduces the same view (design decision 5).
+      // Only include_test is carried this way; `range` keeps its existing in-memory-only behavior.
+      const filters = reactive({
+        range: '30d',
+        includeTest: new URLSearchParams(window.location.search).get('include_test') === '1',
+      });
       const drill = reactive({
         level: 'global',
         clientId: null, clientName: null,
@@ -408,7 +430,19 @@
       function baseParams() {
         const p = new URLSearchParams();
         p.set('range', filters.range);
+        // Sent on every request, including the ones whose endpoint re-derives its own narrowed
+        // query server-side — the summary and the table under it must never disagree about scope.
+        if (filters.includeTest) p.set('include_test', '1');
         return p;
+      }
+
+      // The page URL follows the toggle, so the address bar always describes what is on screen.
+      // replaceState, not pushState: flipping a filter shouldn't make Back mean "untoggle".
+      function syncUrl() {
+        const url = new URL(window.location.href);
+        if (filters.includeTest) url.searchParams.set('include_test', '1');
+        else url.searchParams.delete('include_test');
+        window.history.replaceState(null, '', url);
       }
 
       async function fetchJson(path, params) {
@@ -496,9 +530,10 @@
       }
 
       watch(
-        () => [drill.level, drill.clientId, drill.promptSetId, drill.promptId, drill.userId, drill.isScheduler, filters.range],
+        () => [drill.level, drill.clientId, drill.promptSetId, drill.promptId, drill.userId, drill.isScheduler, filters.range, filters.includeTest],
         fetchAll
       );
+      watch(() => filters.includeTest, syncUrl);
       onMounted(fetchAll);
 
       function resetDrill(overrides) {

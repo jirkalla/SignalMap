@@ -16,7 +16,7 @@ from app.auth import current_user_from_cookie
 from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
 
-__all__ = ["can_edit", "get_t", "render", "templates"]
+__all__ = ["can_edit", "can_flag_test_client", "get_t", "render", "templates"]
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -33,6 +33,25 @@ def can_edit(user: "User | None") -> bool:
 
 
 templates.env.globals["can_edit"] = can_edit
+
+
+def can_flag_test_client(user: "User | None") -> bool:
+    """True for a logged-in admin — whether this user may mark a client as a test client.
+
+    Deliberately narrower than `can_edit()`: an editor creates and edits clients, but `is_test`
+    changes what every number on `/ops` says, retroactively across the client's whole history
+    (docs/TASKS_PRE_SCHEDULER.md design decisions 14 and 15), so flipping it is an admin action
+    even though everything else about the client is not. Kept as its own helper rather than an
+    inline `role == "admin"` in the templates for the same reason `can_edit` exists — if this ever
+    needs to widen to editors, it widens in one place.
+
+    Display only, same caveat as `can_edit` — the real enforcement is `require_role("admin")` on
+    the toggle route itself (app/routers/clients.py).
+    """
+    return user is not None and user.role == "admin"
+
+
+templates.env.globals["can_flag_test_client"] = can_flag_test_client
 
 # The two Unicode line-terminator characters a JSON string may legally contain but a raw JS
 # string literal may not — see _tojson_filter's docstring. Built via chr() rather than typed as

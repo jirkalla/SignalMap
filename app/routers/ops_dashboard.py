@@ -4,9 +4,11 @@ into cost, latency, and errors across every client, never a client-facing report
 boundary (admin/editor only, never viewer — enforced here, not just hidden in the UI), and every
 aggregation scopes over all runs regardless of status, not just successful ones.
 
-Every endpoint takes the same optional `range`/`client_id`/`prompt_set_id`/`prompt_id`/`user_id`
-filter set, resolved once per request by the `_ops_scope` dependency below, mirroring
-app/routers/dashboard.py's `_dashboard_scope` pattern.
+Every endpoint takes the same optional `range`/`client_id`/`prompt_set_id`/`prompt_id`/`user_id`/
+`include_test` filter set, resolved once per request by the `_ops_scope` dependency below, mirroring
+app/routers/dashboard.py's `_dashboard_scope` pattern. No endpoint here may quietly ignore one of
+them: two views on the same page disagreeing about what is in scope is worse than having no filter
+at all (docs/TASKS_PRE_SCHEDULER.md PRE-1 step 5).
 """
 
 from dataclasses import dataclass
@@ -40,6 +42,12 @@ _USER_ID_QUERY = Query(
     None,
     description='Restrict to one user\'s runs: a numeric user id, or the literal "scheduler" for '
     "scheduler-triggered runs (trigger_type='scheduled' with no human behind them). Omitted: every user.",
+)
+_INCLUDE_TEST_QUERY = Query(
+    False,
+    description="Count clients flagged `is_test` into these figures too. Default false: runs made while "
+    "validating the app against real providers are not real client work and would inflate run volume and "
+    "the cost estimate. Applies to a flagged client's whole history, not just its recent runs.",
 )
 
 
@@ -84,6 +92,7 @@ class OpsScope:
     client_id: int | None
     prompt_set_id: int | None
     prompt_id: int | None
+    include_test: bool
 
 
 def _ops_scope(
@@ -93,6 +102,7 @@ def _ops_scope(
     prompt_set_id: int | None = _PROMPT_SET_ID_QUERY,
     prompt_id: int | None = _PROMPT_ID_QUERY,
     user_id: str | None = _USER_ID_QUERY,
+    include_test: bool = _INCLUDE_TEST_QUERY,
     db: Session = Depends(get_db),
 ) -> OpsScope:
     """Resolve the shared range/client/prompt-set/prompt/user filter set into one `OpsScope`.
@@ -102,6 +112,12 @@ def _ops_scope(
     `app/routers/dashboard.py`'s optional `market_id`/`provider_id` behave. The identifying-resource
     endpoints below (`prompt-detail`, `user-detail`, and the `client_id`/`prompt_set_id` required by
     `prompt-sets`/`prompts`) validate existence themselves before calling into this dependency.
+
+    `include_test` is carried on the resolved scope as well as being applied to `run_ids_query`,
+    because three endpoints below (`prompt-sets`, `prompts`, `user-detail`) re-derive a narrowed
+    query of their own rather than using `run_ids_query` — they have to pass it through explicitly,
+    or the same page would show a filtered summary above an unfiltered table
+    (docs/TASKS_PRE_SCHEDULER.md PRE-1 step 5).
     """
     date_from, date_to = range_bounds(range)
     resolved_user_id, is_scheduler = _resolve_user_filter(request, user_id)
@@ -113,6 +129,7 @@ def _ops_scope(
         prompt_id=prompt_id,
         user_id=resolved_user_id,
         is_scheduler=is_scheduler,
+        include_test=include_test,
     )
     return OpsScope(
         run_ids_query=run_ids_query,
@@ -122,6 +139,7 @@ def _ops_scope(
         client_id=client_id,
         prompt_set_id=prompt_set_id,
         prompt_id=prompt_id,
+        include_test=include_test,
     )
 
 
@@ -266,7 +284,9 @@ def ops_prompt_sets(
     first level of the client/prompt-set/prompt drill-down (design decision 3).
     """
     _get_client_or_404(db, request, client_id)
-    narrowed = ops_service.ops_scoped_run_ids_query(scope.date_from, scope.date_to, client_id=client_id)
+    narrowed = ops_service.ops_scoped_run_ids_query(
+        scope.date_from, scope.date_to, client_id=client_id, include_test=scope.include_test
+    )
     return [OpsPromptSetRow(**vars(row)) for row in ops_service.prompt_set_ops_rows(db, narrowed)]
 
 
@@ -289,7 +309,9 @@ def ops_prompts(
     run, ranked by total cost — the second level of the drill-down.
     """
     _get_prompt_set_or_404(db, request, prompt_set_id)
-    narrowed = ops_service.ops_scoped_run_ids_query(scope.date_from, scope.date_to, prompt_set_id=prompt_set_id)
+    narrowed = ops_service.ops_scoped_run_ids_query(
+        scope.date_from, scope.date_to, prompt_set_id=prompt_set_id, include_test=scope.include_test
+    )
     return [OpsPromptRow(**vars(row)) for row in ops_service.prompt_ops_rows(db, prompt_set_id, narrowed)]
 
 
@@ -439,7 +461,8 @@ def ops_user_detail(
         user_name = user.name
 
     narrowed = ops_service.ops_scoped_run_ids_query(
-        scope.date_from, scope.date_to, user_id=resolved_user_id, is_scheduler=is_scheduler
+        scope.date_from, scope.date_to, user_id=resolved_user_id, is_scheduler=is_scheduler,
+        include_test=scope.include_test,
     )
     by_client = ops_service.client_ops_rows(db, narrowed)
     runs = ops_service.recent_runs(db, narrowed, with_client_name=True)
