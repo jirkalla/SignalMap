@@ -1,10 +1,16 @@
 # SignalMap — Claude Code Session Prompts: Scheduler
 
-## v1.0 | Září 2026
+## v1.1 | Září 2026
+##
+## v1.1 (2026-09-18) — revize po zpětné vazbě od Philipa. Přibyl prompt
+## SCH-5b (set-level rozvrh) a do SCH-0/1/5/8/10 povinné ukončení rozvrhu,
+## multi-select modelů a person, měsíční rozpočet klienta a rozšíření
+## indexu z migrace 0024. Design decisions 31-35 v TASKS_SCHEDULER.md.
 ##
 ## JAK POUŽÍVAT:
 ## 1. git checkout -b feature/signalmap-scheduler (z aktuálního master)
-## 2. Dvanáct kódových promptů (SCH-0 až SCH-11), POŘADÍ VYNUCENÉ — viz
+## 2. Třináct kódových promptů (SCH-0 až SCH-11 včetně SCH-5b), POŘADÍ
+##    VYNUCENÉ — viz
 ##    docs/TASKS_SCHEDULER.md "Task Index" pro odůvodnění (SCH-1 a SCH-2 jsou
 ##    nezávislé stavební kameny, které SCH-3 potřebuje oba; SCH-4 bez SCH-3
 ##    nemá co spouštět; SCH-5 zakládá data, která SCH-6 zobrazuje).
@@ -31,12 +37,19 @@
 ##     člověka u klávesnice. Dvě idempotence (decisions 12 a 13) a dry-run
 ##     (decision 15) nejsou "nice to have" — jsou důvod, proč je bezpečné to
 ##     vůbec pustit. Pokud by kterýkoliv krok znamenal je obejít, ZASTAV.
+## 10b. ČÍSLO MIGRACE. docs/TASKS_PRE_SCHEDULER.md si bere 0029 a jde před
+##     touhle větví. Pokud je smergnutá dřív, je plánovačova migrace 0030 —
+##     ne 0029, jak je psáno v SCH-0 a v TASKS dokumentu. Ověř to při SCH-0.
 ## 11. SCHEDULER_DRY_RUN zůstává zapnutý až do dokončení SCH-10 (stropy).
 ##     Ostrý provoz zapíná uživatel, ne agent.
-## 12. Evidence se nikdy nepřepisuje (NFR-6). Run/RawResponse/Citation se
+## 12. ŽÁDNÝ ROZVRH BEZ KONCE (decision 31). `CHECK (num_nonnulls(ends_on,
+##     max_occurrences) = 1)` je v databázi, ne jen ve formuláři. Pokud by
+##     kterýkoliv krok znamenal ho obejít nebo zavést "nekonečný" rozvrh —
+##     ZASTAV. Zapomenutý věčný rozvrh utrácí tiše dál.
+## 13. Evidence se nikdy nepřepisuje (NFR-6). Run/RawResponse/Citation se
 ##     jen vkládají; historie ve frontě (skipped/error řádky) se taky
 ##     nepřepisuje — opakování vytváří NOVOU položku, ne úpravu staré.
-## 13. Až je větev hotová a smergnutá: doplnit do docs/TASKS.md odkaz na
+## 14. Až je větev hotová a smergnutá: doplnit do docs/TASKS.md odkaz na
 ##     tuhle větev a upravit docs/ROADMAP.md §5 (viz Completion Checklist
 ##     v TASKS_SCHEDULER.md).
 
@@ -90,6 +103,14 @@ KRITICKÉ:
   klasifikovat jako pseudo-uživatele "Scheduler". NEMĚNIT to tak, aby se
   run přiřadil člověku, co rozvrh založil.
 - SCHEDULER_DRY_RUN je zapnutý po celou dobu vývoje větve.
+- Každý rozvrh má POVINNÝ konec: datum (`ends_on`) nebo počet opakování
+  (`max_occurrences`), přesně jedno z nich, vynuceno CHECK constraintem
+  (decision 31). Nejzazší datum se řídí frekvencí: denně 30 dní, týdně
+  6 měsíců, měsíčně 12 měsíců.
+- Rozvrh míří na víc modelů i víc person (`model_ids`, `persona_ids` —
+  decision 34) a od SCH-5b i na celý prompt set (decision 32). Násobení je
+  proto trojí a odhad ve formuláři je jediná ochrana před překvapením.
+- `clients.is_active` se NEPŘIDÁVÁ (zvažováno a zamítnuto 2026-09-18).
 ```
 
 ---
@@ -100,8 +121,18 @@ KRITICKÉ:
 Viz `docs/TASKS_SCHEDULER.md` T0 pro plný seznam cílových souborů a kroků,
 a sekci "Nové schéma (migrace 0029)" pro přesný tvar tabulek. Shrnutí:
 čtyři nové tabulky (`run_schedules`, `run_queue`, `worker_heartbeats`,
-`notification_outbox`), sloupec `clients.priority`, tři indexy na frontě
-včetně partial indexu pro výběr.
+`notification_outbox`), tři sloupce na `clients` (`priority`,
+`daily_run_limit`, `monthly_budget_usd`), tři indexy na frontě včetně
+partial indexu pro výběr.
+
+**Ve v1.1 navíc:** sloupce ukončení na `run_schedules` (`starts_on`,
+`ends_on`, `max_occurrences`, `occurrences_count`) s CHECK constraintem
+(decision 31), `persona_ids` jako pole místo `persona_id` (decision 34),
+unikátní klíč fronty přes PĚT sloupců
+`(schedule_id, scheduled_for, prompt_id, model_id, persona_id)` místo dvou
+(decision 12 ve znění v1.1 — jinak by z 225 položek jednoho okna prošla
+jedna), a **rozšíření existujícího** `idx_runs_one_pending_per_prompt_model`
+na `(prompt_id, model_id, persona_id, market_id)` (decision 35).
 
 Nejdřív navrhni CO uděláš + PROČ (AI_INSTRUCTIONS.md §2: přesné cesty
 souborů + zdůvodnění proti T0 v TASKS dokumentu) a počkej na potvrzení, než
@@ -118,7 +149,12 @@ zapsal u `idx_runs_one_pending_per_prompt_model`.
 2. `docker compose exec app alembic upgrade head`, pak `downgrade -1`, pak
    znovu `upgrade head` — obojí musí projít bez ruční opravy.
 3. V psql: `\d run_queue` — ověřit partial index `WHERE status = 'queued'`
-   a unique constraint na `(schedule_id, scheduled_for)`.
+   a pětisloupcový unique constraint. `\d runs` — ověřit, že rozšířený
+   `idx_runs_one_pending_per_prompt_model` má čtyři sloupce a pořád má
+   `WHERE status = 'pending'`.
+3b. `\d run_schedules` — ověřit CHECK na ukončení: pokus vložit rozvrh
+   s `ends_on IS NULL AND max_occurrences IS NULL` musí selhat, stejně tak
+   s oběma vyplněnými.
 4. `pytest -v` (existující sada nesmí spadnout na nových modelech)
 5. Implementation summary + navrhni commit message (nespouštěj git)
 
@@ -155,6 +191,13 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
   local → UTC → local a normalizuj vědomě, nespoléhej na náhodu.
 - Měsíční rozvrh na den nad délku měsíce → ořez na poslední den, ne
   přeskočení měsíce.
+- **Konec rozvrhu (decision 31):** funkce vrací `None`, když by další
+  termín byl po `ends_on` nebo když `occurrences_count >= max_occurrences`.
+  `None` znamená pro ticker "rozvrh doběhl" → `is_active = false`,
+  `inactive_reason = 'completed'`, `next_run_at = NULL`. Termín přesně
+  v den `ends_on` se ještě vykoná.
+- Přidej i `max_end_date(frequency, *, starts_on)` pro formulář (denně
+  30 dní, týdně 6 měsíců, měsíčně 12 měsíců) — taky čistá funkce.
 
 Referenční ověřená čísla pro testy (Europe/Prague):
 ```
@@ -332,19 +375,29 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
   `require_role("admin", "editor")` nezávisle.
 - Pole `timezone` se ve formuláři **nezobrazuje**, ale ukládá
   (`Europe/Prague`) — decision 7.
-- V1 jen `target_type='prompt'`. Set-level rozvrhy sem NEPATŘÍ, i když
-  schéma je na ně připravené (decision 24).
+- **Konec rozvrhu je povinný** (decision 31): přepínač "konec datem" /
+  "konec počtem opakování", validace v routeru přes `AppError`, ne jen
+  `required` v HTML. Horní mez data podle frekvence z `max_end_date()`
+  (SCH-1). Do UI napiš PROČ — jinak to vypadá jako šikana formuláře.
+- Modely i persony jsou **multi-select** (decision 34), ne jedna hodnota.
+- V SCH-5 jen `target_type='prompt'`. Set-level je samostatný prompt
+  SCH-5b hned za tímhle — nedělej obojí v jedné session.
 - Delete guard: `data-confirm="{{ t('schedules.delete_confirm') }}"` přes
   sdílený delegovaný listener v `base.html`, **nikdy**
   `onsubmit="return confirm('...')"` — rozbije se na apostrofu v překladu.
 - Náhled příštích pěti termínů + odhad ceny přímo ve formuláři
-  (decision 29), jako HTMX partial. Žádný nový JS framework.
+  (decision 29), jako HTMX partial. Žádný nový JS framework. Odhad má
+  **dvě čísla i počet runů**: za jedno okno a za celý rozvrh do konce
+  (decision 34) — to druhé jde spočítat právě proto, že konec je povinný.
 
 **Po dokončení:**
 1. `docker compose up -d --build`
 2. V prohlížeči: založit rozvrh na promptu, ověřit že náhled termínů
    odpovídá pravidlu (zkontroluj i "2× týdně"); upravit; pozastavit;
    smazat (s potvrzením).
+2b. Zkusit uložit rozvrh bez konce → musí to odmítnout se srozumitelnou
+   hláškou (ne 500). Založit rozvrh "denně, 3 opakování" a ověřit, že
+   náhled ukáže právě tři termíny a pak konec.
 3. Přihlásit se jako viewer → 403 na `/schedules/new` i na POST routách.
 4. Responsive ~375 / 768 / desktop na formuláři i na seznamu.
 5. `pytest -v`
@@ -353,6 +406,50 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 **Expected commit:**
 ```
 feat(scheduler): add schedule CRUD with occurrence and cost preview
+```
+
+### (sem dopiš DONE — commit {hash} až bude hotovo)
+
+---
+
+## SCH-5b — Set-level rozvrh (celý prompt set)
+
+Viz `docs/TASKS_SCHEDULER.md` T5b a decision 32. Shrnutí: volba "celý
+prompt set" ve formuláři rozvrhu, rozstřel okna na prompty × modely ×
+persony se společným `batch_id`.
+
+Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
+
+**Kritické — tohle je prompt, kde se z jednoho kliknutí stanou stovky
+placených volání:**
+1. Prompty setu se resolvují **až při zařazení** (decision 6), ne při
+   založení rozvrhu — prompt přidaný do setu příští týden se zahrne sám.
+   Neaktivní prompt se přeskočí bez chyby (decision 18).
+2. Idempotence je pětisloupcová
+   `(schedule_id, scheduled_for, prompt_id, model_id, persona_id)`.
+   **Ověř, že to migrace z SCH-0 opravdu takhle má** — s dvousloupcovým
+   klíčem by z 225 položek okna prošla jedna, a při restartu tickeru
+   uprostřed rozstřelu by se dávka založila podruhé.
+3. Odhad ve formuláři musí ukázat celé násobení: "25 promptů × 3 modely ×
+   3 persony = 225 runů na okno, 7 oken, odhadem $X". Je to jediná
+   ochrana, kterou uživatel uvidí **před** uložením.
+4. Strop hloubky fronty (SCH-10) se kontroluje **před** rozstřelem, ne po
+   něm — jinak se 225 položek vloží a teprve pak se zjistí, že se nevešly.
+5. Na `/schedules` je dávka **jeden řádek s rozpadem** podle `batch_id`,
+   ne 225 samostatných řádků historie.
+
+**Po dokončení:**
+1. `pytest -v` — vč. testu, že rozstřel dá přesně N × M × P položek se
+   shodným `batch_id` a že opakované zařazení téhož okna nic nezduplikuje.
+2. V prohlížeči (pořád v dry-runu): založit rozvrh na prompt setu podle
+   mého zadání, ověřit počet položek ve frontě proti číslu z odhadu.
+3. Přidat prompt do setu a ověřit, že se v dalším okně zahrne.
+4. Responsive ~375 / 768 / desktop na formuláři se set-level volbou.
+5. Implementation summary + navrhni commit message (nespouštěj git)
+
+**Expected commit:**
+```
+feat(scheduler): add prompt-set level schedules
 ```
 
 ### (sem dopiš DONE — commit {hash} až bude hotovo)
@@ -434,7 +531,12 @@ feat(scheduler): add queue retry and cancel actions
 
 Viz `docs/TASKS_SCHEDULER.md` T8. Shrnutí: `app/services/notifications.py`
 s `notify()`, balíček kanálů `app/notifications/` (`base.py`, `inapp.py`),
-zapojení pěti událostí, in-app zobrazení na `/schedules`.
+zapojení sedmi událostí, in-app zobrazení na `/schedules`.
+
+**Ve v1.1 navíc dvě události:** `schedule.expiring_soon` (7 dní nebo
+3 výskyty před koncem — pojistka proti tomu, aby sběr dat tiše skončil,
+decision 31) a `budget.threshold_exceeded` (měsíční rozpočet klienta,
+decision 33 — **neblokuje**, jen upozorní).
 
 Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 
@@ -444,6 +546,10 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
   (decision 25).
 - **SMTP kanál v této větvi NEPIŠ.** Appka nemá SMTP server. Smyslem
   outboxu je, že se do té doby nic neztratí — ne aby ses pokoušel doručovat.
+  Do `.env.example` ale dej prázdné `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER`
+  / `SMTP_FROM` s komentářem, že kanál zatím neexistuje, a do `base.py`
+  zapiš, že se při zapnutí doručovatele **nahromaděná historie
+  nedoručuje** (starší položky → `suppressed`).
 - Chybové události se budou jednou posílat jako **denní souhrn**, ne po
   jedné (40 e-mailů při výpadku providera si lidi odfiltrují do koše).
   Zapiš to do rozhraní/dokumentace, i když dnes doručovatel neexistuje.
@@ -497,8 +603,14 @@ feat(scheduler): pause schedules when their owner is deactivated
 ## SCH-10 — Stropy: kvóty, hloubka fronty, souběh
 
 Viz `docs/TASKS_SCHEDULER.md` T10. Shrnutí: denní limit runů na klienta,
-strop hloubky fronty, semafor souběhu na providera, admin UI pro prioritu
-a limit klienta.
+měsíční finanční hranice, strop hloubky fronty, semafor souběhu na
+providera, admin UI pro prioritu a limity klienta.
+
+**Dva stropy, každý na jinou práci (decision 33):** denní limit runů
+**blokuje** a vynucuje se v `run_execution.py`; měsíční rozpočet
+(`clients.monthly_budget_usd`) **neblokuje**, jen vyvolá
+`budget.threshold_exceeded` — skutečnou cenu runu známe až po něm, takže
+zastavovat na odhadu by shodilo běžící benchmark kvůli nepřesnosti.
 
 Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 
@@ -514,6 +626,8 @@ ověření můžeš (ty, ne agent) vypnout `SCHEDULER_DRY_RUN`.
 1. Nastavit testovacímu klientovi denní limit 2, spustit 3 runy → třetí
    `skipped`/`quota_exceeded` + oznámení.
 2. Ruční trigger při vyčerpaném limitu → 409 se srozumitelnou hláškou.
+2b. Nastavit testovacímu klientovi měsíční rozpočet pod jeho dosavadní
+   útratu → vznikne **jedno** oznámení a runy **běží dál**.
 3. `pytest -v`
 4. Implementation summary + navrhni commit message (nespouštěj git)
 

@@ -7,6 +7,7 @@ Client/Prompt/PromptSet (HD-T4): `runs.model_id` has no ondelete, so a model
 referenced by any Run can only be deactivated, never deleted.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
@@ -66,29 +67,73 @@ def _provider_options(db: Session) -> list[tuple[int, str]]:
     return [(p.id, p.name) for p in providers]
 
 
-def _price_history_rows(model: AIModel) -> list[tuple[AIModelPriceComponent, datetime | None]]:
-    """Pair each of `model`'s price component rows (already newest-first via the relationship's
-    own `order_by`) with its computed validity end, computed independently PER `component_type`.
+@dataclass
+class PriceSpan:
+    """One continuous stretch of time during which a component cost the same, for display only.
 
-    `ai_model_price_components` stores only `effective_from` (same reasoning as the now-dropped
-    `ai_model_price_history`, see migration 0020's docstring) — a row's "valid until" is always
-    the next-newer row's `effective_from` *for that same component_type*, or `None` (still in
-    effect today) for that type's newest row. Computed within each type, not across all of them,
-    so a price change to `input` doesn't make an unrelated `cache_read` row look like it just
-    expired (docs/TASKS_COST_COMPONENTS.md CC-3 step 5). Computed here over the already-loaded
-    list, not a second query.
+    Not a database row: several `ai_model_price_components` rows collapse into one span when they
+    carry the same price back to back (see `_price_history_rows`).
     """
-    components = model.price_components  # newest-first overall, per the relationship's order_by
+
+    component_type: str
+    price_per_unit_usd: Decimal
+    valid_from: datetime
+    valid_until: datetime | None
+
+
+def _price_history_rows(model: AIModel) -> list[tuple[str, list[PriceSpan]]]:
+    """`model`'s price history as `(component_type, spans)` groups, newest span first within each.
+
+    Two deliberate differences from a plain listing of `ai_model_price_components`, both because a
+    raw listing turned out to be actively misleading once backdating existed (reported from the
+    edit page, 2026-09-19):
+
+    **Grouped by component type, not interleaved by date.** A row's "valid until" is the next-newer
+    row's `effective_from` *for its own component_type* — so the newest row of every type is
+    current, and a model with input, output and cache_read prices legitimately has three rows
+    reading "current" at once. Sorted by date across all types, as this used to be, those three
+    look like three competing answers to one question instead of today's price of three different
+    things. Computed per type either way (docs/TASKS_COST_COMPONENTS.md CC-3 step 5), so a change
+    to `input` never makes an untouched `cache_read` row look expired.
+
+    **Adjacent rows with the same price are merged into one span.** Backdating writes a row even
+    when the value equals the one already in effect — it has to, since "this price also applied
+    last week" is information the database did not previously hold (docs/TASKS_PRE_SCHEDULER.md
+    design decision 7). Displayed one row per record, that draws a boundary at the moment the
+    price was *entered*, where the price itself did not change, and a reader stops to look for a
+    change that isn't there. The records are all kept; only the timeline is coalesced, which is the
+    usual convention for showing a versioned value to a human.
+
+    Groups follow `COMPONENT_TYPES` order rather than the data's own, so the list reads the same
+    way on every model regardless of which components it happens to price.
+    """
     rows_by_type: dict[str, list[AIModelPriceComponent]] = {}
-    for component in components:
+    for component in model.price_components:  # newest-first overall, per the relationship's order_by
         rows_by_type.setdefault(component.component_type, []).append(component)
 
-    valid_until: dict[int, datetime | None] = {}
-    for rows in rows_by_type.values():
+    groups: list[tuple[str, list[PriceSpan]]] = []
+    for component_type in COMPONENT_TYPES:
+        rows = rows_by_type.get(component_type)
+        if not rows:
+            continue
+        spans: list[PriceSpan] = []
         for i, row in enumerate(rows):
-            valid_until[row.id] = rows[i - 1].effective_from if i > 0 else None
-
-    return [(row, valid_until[row.id]) for row in components]
+            if spans and spans[-1].price_per_unit_usd == row.price_per_unit_usd:
+                # Same price as the span above: this older row just extends it further back. Its
+                # own valid_until is dropped on purpose — that is the boundary being merged away.
+                spans[-1].valid_from = row.effective_from
+                continue
+            spans.append(
+                PriceSpan(
+                    component_type=component_type,
+                    price_per_unit_usd=row.price_per_unit_usd,
+                    valid_from=row.effective_from,
+                    # None for the newest row of this type: still in effect today.
+                    valid_until=rows[i - 1].effective_from if i > 0 else None,
+                )
+            )
+        groups.append((component_type, spans))
+    return groups
 
 
 def _price_form_fields(prices: dict[str, str]) -> dict[str, str]:
@@ -434,7 +479,7 @@ def update_ai_model(
             "supports_web_search": supports_web_search,
             "notes": notes,
             "created_at": model.created_at,
-        }
+            }
         return render(
             request,
             "ai_models/form.html",

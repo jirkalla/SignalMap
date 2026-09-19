@@ -675,3 +675,139 @@ def test_provider_rows_include_token_totals(authed_client: TestClient, db_sessio
     assert len(rows) == 1
     assert rows[0]["total_input_tokens"] == 57
     assert rows[0]["total_output_tokens"] == 1061
+
+
+# --- PRE-1: test clients are excluded from the ops aggregates ------------------------------------
+
+
+@pytest.fixture
+def two_clients_one_flagged(db_session: Session, seed: dict) -> dict:
+    """One ordinary client and one flagged `is_test`, each with a successful run on the same model.
+
+    Priced, so the exclusion can be checked on `total_cost_usd` too — the figure the whole point of
+    the flag hangs on (docs/TASKS_PRE_SCHEDULER.md PRE-1) — not just on run counts.
+    """
+    _price(db_session, seed["model"], 0.001, 0.002)
+    real_client, real_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    test_client, test_set = _client_with_prompt_set(db_session, "Test Acme", "test-acme")
+    test_client.is_test = True
+    db_session.commit()
+
+    now = datetime.now(timezone.utc)
+    common = dict(
+        model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=now - timedelta(days=1), input_tokens=1000, output_tokens=500,
+    )
+    real_prompt = _make_prompt(db_session, real_set, seed["market"].id, "Real prompt?")
+    test_prompt = _make_prompt(db_session, test_set, seed["market"].id, "Test prompt?")
+    _make_run(db_session, real_prompt, **common)
+    _make_run(db_session, test_prompt, **common)
+    return {
+        "real_client": real_client, "test_client": test_client,
+        "real_prompt": real_prompt, "test_prompt": test_prompt,
+        "real_set": real_set, "test_set": test_set,
+    }
+
+
+def test_summary_excludes_test_client_by_default(authed_client: TestClient, two_clients_one_flagged: dict):
+    body = authed_client.get("/ops/api/summary?range=30d").json()
+    assert body["runs_count"] == 1
+    assert body["total_cost_usd"] == pytest.approx(0.002, abs=1e-9)
+
+
+def test_summary_includes_test_client_on_request(authed_client: TestClient, two_clients_one_flagged: dict):
+    body = authed_client.get("/ops/api/summary?range=30d&include_test=1").json()
+    assert body["runs_count"] == 2
+    assert body["total_cost_usd"] == pytest.approx(0.004, abs=1e-9)
+
+
+def test_excluded_and_included_run_counts_reconcile(authed_client: TestClient, two_clients_one_flagged: dict):
+    """The two views must account for every run between them — no run silently dropped by both."""
+    without = authed_client.get("/ops/api/summary?range=30d").json()["runs_count"]
+    with_test = authed_client.get("/ops/api/summary?range=30d&include_test=1").json()["runs_count"]
+    assert without == 1 and with_test == 2
+    assert with_test - without == 1  # exactly the flagged client's runs, nothing else moved
+
+
+def test_client_axis_omits_test_client_by_default(authed_client: TestClient, two_clients_one_flagged: dict):
+    names = [r["client_name"] for r in authed_client.get("/ops/api/clients?range=30d").json()]
+    assert names == ["Acme"]
+
+    names_with_test = [r["client_name"] for r in authed_client.get("/ops/api/clients?range=30d&include_test=1").json()]
+    assert sorted(names_with_test) == ["Acme", "Test Acme"]
+
+
+def test_daily_providers_and_users_axes_all_honour_the_flag(authed_client: TestClient, two_clients_one_flagged: dict):
+    """Every remaining global-view axis, not just the KPI tiles — a filter that only reaches some of
+    the page is worse than none at all (PRE-1 step 5).
+    """
+    daily = authed_client.get("/ops/api/daily?range=30d").json()
+    assert sum(p["success_count"] for p in daily["points"]) == 1
+
+    providers = authed_client.get("/ops/api/providers?range=30d").json()
+    assert sum(r["runs_count"] for r in providers) == 1
+
+    users = authed_client.get("/ops/api/users?range=30d").json()
+    assert sum(r["runs_count"] for r in users) == 1
+
+    daily_with = authed_client.get("/ops/api/daily?range=30d&include_test=1").json()
+    assert sum(p["success_count"] for p in daily_with["points"]) == 2
+    assert sum(r["runs_count"] for r in authed_client.get("/ops/api/providers?range=30d&include_test=1").json()) == 2
+    assert sum(r["runs_count"] for r in authed_client.get("/ops/api/users?range=30d&include_test=1").json()) == 2
+
+
+def test_drilldown_endpoints_that_rebuild_their_own_query_honour_the_flag(
+    authed_client: TestClient, two_clients_one_flagged: dict
+):
+    """`prompt-sets`, `prompts` and `user-detail` derive a narrowed query themselves instead of
+    using `scope.run_ids_query`, so they are the three that can silently ignore `include_test` —
+    the exact failure PRE-1 step 5 names. Drilled into the FLAGGED client, where the default filter
+    means "show nothing".
+    """
+    test_client = two_clients_one_flagged["test_client"]
+    test_set = two_clients_one_flagged["test_set"]
+
+    assert authed_client.get(f"/ops/api/prompt-sets?range=30d&client_id={test_client.id}").json() == []
+    assert authed_client.get(f"/ops/api/prompts?range=30d&prompt_set_id={test_set.id}").json() == []
+
+    sets_with = authed_client.get(f"/ops/api/prompt-sets?range=30d&client_id={test_client.id}&include_test=1").json()
+    assert len(sets_with) == 1 and sets_with[0]["runs_count"] == 1
+    prompts_with = authed_client.get(f"/ops/api/prompts?range=30d&prompt_set_id={test_set.id}&include_test=1").json()
+    assert len(prompts_with) == 1 and prompts_with[0]["runs_count"] == 1
+
+
+def test_user_detail_by_client_breakdown_honours_the_flag(
+    authed_client: TestClient, db_session: Session, seed: dict, editor_user: User
+):
+    """`user-detail`'s own narrowed query, exercised through a user who triggered runs for both a
+    real and a flagged client — the flagged one must drop out of `by_client` by default.
+    """
+    real_client, real_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    test_client, test_set = _client_with_prompt_set(db_session, "Test Acme", "test-acme")
+    test_client.is_test = True
+    db_session.commit()
+
+    now = datetime.now(timezone.utc)
+    common = dict(
+        model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=now - timedelta(days=1), triggered_by_user_id=editor_user.id,
+    )
+    _make_run(db_session, _make_prompt(db_session, real_set, seed["market"].id, "Real?"), **common)
+    _make_run(db_session, _make_prompt(db_session, test_set, seed["market"].id, "Test?"), **common)
+
+    body = authed_client.get(f"/ops/api/user-detail?range=30d&user_id={editor_user.id}").json()
+    assert [r["client_name"] for r in body["by_client"]] == ["Acme"]
+
+    body_with = authed_client.get(f"/ops/api/user-detail?range=30d&user_id={editor_user.id}&include_test=1").json()
+    assert sorted(r["client_name"] for r in body_with["by_client"]) == ["Acme", "Test Acme"]
+
+
+def test_prompt_detail_honours_the_flag(authed_client: TestClient, two_clients_one_flagged: dict):
+    """The innermost drill-down level, reached on the flagged client's own prompt."""
+    test_prompt = two_clients_one_flagged["test_prompt"]
+
+    body = authed_client.get(f"/ops/api/prompt-detail?range=30d&prompt_id={test_prompt.id}").json()
+    assert body["recent_runs"] == [] and body["models"] == []
+
+    body_with = authed_client.get(f"/ops/api/prompt-detail?range=30d&prompt_id={test_prompt.id}&include_test=1").json()
+    assert len(body_with["recent_runs"]) == 1

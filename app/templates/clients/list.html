@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import button, local_time %}
+{% from "partials/macros.html" import button, local_time, tag_badge %}
 {% block title %}{{ t('client.list_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
@@ -23,7 +23,10 @@
     <tbody>
       {% for client in clients %}
       <tr class="border-t border-stone-100 hover:bg-stone-50">
-        <td class="py-3 px-4"><a href="/clients/{{ client.id }}" class="font-medium text-stone-900 hover:underline">{{ client.name }}</a></td>
+        <td class="py-3 px-4">
+          <a href="/clients/{{ client.id }}" class="font-medium text-stone-900 hover:underline">{{ client.name }}</a>
+          {% if client.is_test %}{{ tag_badge(t('client.test_badge')) }}{% endif %}
+        </td>
         <td class="py-3 px-4 text-stone-600">{{ client.industry or t('common.none') }}</td>
         <td class="py-3 px-4 text-stone-500">{{ local_time(client.created_at, t('common.utc_suffix'), seconds=False) }}</td>
         <td class="py-3 px-4 text-right">
@@ -40,7 +43,10 @@
 <div class="md:hidden space-y-3">
   {% for client in clients %}
   <a href="/clients/{{ client.id }}" class="block border border-stone-200 rounded-lg p-4 bg-white">
-    <div class="font-medium text-stone-900">{{ client.name }}</div>
+    <div class="flex items-center justify-between gap-2">
+      <div class="font-medium text-stone-900">{{ client.name }}</div>
+      {% if client.is_test %}{{ tag_badge(t('client.test_badge')) }}{% endif %}
+    </div>
     <div class="text-sm text-stone-500 mt-1">{{ client.industry or t('common.none') }}</div>
     <div class="text-xs text-stone-400 mt-2">{{ local_time(client.created_at, t('common.utc_suffix'), seconds=False) }}</div>
   </a>

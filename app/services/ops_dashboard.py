@@ -62,6 +62,7 @@ def ops_scoped_run_ids_query(
     prompt_id: int | None = None,
     user_id: int | None = None,
     is_scheduler: bool = False,
+    include_test: bool = False,
 ) -> Select:
     """Select of in-scope `Run.id` values — every ops endpoint builds on this rather than repeating
     the date/client/prompt-set/prompt/user scoping independently, the same role
@@ -83,6 +84,14 @@ def ops_scoped_run_ids_query(
     pseudo-user", or neither) — `is_scheduler=True` takes precedence here if both were somehow
     passed, matching design decision 10's "trigger_type='scheduled' + triggered_by_user_id IS NULL"
     pairing exactly.
+
+    `include_test` is the one place test clients (`clients.is_test`) are kept out of the ops
+    figures (docs/TASKS_PRE_SCHEDULER.md design decision 3) — not repeated across the aggregations
+    below, the same single-chokepoint reasoning the rest of this scoping already follows. It
+    defaults to `False`, i.e. excluded, so a caller that forgets the parameter gets the protected
+    behavior rather than the leaky one. The filter is evaluated here on every request and never
+    written onto a run, which is exactly why flagging a client takes effect on its whole history
+    rather than only on runs made afterwards (design decision 15).
     """
     query = (
         select(Run.id)
@@ -90,6 +99,13 @@ def ops_scoped_run_ids_query(
         .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
         .where(Run.status != "pending")
     )
+    if not include_test:
+        # The join is added only when the filter needs it, so the unfiltered query keeps exactly
+        # the shape it had before. Safe for every aggregation downstream either way: they all
+        # consume this as `Run.id.in_(run_ids_query)`, a self-contained scalar subquery, so this
+        # join can never collide with the `Client` joins client_ops_rows/recent_runs make
+        # themselves.
+        query = query.join(Client, PromptSet.client_id == Client.id).where(Client.is_test.is_(False))
     if date_from is not None:
         query = query.where(Run.started_at >= date_from)
     if date_to is not None:

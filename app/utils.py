@@ -2,7 +2,7 @@
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from app.models import Market, Persona, Prompt
@@ -48,6 +48,29 @@ def normalize_domain(domain: str) -> str:
     if domain.startswith("www."):
         domain = domain[len("www.") :]
     return domain
+
+
+def normalized_domain_sql(col: ColumnElement) -> ColumnElement:
+    """SQL-side twin of `normalize_domain`, for use inside `GROUP BY`/`COUNT(DISTINCT ...)`
+    (docs/TASKS_PRE_SCHEDULER.md PRE-4, design decision 11) — the same dual-implementation shape
+    `app.services.cost.estimate_run_cost`/`run_cost_sql_expr` already uses for the same reason:
+    aggregation has to happen in SQL (see `domain_league_rows`'s docstring for why grouping in
+    Python after the query breaks `run_coverage_pct` and `LIMIT`), but a citation is read one row
+    at a time everywhere else in this codebase (`is_own_domain`, the mention_visibility skill,
+    `/api/classify`), where the plain Python function is the natural fit.
+
+    Kept in sync with `normalize_domain` by `tests/test_dashboard.py`'s table test, run against
+    real Postgres — not by hand — since the two are independent expressions of one rule and a
+    future edit to one that misses the other would silently split `meag.com` back into two rows
+    without any test noticing until someone reads production data again (found 2026-09-18: 26
+    domains split this way, 312 citations affected).
+
+    Deliberately no broader than what production data actually needed: lowercase + strip a leading
+    'www.' only. No uppercase, port or trailing-dot variants were found among the 26 split domains,
+    so a more elaborate rule here would be design-for-hypothetical-data (AI_INSTRUCTIONS §5), not a
+    fix for anything observed.
+    """
+    return func.regexp_replace(func.lower(func.trim(col)), r"^www\.", "")
 
 
 def is_own_domain(candidate_domain: str | None, client_domain: str | None) -> bool:

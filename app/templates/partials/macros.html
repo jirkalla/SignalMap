@@ -112,9 +112,15 @@
 {% endif %}
 {% endmacro %}
 
-{% macro toggle_button(action, active, active_label, inactive_label) %}
+{# `tone` picks the colour of the "on" state only; the "off" state is always neutral stone.
+   'positive' (emerald, the default) means the on-state is the good/normal one, as for a user's or
+   a model's Active flag. 'warning' (amber) means the on-state is a caveat the reader needs to
+   notice rather than something reassuring — clients.is_test, whose on-state quietly removes that
+   client from every /ops total. Same pill geometry either way, so the control still reads as the
+   same kind of thing across screens. #}
+{% macro toggle_button(action, active, active_label, inactive_label, tone='positive') %}
 <form method="post" action="{{ action }}" class="inline">
-  <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if active else 'bg-stone-100 text-stone-500' }}">
+  <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ ('bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-emerald-100 text-emerald-800') if active else 'bg-stone-100 text-stone-500' }}">
     {{ active_label if active else inactive_label }}
   </button>
 </form>
@@ -124,6 +130,13 @@
 <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-emerald-100 text-emerald-800' if is_positive else 'bg-stone-100 text-stone-600' }}">
   {{ positive_label if is_positive else negative_label }}
 </span>
+{% endmacro %}
+
+{# A standalone marker shown only when it applies, unlike pill_badge, which always renders one of
+   two opposed states. Used where the absence of the label is the normal case and spelling it out
+   ("Not a test client", on every ordinary row) would be noise. #}
+{% macro tag_badge(label, tone='warning') %}
+<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ 'bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-stone-100 text-stone-600' }}">{{ label }}</span>
 {% endmacro %}
 
 {% macro labeled_list(label, items, empty_label) %}

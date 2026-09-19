@@ -33,7 +33,7 @@ from app.models import (
     Run,
 )
 from app.services.date_ranges import DashboardRange, range_bounds, week_starts
-from app.utils import is_own_domain, normalize_domain
+from app.utils import is_own_domain, normalized_domain_sql
 
 __all__ = ["DashboardRange", "range_bounds"]  # re-exported: app/routers/dashboard.py imports both from here
 
@@ -127,11 +127,18 @@ def count_runs(db: Session, run_ids_query: Select) -> int:
 
 def citation_totals(db: Session, run_ids_query: Select) -> tuple[int, int]:
     """(citations_count, distinct_domains_count) across the citations of runs in `run_ids_query`,
-    in one round trip — count(DISTINCT source_domain) already excludes NULL source_domain values
-    per SQL semantics, so no extra is_not(None) filter is needed either.
+    in one round trip — count(DISTINCT <normalized domain>) already excludes NULL source_domain
+    values per SQL semantics, so no extra is_not(None) filter is needed either.
+
+    Counts the NORMALIZED domain (docs/TASKS_PRE_SCHEDULER.md PRE-4), matching
+    `domain_league_rows`'s grouping — this KPI tile and that table render on the same page, and a
+    citation on 'meag.com' and one on 'www.meag.com' counting as two domains here but one row
+    there was exactly the inconsistency PRE-4 exists to fix (measured 2026-09-18: 258 -> 232
+    unique domains once corrected).
     """
+    normalized_domain = normalized_domain_sql(Citation.source_domain)
     citations_count, distinct_domains_count = db.execute(
-        select(func.count(Citation.id), func.count(func.distinct(Citation.source_domain)))
+        select(func.count(Citation.id), func.count(func.distinct(normalized_domain)))
         .join(RawResponse, Citation.raw_response_id == RawResponse.id)
         .where(RawResponse.run_id.in_(run_ids_query))
     ).one()
@@ -267,12 +274,33 @@ class DomainLeagueRow:
 
 
 def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit: int) -> list[DomainLeagueRow]:
-    """League table of domains cited across `run_ids_query`, ranked by citation count."""
+    """League table of domains cited across `run_ids_query`, ranked by citation count.
+
+    Grouped by the NORMALIZED domain (docs/TASKS_PRE_SCHEDULER.md PRE-4, design decision 10), not
+    the raw `Citation.source_domain` column — 'meag.com' and 'www.meag.com' are the same source and
+    must be one row with a combined citation count, not two split ones (measured on production
+    2026-09-18: 26 domains split this way across 312 citations, one of them the client's own
+    skoda-media.de with 86 citations spread across two rows).
+
+    The grouping has to happen in SQL, before `LIMIT`, not as a Python pass over the query's
+    result — for two independent reasons:
+      - `run_coverage_pct` is `COUNT(DISTINCT Run.id)`. A run citing both 'meag.com' and
+        'www.meag.com' appears in both raw groups; summing their run_count in Python after the
+        query would double-count that run and push coverage over 100%. Grouping in SQL keeps the
+        DISTINCT correct because it's computed within one already-merged group.
+      - `LIMIT` runs before any Python-side merge could happen. Two variants with 4 and 3
+        citations can each fall outside the top N on their own while their combined 7 would make
+        the cut — merging after LIMIT can never recover a row that was never fetched.
+    Subdomains are deliberately NOT unified with their parent domain (design decision 10, "vědomě
+    mimo rozsah") — 'blog.meag.com' stays its own row, a different source from 'meag.com' even
+    though `is_own_domain` may call both "own" for a client whose domain is 'meag.com'.
+    """
     total_runs = count_runs(db, run_ids_query)
+    normalized_domain = normalized_domain_sql(Citation.source_domain).label("domain")
 
     rows = db.execute(
         select(
-            Citation.source_domain,
+            normalized_domain,
             func.count(Citation.id).label("citations_count"),
             func.count(func.distinct(Run.id)).label("run_count"),
             func.min(Run.started_at).label("first_seen"),
@@ -281,28 +309,25 @@ def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit
         .join(RawResponse, Citation.raw_response_id == RawResponse.id)
         .join(Run, RawResponse.run_id == Run.id)
         .where(Run.id.in_(run_ids_query), Citation.source_domain.is_not(None))
-        .group_by(Citation.source_domain)
+        .group_by(normalized_domain)
         # Secondary sort key so domains tied on citations_count get a stable, deterministic
         # order/rank across requests — without it, which tied domain lands inside `limit` (and
         # what rank it gets) could flip between identical requests with unchanged data.
-        .order_by(func.count(Citation.id).desc(), Citation.source_domain.asc())
+        .order_by(func.count(Citation.id).desc(), normalized_domain.asc())
         .limit(limit)
     ).all()
 
-    # Looked up by normalize_domain() in Python rather than a SQL join on a normalized
-    # expression — domain_classifications is keyed by the same normalize_domain() output used
-    # everywhere else (is_own_domain, mention_visibility), and duplicating that normalization
-    # rule as a second, SQL-side expression is exactly the two-independent-copies drift this
-    # module already avoids elsewhere (see is_own_domain's own docstring). The row count here
-    # is capped by `limit` (dashboard default/max far below anything that makes a second small
-    # query costly).
+    # Looked up by row.domain directly now — it's already the normalized form (the GROUP BY key
+    # above), so the normalize_domain() call this used to need here is gone; keeping two
+    # independently-maintained normalizations of the same value in one function was the drift risk
+    # this module used to flag (see normalized_domain_sql's own docstring for where that risk
+    # moved to instead). The row count here is capped by `limit` (dashboard default/max far below
+    # anything that makes a second small query costly).
     classifications = (
         {
             c.domain: c.domain_type
             for c in db.scalars(
-                select(DomainClassification).where(
-                    DomainClassification.domain.in_({normalize_domain(row.source_domain) for row in rows})
-                )
+                select(DomainClassification).where(DomainClassification.domain.in_({row.domain for row in rows}))
             ).all()
         }
         if rows
@@ -312,13 +337,13 @@ def domain_league_rows(db: Session, client: Client, run_ids_query: Select, limit
     return [
         DomainLeagueRow(
             rank=rank,
-            domain=row.source_domain,
+            domain=row.domain,
             citations_count=row.citations_count,
             run_coverage_pct=round(100 * row.run_count / total_runs, 1) if total_runs else 0.0,
             first_seen=row.first_seen.date(),
             last_seen=row.last_seen.date(),
-            is_own_domain=is_own_domain(row.source_domain, client.domain),
-            domain_type=classifications.get(normalize_domain(row.source_domain)),
+            is_own_domain=is_own_domain(row.domain, client.domain),
+            domain_type=classifications.get(row.domain),
         )
         for rank, row in enumerate(rows, start=1)
     ]
