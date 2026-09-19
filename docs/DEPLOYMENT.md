@@ -39,8 +39,14 @@ git checkout master && git pull --ff-only && docker compose up -d --build --wait
 ```
 
 ```bash
-docker compose exec -T app python -m pytest -q
+COPYFILE_DISABLE=1 tar -cf - tests requirements-dev.txt | docker compose run --rm --no-deps -T app sh -c 'tar -xf - && pip install --no-cache-dir -r requirements-dev.txt && python -m pytest -p no:cacheprovider -q'
 ```
+
+`docker compose exec -T app python -m pytest` **nefunguje** — `pytest` je jen
+vývojová závislost (`requirements-dev.txt`), do image se nebalí, takže v běžícím
+kontejneru modul vždycky chybí (`No module named pytest`, ověřeno 2026-09-19).
+Skutečný postup je přesně ten z `README.md` „Running tests": jednorázový
+kontejner, do kterého se `requirements-dev.txt` nainstaluje za běhu.
 
 Na server nejde nic, co neprošlo tady. Projdi i ručně obrazovky, kterých se
 změna týká.
@@ -210,6 +216,17 @@ ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.
 | `docker compose up -d --build --wait` | staví **zatímco starý kontejner obsluhuje**, teprve pak prohodí — appku předem nezastavuj, jen by to prodloužilo výpadek o dobu buildu |
 | migrace | běží automaticky ze `CMD` v `dockerfile`; když selžou, **appka nenaběhne** — nedostaneš polovičně zmigrovanou běžící databázi |
 
+**`&&` mezi kroky není stylistika, je to bezpečnostní pojistka.** Incident
+2026-09-19: adaptace tohohle příkazu na spuštění přímo v SSH session (rozepsáno
+na samostatné řádky kvůli čitelnosti) tu vazbu zrušila. `tar` selhal (archiv se
+kvůli chybě v `scp` kroku nikdy nedostal do `/tmp/`), ale `rsync --delete` na
+dalším „řádku" se přesto spustil — s prázdným zdrojovým adresářem, čímž smazal
+celý `/opt/signalmap` kromě vyloučených souborů. Rozepsání na řádky nebo
+vkládání příkaz po příkazu do interaktivní session tuhle záruku ruší — **vždy
+spouštěj jako jeden řetězený příkaz** (přesně jak je napsaný výše), ať už přes
+`ssh signalmap "..."` z Windows, nebo zkopírovaný beze změny do session na
+serveru.
+
 ### 3.4 Zaznamenat verzi a uklidit
 
 ```bash
@@ -293,8 +310,14 @@ projeví až při prvním skutečném požadavku uživatele.
 ### 5.2 Zápis do deploy logu
 
 ```bash
-ssh signalmap 'echo "$(date -Is) $(cd /opt/signalmap && git rev-parse --short HEAD) OK" >> /var/log/signalmap-deploys.log'
+ssh signalmap "echo \"\$(date -Is) $SHA OK\" >> /var/log/signalmap-deploys.log"
 ```
+
+`$SHA` je ten samý, co sis zapsal v kroku 3.1 — **ne** `git rev-parse` spuštěný
+na serveru: `/opt/signalmap` není git checkout (§3), takže tam `git rev-parse`
+vždy spadne na „not a git repository" (ověřeno 2026-09-19). Krok 3.4 už jeden
+záznam s plným SHA zapsal — tenhle je jen krátký `OK` potvrzující, že celé
+ověření (kapitola 4) proběhlo bez problému.
 
 Za půl roku je tohle jediné místo, kde zjistíš, kdy se co nasadilo.
 
