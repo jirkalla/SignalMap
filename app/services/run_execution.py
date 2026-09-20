@@ -113,6 +113,25 @@ def _run_active_analysis_skills(
     db.commit()
 
 
+def build_request_payload(db: Session, *, prompt: Prompt, model: AIModel, market: Market, persona: Persona) -> dict:
+    """The exact payload recorded as `Run.request_payload` and sent to the provider adapter,
+
+    built before any Run row exists so it's available whether the caller is about to create one
+    (the manual trigger path in `execute_run` below) or already created one itself (the
+    scheduler worker, which must write its Run's id to the queue row before ever calling the
+    adapter — docs/TASKS_SCHEDULER.md design decision 13, `app/worker.py`'s
+    `process_claimed_item`). Recomputing this is cheap and side-effect-free, so both callers do
+    it fresh rather than one passing a payload to the other.
+    """
+    return {
+        "model": model.model_name,
+        "prompt_text": prompt.text,
+        "system_instruction": _build_system_instruction(db, model.provider, market, persona),
+        "market_country": market.country,
+        "persona": persona.label,
+    }
+
+
 def execute_run(
     db: Session,
     *,
@@ -123,6 +142,7 @@ def execute_run(
     trigger_type: str,
     triggered_by_user_id: int | None,
     run_id: int | None = None,
+    reraise_on_failure: bool = False,
 ) -> Run:
     """Run `prompt` against `model` (framed by `market`/`persona`) and store the result (FR-7..FR-16).
 
@@ -142,15 +162,17 @@ def execute_run(
     worker (docs/TASKS_SCHEDULER.md design decision 13), which must write its own Run's id onto
     the queue row *before* the adapter is ever called, so a worker killed mid-call can be
     reconciled instead of silently retried and paid for twice.
+
+    `reraise_on_failure=False` (the default, and the only mode the HTTP router ever uses) matches
+    every behavior this function had before the scheduler worker existed: an adapter failure is
+    swallowed, recorded on the Run, and this function returns normally. `reraise_on_failure=True`
+    (app/worker.py only) does exactly the same recording, but additionally re-raises the original
+    exception afterward — the worker needs the real exception object (not just its stringified
+    `error_message`) to tell a retryable transport/429 failure from a terminal one
+    (docs/TASKS_SCHEDULER.md T3), and this function is the only place that exception is ever seen.
     """
-    system_instruction = _build_system_instruction(db, model.provider, market, persona)
-    request_payload = {
-        "model": model.model_name,
-        "prompt_text": prompt.text,
-        "system_instruction": system_instruction,
-        "market_country": market.country,
-        "persona": persona.label,
-    }
+    request_payload = build_request_payload(db, prompt=prompt, model=model, market=market, persona=persona)
+    system_instruction = request_payload["system_instruction"]
 
     if run_id is None:
         run = Run(
@@ -208,6 +230,8 @@ def execute_run(
             exc_info=True,
             extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
         )
+        if reraise_on_failure:
+            raise
     else:
         run.status = "success"
         run.finished_at = datetime.now(timezone.utc)

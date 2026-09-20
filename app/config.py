@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     dev_admin_name: str = ""
     dev_admin_password: str = ""
 
+    # Scheduler (docs/TASKS_SCHEDULER.md T3). Kill switch for the ticker loop only — the executor
+    # keeps draining whatever is already queued even when this is false (design decision 16),
+    # since two app instances sharing one database must never both plan on their own schedule.
+    scheduler_enabled: bool = True
+    # Shadow mode: the ticker still plans and enqueues normally, but the executor marks every
+    # claimed item skipped/dry_run and never calls a provider adapter (design decision 15) — the
+    # first part of the app that can spend money unattended stays inert until this is explicitly
+    # turned off, once quota enforcement (T10) exists.
+    scheduler_dry_run: bool = True
+    # How late a missed window may run before it's given up on instead of caught up (design
+    # decision 11) — checked both when enqueuing (worker was down) and when claiming (worker
+    # fell behind). 360 = 6 hours.
+    scheduler_grace_period_minutes: int = 360
+    # How long a claimed queue item may stay 'leased' before another worker is allowed to
+    # reclaim it (design decision 14) — protects against a killed worker leaving items stuck.
+    scheduler_lease_minutes: int = 15
+    # Identifies this process's row in worker_heartbeats and its lease ownership on run_queue.
+    # A fixed default is fine for the single-worker deployment this branch ships (decision 3);
+    # a future multi-worker setup would need this set uniquely per instance via the environment.
+    worker_name: str = "scheduler-1"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
