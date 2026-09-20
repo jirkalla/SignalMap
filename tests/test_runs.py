@@ -688,7 +688,7 @@ def test_analysis_engine_failure_never_fails_the_run(
     def _boom(skill_key: str):
         raise RuntimeError("simulated analysis failure")
 
-    monkeypatch.setattr("app.routers.runs.get_runner", _boom)
+    monkeypatch.setattr("app.services.run_execution.get_runner", _boom)
 
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Test Client is known for reliability."},
