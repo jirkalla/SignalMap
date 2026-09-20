@@ -52,6 +52,17 @@ class Run(Base):
     INSERTs) — mirrored here at the ORM level, matching alembic migration
     0024, so `Base.metadata.create_all()` (what the test suite uses) creates
     the same constraint the migration creates against the real database.
+
+    Widened in migration 0030 from (prompt_id, model_id) to also include
+    persona_id and market_id (docs/TASKS_SCHEDULER.md design decision 35).
+    The index's original intent — reject a same-prompt-and-model double
+    trigger — is unchanged; only the definition of "same" is completed. It
+    had to widen because the scheduler can legitimately target several
+    personas at once (design decision 34): without persona_id in the key,
+    three personas run against the same prompt+model would look like three
+    duplicate triggers of *one* thing, and the second and third would be
+    deferred (design decision 17) instead of running as the three distinct,
+    legitimate runs they are.
     """
 
     __tablename__ = "runs"
@@ -60,6 +71,8 @@ class Run(Base):
             "idx_runs_one_pending_per_prompt_model",
             "prompt_id",
             "model_id",
+            "persona_id",
+            "market_id",
             unique=True,
             postgresql_where=text("status = 'pending'"),
         ),
