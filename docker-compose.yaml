@@ -26,6 +26,7 @@ services:
     logging: *logging
 
   app:
+    image: signalmap-app
     build:
       context: .
       dockerfile: dockerfile
@@ -53,6 +54,52 @@ services:
       retries: 5
       start_period: 30s
     stop_grace_period: 60s
+    logging: *logging
+
+  # Scheduler ticker + executor (docs/TASKS_SCHEDULER.md T3/T4) — same image as `app`, no build
+  # of its own, so the two containers can never run different code. Never runs `alembic upgrade
+  # head`: the `app` service's own CMD already does, and two containers migrating the same
+  # database at once would race for the migration lock; `depends_on: app: condition:
+  # service_healthy` guarantees migrations have already finished by the time this starts.
+  worker:
+    image: signalmap-app
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://signalmap_user:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/signalmap
+      # Required even though the worker issues no cookies of its own: app/config.py's
+      # `secret_key` has no default, so any `get_settings()` call (unavoidable importing
+      # app.database) fails at startup without it.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SCHEDULER_DRY_RUN: ${SCHEDULER_DRY_RUN:-true}
+      SCHEDULER_GRACE_PERIOD_MINUTES: ${SCHEDULER_GRACE_PERIOD_MINUTES:-360}
+      SCHEDULER_LEASE_MINUTES: ${SCHEDULER_LEASE_MINUTES:-15}
+      WORKER_NAME: ${WORKER_NAME:-scheduler-1}
+    # No HTTP port to probe (design decision 19) — checks that app/worker.py's main loop is
+    # still touching its liveness file, written on every iteration (~every 5s). 30s = 6x that
+    # interval, so one slow iteration doesn't flap the container between healthy/unhealthy.
+    healthcheck:
+      test: [
+        "CMD", "python", "-c",
+        "import os, sys, time; sys.exit(0 if os.path.exists('/tmp/worker-alive') and time.time() - os.path.getmtime('/tmp/worker-alive') < 30 else 1)",
+      ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # A provider call takes 5-28s observed (app/routers/runs.py's trigger_run docstring); the
+    # worker's SIGTERM handler (app/worker.py) finishes whatever item it's mid-processing before
+    # exiting, so this must comfortably outlast the slowest observed call plus its own overhead.
+    stop_grace_period: 120s
     logging: *logging
 
   caddy:
