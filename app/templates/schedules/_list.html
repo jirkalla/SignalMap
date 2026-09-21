@@ -1,4 +1,4 @@
-{% from "partials/macros.html" import local_time, delete_button, toggle_button, pill_badge, icon_calendar, icon_edit, icon_pause, icon_play, icon_trash %}
+{% from "partials/macros.html" import local_time, delete_button, toggle_button, pill_badge, icon_calendar, icon_document, icon_edit, icon_pause, icon_play, icon_stack, icon_trash %}
 <div class="flex items-center justify-between flex-wrap gap-3 mb-3">
   <h2 class="text-lg font-semibold flex items-center gap-2 text-stone-800">{{ icon_calendar('w-5 h-5 text-stone-400') }}{{ t('schedules.list_title') }}</h2>
   {% if can_schedule(current_user) and new_schedule_url %}
@@ -23,9 +23,24 @@
       <tr class="border-t border-stone-100 hover:bg-stone-50">
         {% if show_prompt_column %}
         <td class="py-3 px-4">
-          {% set target_label, target_url = schedule_targets.get(schedule.id, ('', '#')) %}
-          <a href="{{ target_url }}" class="hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
-          {% if schedule.target_type == 'prompt_set' %}<span class="text-xs text-stone-400 ml-1">({{ t('schedules.prompt_set_badge') }})</span>{% endif %}
+          {% set target_label, target_url, target_detail = schedule_targets.get(schedule.id, ('', '#', '')) %}
+          <div class="flex items-start gap-2">
+            {% if schedule.target_type == 'prompt_set' %}
+            <span class="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md bg-sky-50 text-sky-600 shrink-0">{{ icon_stack('w-3.5 h-3.5') }}</span>
+            {% else %}
+            <span class="mt-0.5 text-stone-400 shrink-0">{{ icon_document('w-4 h-4') }}</span>
+            {% endif %}
+            <div>
+              <a href="{{ target_url }}" class="font-medium text-stone-700 hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+              <div class="text-xs text-stone-500 mt-0.5">
+                {% if schedule.target_type == 'prompt_set' %}
+                {{ t('schedules.target_subtitle_set').format(count=target_detail) }}
+                {% else %}
+                {{ t('schedules.target_subtitle_prompt').format(set_name=target_detail) }}
+                {% endif %}
+              </div>
+            </div>
+          </div>
         </td>
         {% endif %}
         <td class="py-3 px-4 text-stone-600">{{ schedule_summaries[schedule.id] }}</td>
@@ -70,10 +85,23 @@
       {% endif %}
     </div>
     {% if show_prompt_column %}
-    {% set target_label, target_url = schedule_targets.get(schedule.id, ('', '#')) %}
-    <div class="text-xs text-stone-500 mt-1">
-      <a href="{{ target_url }}" class="hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
-      {% if schedule.target_type == 'prompt_set' %}<span class="text-stone-400">({{ t('schedules.prompt_set_badge') }})</span>{% endif %}
+    {% set target_label, target_url, target_detail = schedule_targets.get(schedule.id, ('', '#', '')) %}
+    <div class="flex items-start gap-2 mt-1">
+      {% if schedule.target_type == 'prompt_set' %}
+      <span class="mt-0.5 flex items-center justify-center w-5 h-5 rounded bg-sky-50 text-sky-600 shrink-0">{{ icon_stack('w-3 h-3') }}</span>
+      {% else %}
+      <span class="mt-0.5 text-stone-400 shrink-0">{{ icon_document('w-3.5 h-3.5') }}</span>
+      {% endif %}
+      <div class="text-xs">
+        <a href="{{ target_url }}" class="text-stone-700 hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+        <div class="text-stone-500 mt-0.5">
+          {% if schedule.target_type == 'prompt_set' %}
+          {{ t('schedules.target_subtitle_set').format(count=target_detail) }}
+          {% else %}
+          {{ t('schedules.target_subtitle_prompt').format(set_name=target_detail) }}
+          {% endif %}
+        </div>
+      </div>
     </div>
     {% endif %}
     <div class="text-xs text-stone-400 mt-2">

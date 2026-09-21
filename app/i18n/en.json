@@ -357,7 +357,8 @@
 
   "schedules.prompt_link": "Prompt",
   "schedules.prompt_set_link": "Prompt set",
-  "schedules.prompt_set_badge": "set",
+  "schedules.target_subtitle_prompt": "Prompt · in {set_name}",
+  "schedules.target_subtitle_set": "Prompt set · {count} active prompt(s)",
   "schedules.target_prompt_set": "Whole prompt set: {name} ({count} active prompts right now — this list is live, so a prompt added later is picked up automatically).",
   "schedules.create_title": "New schedule",
   "schedules.edit_title": "Edit schedule",
@@ -388,6 +389,8 @@
   "schedules.preview_cost_total": "≈ ${amount} total until this schedule ends",
   "schedules.preview_cost_unknown": "Cost estimate not available yet — none of this has been run against these models before.",
   "schedules.preview_cost_partial_note": "Based on {known} of {total} prompt+model combinations with run history — the rest have never been run yet.",
+  "schedules.overlap_warning": "Overlaps with another active schedule on \"{label}\" — both would run {prompts} of the same prompt(s) on {models}, persona {personas}.",
+  "schedules.overlap_view_link": "View schedule",
   "schedules.list_title": "Schedules",
   "schedules.new_button": "New schedule",
   "schedules.prompt_column": "Prompt",

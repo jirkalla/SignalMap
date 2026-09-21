@@ -12,6 +12,7 @@ hidden UI element — docs/TASKS_PHASE6.md design decision 4); `can_schedule()`
 future `users.can_schedule` column changes only that one place (design decision 22).
 """
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Literal
 
@@ -23,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import Client, PromptSet, User
+from app.models import AIModel, Client, Persona, PromptSet, User
 from app.models.prompt import Prompt
 from app.models.schedule import RunSchedule
 from app.routers.prompt_sets import _get_prompt_set_or_404
@@ -135,17 +136,96 @@ def _resolve_target(db: Session, target_type: str, target_id: int) -> tuple[str,
     raise ValueError(f"unknown schedule target_type: {target_type!r}")
 
 
-def schedule_target_display(db: Session, schedule: RunSchedule) -> tuple[str, str]:
-    """(short label, link url) for a schedule's target, for the schedule list partial
+def schedule_target_display(db: Session, schedule: RunSchedule) -> tuple[str, str, str | int]:
+    """(short label, link url, type-specific detail) for a schedule's target, for the schedule
 
-    (app/templates/schedules/_list.html) on the client detail page, where one table mixes
-    `target_type='prompt'` and `'prompt_set'` rows side by side.
+    list partial (app/templates/schedules/_list.html) on the client detail page, where one table
+    mixes `target_type='prompt'` and `'prompt_set'` rows side by side — the detail is the owning
+    prompt set's name for a `'prompt'` row, or the count of currently active prompts for a
+    `'prompt_set'` row, letting the template show an icon plus an unambiguous type label rather
+    than the small, easy-to-miss "(prompt_set)" suffix this replaced.
     """
     resolved = _resolve_target(db, schedule.target_type, schedule.target_id)
     if resolved is None:
-        return "", "#"
-    label, _client, url, _prompts = resolved
-    return label, url
+        return "", "#", ""
+    label, _client, url, prompts = resolved
+    if schedule.target_type == "prompt_set":
+        return label, url, len(prompts)
+    return label, url, (prompts[0].prompt_set.name if prompts else "")
+
+
+def _model_display_names(db: Session, model_ids: set[int]) -> list[str]:
+    models = db.scalars(select(AIModel).where(AIModel.id.in_(model_ids))).all()
+    return [m.display_name or m.model_name for m in models]
+
+
+def _persona_display_names(db: Session, persona_ids: set[int]) -> list[str]:
+    personas = db.scalars(select(Persona).where(Persona.id.in_(persona_ids))).all()
+    return [p.label for p in personas]
+
+
+@dataclass
+class ScheduleOverlap:
+    """One other active schedule whose resolved target shares at least one prompt, one model AND
+
+    one persona with the combination being previewed (design decision 36) — a match on only one
+    of those three dimensions is not reported (see find_overlapping_schedules).
+    """
+
+    schedule: RunSchedule
+    label: str
+    url: str
+    shared_prompt_count: int
+    shared_model_labels: list[str]
+    shared_persona_labels: list[str]
+
+
+def find_overlapping_schedules(
+    db: Session,
+    *,
+    client_id: int,
+    exclude_schedule_id: int | None,
+    prompt_ids: list[int],
+    model_ids: list[int],
+    persona_ids: list[int],
+) -> list[ScheduleOverlap]:
+    """Other active schedules of this client that would run the same prompt on the same model for
+
+    the same persona as the combination being previewed — design decision 36. Warn, never block:
+    the two schedules that triggered this (one on a prompt, one on a prompt set containing it,
+    same model/persona, different times) are both legitimate rows; nothing before this guarded
+    against paying for the same content twice a day just because it arrived via two schedules.
+    Scoped to one client — an overlap across two different clients' schedules isn't meaningful.
+    A schedule with no active prompts left (a living prompt-set target, decision 18) simply
+    contributes no shared prompts and never triggers a warning, same as a paused schedule.
+    """
+    query = select(RunSchedule).where(RunSchedule.client_id == client_id, RunSchedule.is_active.is_(True))
+    if exclude_schedule_id is not None:
+        query = query.where(RunSchedule.id != exclude_schedule_id)
+    candidates = db.scalars(query).all()
+
+    prompt_id_set, model_id_set, persona_id_set = set(prompt_ids), set(model_ids), set(persona_ids)
+    overlaps = []
+    for candidate in candidates:
+        resolved = _resolve_target(db, candidate.target_type, candidate.target_id)
+        if resolved is None:
+            continue
+        label, _client, url, candidate_prompts = resolved
+        shared_prompts = prompt_id_set & {p.root_prompt_id or p.id for p in candidate_prompts}
+        shared_models = model_id_set & set(candidate.model_ids)
+        shared_personas = persona_id_set & set(candidate.persona_ids)
+        if shared_prompts and shared_models and shared_personas:
+            overlaps.append(
+                ScheduleOverlap(
+                    schedule=candidate,
+                    label=label,
+                    url=url,
+                    shared_prompt_count=len(shared_prompts),
+                    shared_model_labels=_model_display_names(db, shared_models),
+                    shared_persona_labels=_persona_display_names(db, shared_personas),
+                )
+            )
+    return overlaps
 
 
 def _redirect_url_for(db: Session, schedule: RunSchedule) -> str:
@@ -572,6 +652,7 @@ def preview_occurrences(
     max_occurrences: str = Query(""),
     starts_on: str = Query(""),
     occurrences_count: int = Query(0),
+    schedule_id: str = Query("", description="The schedule being edited, if any — excluded from its own overlap check (design decision 36)."),
     db: Session = Depends(get_db),
 ):
     """Live HTMX partial: the next five occurrences and a cost estimate for the form's current,
@@ -582,6 +663,7 @@ def preview_occurrences(
     submission, so it renders "pick a valid combination" rather than a 422 for every incomplete
     intermediate keystroke.
     """
+    schedule_id = _parse_optional_int(schedule_id)
     day_of_month = _parse_optional_int(day_of_month)
     ends_on = _parse_optional_date(ends_on)
     max_occurrences = _parse_optional_int(max_occurrences)
@@ -601,7 +683,7 @@ def preview_occurrences(
     resolved = _resolve_target(db, target_type, target_id)
     if resolved is None:
         return render(request, "schedules/_occurrence_preview.html", {"incomplete": True})
-    _label, _client, _redirect_url, prompts = resolved
+    _label, client, _redirect_url, prompts = resolved
     if not prompts:
         # A prompt_set with no active prompts right now (design decision 18: "a living list") —
         # a real, valid state, not an error, but there is nothing to estimate or fan out yet.
@@ -623,6 +705,15 @@ def preview_occurrences(
 
     per_window_cost, known_combos, total_combos = _estimate_window_cost(db, prompts, model_ids, len(persona_ids))
 
+    overlaps = find_overlapping_schedules(
+        db,
+        client_id=client.id,
+        exclude_schedule_id=schedule_id,
+        prompt_ids=[p.root_prompt_id or p.id for p in prompts],
+        model_ids=model_ids,
+        persona_ids=persona_ids,
+    )
+
     return render(
         request,
         "schedules/_occurrence_preview.html",
@@ -642,5 +733,6 @@ def preview_occurrences(
             ),
             "cost_known_combos": known_combos,
             "cost_total_combos": total_combos,
+            "overlaps": overlaps,
         },
     )

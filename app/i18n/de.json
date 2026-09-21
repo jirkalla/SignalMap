@@ -357,7 +357,8 @@
 
   "schedules.prompt_link": "Prompt",
   "schedules.prompt_set_link": "Prompt-Set",
-  "schedules.prompt_set_badge": "Set",
+  "schedules.target_subtitle_prompt": "Prompt · in {set_name}",
+  "schedules.target_subtitle_set": "Prompt-Set · {count} aktive(r) Prompt(s)",
   "schedules.target_prompt_set": "Ganzes Prompt-Set: {name} ({count} aktive Prompts gerade jetzt — diese Liste ist lebendig, ein später hinzugefügter Prompt wird automatisch übernommen).",
   "schedules.create_title": "Neuer Zeitplan",
   "schedules.edit_title": "Zeitplan bearbeiten",
@@ -388,6 +389,8 @@
   "schedules.preview_cost_total": "≈ ${amount} insgesamt bis zum Ende des Zeitplans",
   "schedules.preview_cost_unknown": "Kostenschätzung noch nicht verfügbar — davon wurde noch nichts gegen diese Modelle ausgeführt.",
   "schedules.preview_cost_partial_note": "Basiert auf {known} von {total} Prompt+Modell-Kombinationen mit Lauf-Historie — der Rest wurde noch nie ausgeführt.",
+  "schedules.overlap_warning": "Überschneidet sich mit einem anderen aktiven Zeitplan auf „{label}“ — beide würden {prompts} der gleichen Prompt(s) auf {models} ausführen, Persona {personas}.",
+  "schedules.overlap_view_link": "Zeitplan ansehen",
   "schedules.list_title": "Zeitpläne",
   "schedules.new_button": "Neuer Zeitplan",
   "schedules.prompt_column": "Prompt",

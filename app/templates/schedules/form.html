@@ -30,6 +30,7 @@
   <input type="hidden" name="target_id" value="{{ target_id }}">
   <input type="hidden" name="starts_on" value="{{ schedule.starts_on.isoformat() if schedule else '' }}">
   <input type="hidden" name="occurrences_count" value="{{ schedule.occurrences_count if schedule else 0 }}">
+  <input type="hidden" name="schedule_id" value="{{ schedule.id if schedule else '' }}">
 
   <fieldset>
     <legend class="block text-sm font-medium text-stone-700 mb-2">{{ t('schedules.frequency_label') }} *</legend>

@@ -202,6 +202,22 @@
 <svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15.5h12" stroke-linecap="round"/></svg>
 {% endmacro %}
 
+{% macro icon_warning(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l8 14H2l8-14z" stroke-linejoin="round"/><path d="M10 8.5v3.5" stroke-linecap="round"/><circle cx="10" cy="14.5" r="0.9" fill="currentColor" stroke="none"/></svg>
+{% endmacro %}
+
+{# Target-type markers for the client-level schedule list (app/templates/schedules/_list.html),
+   which is the one place schedules on a single prompt and schedules on a whole prompt set are
+   ever mixed in the same table — everywhere else (a prompt's or a prompt set's own detail page)
+   every row already shares the same target, so this distinction isn't needed there. #}
+{% macro icon_document(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2.5h5l3 3v11a1 1 0 01-1 1H6a1 1 0 01-1-1v-13a1 1 0 011-1z" stroke-linejoin="round"/><path d="M11 2.5v3h3" stroke-linejoin="round"/><path d="M7 10.5h6M7 13.5h6" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{% macro icon_stack(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l7 4-7 4-7-4 7-4z" stroke-linejoin="round"/><path d="M3 11l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 14.5l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
 {# Plain <a href> links, never hx-get — a file download needs a real browser
    navigation, not an HTMX-swapped fragment. id_prefix is only needed on a
