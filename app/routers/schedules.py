@@ -20,18 +20,20 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Client, Persona, PromptSet, User
+from app.models.notification import NotificationOutbox
 from app.models.prompt import Prompt
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.prompt_sets import _get_prompt_set_or_404
 from app.routers.prompts import _get_prompt_or_404, _runnable_model_groups
 from app.services.cost import average_historical_cost
+from app.services.notifications import notify_worker_stale
 from app.services.queue import cancel_queued_item, create_retry, retry_all_errors
 from app.services.schedule_monitor import (
     active_queue_rows,
@@ -898,6 +900,96 @@ def _health_strip_groups(db: Session, t) -> list[dict]:
     return groups
 
 
+def _notification_text_and_url(t, notification: NotificationOutbox) -> tuple[str, str | None]:
+    """(one-line text, link url or None) for the in-app dropdown (T8) — each event type's payload
+
+    shape is fixed by whichever call site raised it (app/worker.py, app/services/queue.py,
+    app/services/notifications.py), so this is the one place that knows how to turn each back into
+    a sentence AND a place to click through to — a message naming "a schedule" or "a client" with
+    nothing to click is useless once there's more than one of either (found via user feedback: the
+    first version of this said "A schedule has 2 run(s) left before it ends" with no way to tell
+    which one). A `payload` shape this doesn't recognize (e.g. a future T9/T10 event type not
+    wired up yet, or an old row from before a payload field existed) falls back to the bare
+    event_type / no link rather than raising — this is read-only display, never worth a 500 over.
+    """
+    payload = notification.payload
+    if notification.event_type == "schedule.run_failed":
+        text = t("notifications.schedule_run_failed").format(
+            client_name=payload.get("client_name") or "?", prompt_text=payload.get("prompt_text", "")
+        )
+        url = f"/runs/{payload['run_id']}" if payload.get("run_id") else None
+        return text, url
+    if notification.event_type == "schedule.window_skipped":
+        text = t("notifications.schedule_window_skipped").format(
+            count=payload.get("count", 0), client_names=", ".join(payload.get("client_names", [])) or "?"
+        )
+        return text, "/schedules?view=history&status=skipped"
+    if notification.event_type == "worker.stale":
+        text = t("notifications.worker_stale").format(worker_name=payload.get("worker_name", ""))
+        return text, "/schedules?view=queue"
+    if notification.event_type == "schedule.expiring_soon":
+        client_name = payload.get("client_name") or "?"
+        target_label = payload.get("target_label") or "?"
+        if payload.get("days_left") is not None:
+            text = t("notifications.schedule_expiring_soon_days").format(
+                client_name=client_name, target_label=target_label, days=payload["days_left"]
+            )
+        else:
+            text = t("notifications.schedule_expiring_soon_occurrences").format(
+                client_name=client_name, target_label=target_label, count=payload.get("occurrences_left", 0)
+            )
+        url = f"/schedules/{payload['schedule_id']}/edit" if payload.get("schedule_id") else None
+        return text, url
+    if notification.event_type == "budget.threshold_exceeded":
+        text = t("notifications.budget_threshold_exceeded").format(
+            client_name=payload.get("client_name", ""), spend=payload.get("spend_usd", 0), budget=payload.get("budget_usd", 0)
+        )
+        url = f"/clients/{payload['client_id']}" if payload.get("client_id") else None
+        return text, url
+    return notification.event_type, None
+
+
+def _notification_context(db: Session, t) -> dict:
+    """{unread_count, notifications} for the shared in-app inbox (T8) — one shared bell for every
+
+    admin/editor (design decision 25: every event type wired up today targets the whole team, not
+    one person), so "unread" is a global count, not per-viewer.
+    """
+    recent = db.scalars(select(NotificationOutbox).order_by(NotificationOutbox.created_at.desc()).limit(20)).all()
+    unread_count = db.scalar(select(func.count(NotificationOutbox.id)).where(NotificationOutbox.status == "sent"))
+    notifications = []
+    for n in recent:
+        text, url = _notification_text_and_url(t, n)
+        notifications.append(
+            {
+                "id": n.id,
+                "text": text,
+                "url": url,
+                "created_at": n.created_at,
+                "is_unread": n.status == "sent",
+                # Only schedule.expiring_soon names a schedule whose target could be either kind
+                # (T5b) — the icon distinction from the "Rozvrhy" view (schedule_target_cell)
+                # only makes sense there; every other event type is about a run, a worker, or a
+                # client, none of which is ever a prompt set.
+                "target_type": n.payload.get("target_type") if n.event_type == "schedule.expiring_soon" else None,
+            }
+        )
+    return {"unread_count": unread_count or 0, "notifications": notifications}
+
+
+@router.post("/notifications/mark-read", dependencies=_editor_or_admin)
+def mark_notifications_read(request: Request, db: Session = Depends(get_db)):
+    """Mark every currently-`sent` (unread) notification `read` — one shared inbox, so this
+
+    affects what every admin/editor sees, not just the person who clicked it (same "one team
+    inbox" simplification `_notification_context` documents).
+    """
+    db.execute(update(NotificationOutbox).where(NotificationOutbox.status == "sent").values(status="read"))
+    db.commit()
+    referer = request.headers.get("referer") or "/schedules"
+    return RedirectResponse(url=referer, status_code=303)
+
+
 @router.get("", dependencies=_editor_or_admin)
 def schedules_monitor(
     request: Request,
@@ -920,19 +1012,26 @@ def schedules_monitor(
     t = get_t(request)
     now = datetime.now(timezone.utc)
 
-    workers = [
-        {
-            "worker_name": worker_status.worker_name,
-            "text": t("schedules.worker_stale" if worker_status.is_stale else "schedules.worker_running").format(
-                duration=format_duration_short(t, worker_status.seconds_since)
-            ),
-            "is_stale": worker_status.is_stale,
-            "dry_run": worker_status.dry_run,
-        }
-        for worker_status in worker_statuses(db, now=now)
-    ]
+    workers = []
+    for worker_status in worker_statuses(db, now=now):
+        if worker_status.is_stale:
+            # The worker itself cannot report its own death — only the web app, on a view of
+            # this page, ever detects this (design decision, T8). Cooldown-guarded internally so
+            # a stale worker doesn't generate one notification per page load.
+            notify_worker_stale(db, worker_name=worker_status.worker_name, seconds_since=worker_status.seconds_since, now=now)
+        workers.append(
+            {
+                "worker_name": worker_status.worker_name,
+                "text": t("schedules.worker_stale" if worker_status.is_stale else "schedules.worker_running").format(
+                    duration=format_duration_short(t, worker_status.seconds_since)
+                ),
+                "is_stale": worker_status.is_stale,
+                "dry_run": worker_status.dry_run,
+            }
+        )
 
     context = {"view": view, "status": status, "q": q, "page": page, "workers": workers}
+    context.update(_notification_context(db, t))
 
     if view == "schedules":
         schedules = all_schedules(db)

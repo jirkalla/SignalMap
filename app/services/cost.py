@@ -14,7 +14,7 @@ from sqlalchemy import Float, case, cast, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import AIModel, AIModelPriceComponent, Run
+from app.models import AIModel, AIModelPriceComponent, Prompt, PromptSet, RawResponse, Run
 from app.models.provider import COMPONENT_TYPES
 from app.utils import prompt_lineage_ids
 
@@ -496,3 +496,25 @@ def average_historical_cost(db: Session, *, root_prompt_id: int, model_id: int) 
             costs.append(cost)
 
     return sum(costs) / len(costs) if costs else None
+
+
+def client_month_to_date_spend(db: Session, *, client_id: int, month_start: datetime) -> float | None:
+    """Total cost of `client_id`'s runs from `month_start` onward (docs/TASKS_SCHEDULER.md T8,
+
+    design decision 33's monthly budget warning) — SQL-side `SUM()`, not a Python loop over `Run`
+    rows, since a month of a client's runs can be large (same discipline as
+    app/services/ops_dashboard.py's own cost aggregations). `None` when the client has no runs
+    with a computable cost this month yet — never a silent 0, so "no spend" and "unknown spend"
+    stay distinguishable, same as every other cost total in this app.
+    """
+    cost_expr = run_cost_sql_expr(RawResponse.token_usage, Run.model_id, Run.started_at, AIModel.is_free)
+    total = db.scalar(
+        select(func.sum(cost_expr))
+        .select_from(Run)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .outerjoin(RawResponse, RawResponse.run_id == Run.id)
+        .where(PromptSet.client_id == client_id, Run.started_at >= month_start, Run.status != "pending")
+    )
+    return float(total) if total is not None else None

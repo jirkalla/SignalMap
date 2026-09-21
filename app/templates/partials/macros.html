@@ -210,6 +210,10 @@
 <svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M6.5 10.2l2.3 2.3 4.7-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
 {% endmacro %}
 
+{% macro icon_bell(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 2.5c-2.2 0-4 1.8-4 4v2.3c0 .5-.2 1-.5 1.4L4 12h12l-1.5-1.8c-.3-.4-.5-.9-.5-1.4V6.5c0-2.2-1.8-4-4-4z" stroke-linejoin="round" stroke-linecap="round"/><path d="M8.2 15a1.8 1.8 0 003.6 0" stroke-linecap="round"/></svg>
+{% endmacro %}
+
 {# Target-type markers for the schedule lists that mix schedules on a single prompt with
    schedules on a whole prompt set in the same table — the client-level list
    (app/templates/schedules/_list.html) and the global monitoring page

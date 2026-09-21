@@ -43,10 +43,22 @@ class WorkerHeartbeat(Base):
 class NotificationOutbox(Base):
     """One raised event, pending delivery through zero or more notification channels.
 
-    `recipient_user_id = NULL` means "all admins" rather than a specific person. `payload` carries
-    whatever the event type needs to render (e.g. schedule id, error message, occurrence count) —
-    deliberately unstructured per event type rather than one column per possible field, the same
-    reasoning as `Run.request_payload`/`RawResponse.raw_payload`.
+    `recipient_user_id = NULL` means "all admins" rather than a specific person — every event
+    type T8 wires up (design decision 25) targets the whole admin/editor team, not one person, so
+    every row today has it NULL; a per-user "unread" concept would need this to actually vary,
+    which nothing currently produces. `payload` carries whatever the event type needs to render
+    (e.g. schedule id, error message, occurrence count) — deliberately unstructured per event type
+    rather than one column per possible field, the same reasoning as `Run.request_payload`/
+    `RawResponse.raw_payload`.
+
+    `status` has no DB-level CHECK constraint (unlike `RunQueueItem.status`) — legal values are
+    `pending` (written, no channel has run yet), `sent` (a channel delivered it — for the in-app
+    channel, T8, that just means "visible on /schedules" and doubles as "unread"), `read` (an
+    analyst dismissed it in the shared in-app inbox — T8, application-level only, no schema
+    change needed since the column was never constrained), `failed` (a channel raised), and
+    `suppressed` (an accumulated backlog a channel deliberately chose not to deliver on
+    activation — see app/notifications/base.py's `send()` docstring; nothing produces this yet,
+    since the in-app channel has no backlog concept).
     """
 
     __tablename__ = "notification_outbox"

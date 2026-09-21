@@ -33,7 +33,7 @@
           {% if schedule.next_run_at %}{{ local_time(schedule.next_run_at, t('common.utc_suffix'), seconds=False) }}{% else %}&mdash;{% endif %}
         </td>
         <td class="py-3 px-4 text-stone-500">
-          {% if schedule.ends_on %}{{ schedule.ends_on.isoformat() }}{% else %}{{ t('schedules.end_occurrences_summary').format(count=schedule.max_occurrences) }}{% endif %}
+          {% if schedule.ends_on %}{{ schedule.ends_on.isoformat() }}{% else %}{{ t('schedules.end_occurrences_summary').format(count=schedule.max_occurrences - schedule.occurrences_count) }}{% endif %}
         </td>
         <td class="py-3 px-4">
           {% if schedule.inactive_reason == 'completed' %}

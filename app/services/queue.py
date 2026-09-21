@@ -27,6 +27,7 @@ from app.models.client import Client
 from app.models.prompt import Prompt
 from app.models.run import Run
 from app.models.schedule import RunQueueItem, RunSchedule
+from app.services.notifications import notify
 from app.services.scheduling import compute_next_run_at
 from app.utils import current_prompt_version
 
@@ -121,7 +122,14 @@ def _target_prompts(db: Session, schedule: RunSchedule) -> list[Prompt]:
     raise NotImplementedError(f"schedule {schedule.id}: unknown target_type={schedule.target_type!r}")
 
 
-def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int) -> None:
+def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int) -> int:
+    """Enqueue every due window of `schedule`. Returns the number of windows skipped as
+
+    `worker_down` this pass — not the number of DB rows written, since windows beyond
+    `_MAX_MISSED_WINDOW_ROWS` collapse into one summary row but still count as real missed
+    windows here — so the caller can roll this up into one `schedule.window_skipped`
+    notification per ticker pass rather than one per schedule (design decision 25 / T8).
+    """
     prompts = _target_prompts(db, schedule)
     is_batch = schedule.target_type == "prompt_set"
     fanout = [
@@ -212,6 +220,7 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
         )
 
     schedule.last_enqueued_at = now
+    return missed_window_rows_written + extra_missed_windows
 
 
 def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: int) -> None:
@@ -220,6 +229,10 @@ def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: i
     Runs regardless of `SCHEDULER_DRY_RUN` (design decision 15) — dry-run only short-circuits
     the executor's adapter call, never planning itself, so `/schedules` shows the same queue in
     shadow mode as it would for real.
+
+    Fires one `schedule.window_skipped` notification for the WHOLE pass when any schedule missed
+    a window as `worker_down`, not one per schedule or per window (T8) — a worker that was down
+    for an hour affecting ten schedules should read as one event, not ten.
     """
     schedules = db.scalars(
         select(RunSchedule).where(
@@ -228,9 +241,24 @@ def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: i
             RunSchedule.next_run_at <= now,
         )
     ).all()
+    total_skipped_windows = 0
+    affected_schedule_ids: list[int] = []
+    affected_client_names: list[str] = []
     for schedule in schedules:
-        _enqueue_one_schedule(db, schedule, now=now, grace_period_minutes=grace_period_minutes)
+        skipped = _enqueue_one_schedule(db, schedule, now=now, grace_period_minutes=grace_period_minutes)
+        if skipped:
+            total_skipped_windows += skipped
+            affected_schedule_ids.append(schedule.id)
+            if schedule.client.name not in affected_client_names:
+                affected_client_names.append(schedule.client.name)
     db.commit()
+
+    if total_skipped_windows:
+        notify(
+            db,
+            "schedule.window_skipped",
+            {"count": total_skipped_windows, "schedule_ids": affected_schedule_ids, "client_names": affected_client_names},
+        )
 
 
 def claim_next(db: Session, *, worker_name: str, now: datetime, lease_minutes: int) -> RunQueueItem | None:

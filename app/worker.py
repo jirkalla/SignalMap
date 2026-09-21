@@ -11,7 +11,12 @@ Loop, once per iteration:
      queue regardless, since two app instances must never both plan on their own schedule.
   3. Lease/Run reconciliation (`release_expired_leases`, `reconcile_interrupted_runs`) — also
      at most once a minute.
-  4. `claim_next` + `process_claimed_item` — at most one item per iteration.
+  3b. Notification checks (`check_expiring_schedules`, `check_budget_thresholds`, T8) — same
+     once-a-minute cadence; both are pure state observation (nothing about them ties to a single
+     queue item), so they ride the ticker interval rather than getting a schedule of their own.
+  4. `claim_next` + `process_claimed_item` — at most one item per iteration; a terminal failure
+     here also fires a `schedule.run_failed` notification (T8), only on the FINAL attempt, never
+     on a transport retry that might still recover.
   5. Sleep 5 seconds.
 
 `process_claimed_item` is the one piece worth unit testing directly (tests/test_worker_queue.py)
@@ -31,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.logging_config import configure_logging
+from app.models.client import Client
 from app.models.market import Market
 from app.models.notification import WorkerHeartbeat
 from app.models.persona import Persona
@@ -38,6 +44,7 @@ from app.models.prompt import Prompt
 from app.models.provider import AIModel
 from app.models.run import Run
 from app.models.schedule import RunQueueItem
+from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
 from app.services.run_execution import build_request_payload, execute_run
 
@@ -188,11 +195,29 @@ def process_claimed_item(
         if _is_retryable_error(exc) and item.attempts < _MAX_TRANSPORT_ATTEMPTS:
             item.status = "queued"
             item.scheduled_for = now + timedelta(minutes=_backoff_minutes(item.attempts))
+            db.commit()
         else:
             item.status = "error"
             item.last_error = str(exc)
             item.finished_at = now
-        db.commit()
+            db.commit()
+            # Only on the FINAL failure, never on a transport retry above — T8 design decision
+            # 25's whole point is a notification means "this needs a human", not "a retry queued
+            # itself", so a flaky 429 that recovers on attempt 2 never reaches here.
+            client = db.get(Client, item.client_id)
+            notify(
+                db,
+                "schedule.run_failed",
+                {
+                    "queue_item_id": item.id,
+                    "schedule_id": item.schedule_id,
+                    "client_id": item.client_id,
+                    "client_name": client.name if client is not None else None,
+                    "run_id": run.id,
+                    "prompt_text": prompt.text[:200],
+                    "error": str(exc)[:500],
+                },
+            )
         return
 
     item.status = "done"
@@ -252,6 +277,8 @@ def run_forever() -> None:
                     enqueue_due_schedules(db, now=now, grace_period_minutes=settings.scheduler_grace_period_minutes)
                 release_expired_leases(db, now=now)
                 reconcile_interrupted_runs(db, now=now)
+                check_expiring_schedules(db, now=now)
+                check_budget_thresholds(db, now=now)
                 last_ticker_run = now
 
             item = claim_next(db, worker_name=settings.worker_name, now=now, lease_minutes=settings.scheduler_lease_minutes)

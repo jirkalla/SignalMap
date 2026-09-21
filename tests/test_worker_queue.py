@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import RawResponsePayload
 from app.models import AIModel, Client, Persona, Prompt, PromptSet, Run
+from app.models.notification import NotificationOutbox
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.queue import (
     CLIENT_PRIORITY_WEIGHT,
@@ -323,6 +324,25 @@ def test_terminal_error_marks_item_error_immediately(db_session, seed, sample_pr
 
     assert item.status == "error"
     assert item.last_error is not None
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.run_failed")).all()
+    assert len(notifications) == 1
+    assert notifications[0].status == "sent"
+    assert notifications[0].payload["queue_item_id"] == item.id
+
+
+def test_retryable_error_does_not_notify(db_session, seed, sample_prompt, prompt_client):
+    """A transport error that still has attempts left just requeues — T8's whole point is a
+
+    notification means "this needs a human", so a 503 that might recover on attempt 2 must not
+    fire schedule.run_failed yet.
+    """
+    FakeAdapter.error_to_raise = _RetryableError(503)
+    item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=0)
+
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+
+    assert item.status == "queued"
+    assert db_session.scalars(select(NotificationOutbox)).all() == []
 
 
 def test_retryable_error_becomes_terminal_after_max_attempts(db_session, seed, sample_prompt, prompt_client):
@@ -422,7 +442,36 @@ def test_enqueue_skips_a_window_past_grace_as_worker_down(db_session, seed, samp
     assert items[0].skip_reason == "worker_down"
     db_session.refresh(schedule)
     assert schedule.occurrences_count == 1
-    assert schedule.next_run_at > NOW
+
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.window_skipped")).all()
+    assert len(notifications) == 1
+    assert notifications[0].payload["count"] == 1
+    assert notifications[0].payload["schedule_ids"] == [schedule.id]
+
+
+def test_enqueue_window_skipped_notification_is_one_row_for_the_whole_pass(db_session, seed, sample_prompt, prompt_client, admin_user):
+    """Two different schedules both missing a window in the same ticker pass must still produce
+
+    exactly one schedule.window_skipped notification, summed across both — not one per schedule
+    (design decision 25 / T8's own "souhrnně za jeden průchod tickeru" requirement).
+    """
+    stale_window = NOW - timedelta(hours=20)
+    local_time_of_day = stale_window.astimezone(ZoneInfo("Europe/Prague")).time()
+    first = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        admin_user=admin_user, time_of_day=local_time_of_day, next_run_at=stale_window,
+    )
+    second = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        admin_user=admin_user, time_of_day=local_time_of_day, next_run_at=stale_window,
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.window_skipped")).all()
+    assert len(notifications) == 1
+    assert notifications[0].payload["count"] == 2
+    assert sorted(notifications[0].payload["schedule_ids"]) == sorted([first.id, second.id])
 
 
 # ---------------------------------------------------------------------------
