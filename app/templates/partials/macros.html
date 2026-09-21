@@ -244,6 +244,15 @@
 </div>
 {% endmacro %}
 
+{# Compact "who" indicator — initials circle with the full name as a native tooltip, same
+   short-label-plus-title convention base.html already uses for the header's own account label
+   (display_label + title=name), just drawn as a circle instead of plain text. Used wherever a
+   row needs to show a user without spending a whole line of text on their name (e.g. schedule
+   ownership on /schedules, design decision post-T9). #}
+{% macro avatar_badge(user, size='22px') %}
+<span title="{{ user.name }}" class="inline-flex items-center justify-center rounded-full bg-sky-50 text-sky-700 text-[10px] font-medium shrink-0" style="width: {{ size }}; height: {{ size }};">{{ user.initials }}</span>
+{% endmacro %}
+
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
 {# Plain <a href> links, never hx-get — a file download needs a real browser
    navigation, not an HTMX-swapped fragment. id_prefix is only needed on a

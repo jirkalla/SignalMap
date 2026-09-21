@@ -40,11 +40,20 @@ class User(SQLAlchemyBaseUserTable[int], Base):
     @property
     def display_label(self) -> str:
         """The short label shown in the header — self-service `display_name` if the account set
-        one, else initials computed from `name` (first letter of the first and last word), so an
-        unset display name never means showing the full, potentially long, `name` there.
+        one, else `initials` below, so an unset display name never means showing the full,
+        potentially long, `name` there. `display_name` is free text (no length cap), so this can
+        itself run longer than two characters — fine for the header's plain-text label, but not
+        for a fixed-size avatar circle, which wants `initials` instead (see there).
         """
-        if self.display_name:
-            return self.display_name
+        return self.display_name or self.initials
+
+    @property
+    def initials(self) -> str:
+        """One or two letters computed from `name` alone (first letter of the first and last
+        word), ignoring any self-service `display_name` — for fixed-size avatar circles (e.g. the
+        schedule-ownership indicator on /schedules, T9 follow-up), where a long custom
+        `display_name` would overflow a circle sized for initials.
+        """
         parts = self.name.split()
         if not parts:
             return self.name

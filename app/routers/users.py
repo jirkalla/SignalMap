@@ -18,7 +18,9 @@ from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import User
+from app.models.schedule import RunSchedule
 from app.models.user import ROLES, build_user
+from app.services.notifications import notify
 from app.templating import get_t, render
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_role("admin"))])
@@ -51,6 +53,35 @@ def _duplicate_email_response(request: Request):
     t = get_t(request)
     return _form_error_response(
         request, title=t("user.create_title"), action="/users", user=None, error=t("errors.user_email_duplicate"), status_code=409
+    )
+
+
+def _pause_schedules_for_deactivated_user(db: Session, user: User) -> None:
+    """Pause every currently-active schedule this user owns (docs/TASKS_SCHEDULER.md design
+    decision 23) and fire one summary notification — called only from the deactivation branch of
+    `toggle_user_active`, never from reactivation, so reactivating a user can never silently
+    resume the schedules it paused. `next_run_at` is cleared the same way `toggle_schedule`'s own
+    pause branch clears it, so a stale due time can't linger on a schedule nothing will enqueue.
+    """
+    schedules = db.scalars(
+        select(RunSchedule).where(RunSchedule.created_by_user_id == user.id, RunSchedule.is_active.is_(True))
+    ).all()
+    if not schedules:
+        return
+    for schedule in schedules:
+        schedule.is_active = False
+        schedule.inactive_reason = "owner_deactivated"
+        schedule.next_run_at = None
+    db.commit()
+    notify(
+        db,
+        "schedule.owner_deactivated",
+        {
+            "deactivated_user_id": user.id,
+            "deactivated_user_name": user.name,
+            "count": len(schedules),
+            "client_names": sorted({schedule.client.name for schedule in schedules}),
+        },
     )
 
 
@@ -217,10 +248,18 @@ def toggle_user_active(
     An admin deactivating their own account would lock themselves out with no other admin able
     to undo it via this same admin-only UI (docs/TASKS_PHASE6.md follow-up, 2026-09-12) — refused
     for the logged-in user's own id, same as the reactivation direction being harmless either way.
+
+    Deactivating also pauses every schedule this user owns (docs/TASKS_SCHEDULER.md T9, design
+    decision 23) — a schedule created by someone no longer with the company must not keep spending
+    money unattended. Reactivating the account deliberately does **not** resume them: silently
+    turning paid runs back on for a person who left is worse than the pause itself staying silent
+    a while longer. Resuming is a separate, conscious admin action on `/schedules`.
     """
     user = _get_user_or_404(db, request, user_id)
     if user.id == current.id and user.is_active:
         raise AppError("forbidden", get_t(request)("errors.user_cannot_deactivate_self"), status_code=403)
     user.is_active = not user.is_active
+    if not user.is_active:
+        _pause_schedules_for_deactivated_user(db, user)
     db.commit()
     return RedirectResponse(url="/users", status_code=303)

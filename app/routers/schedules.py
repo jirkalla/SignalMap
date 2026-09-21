@@ -135,14 +135,15 @@ def all_schedules(db: Session) -> list[RunSchedule]:
     group rows with `itertools.groupby` (which, like Jinja's own `groupby` filter, requires
     pre-sorted input) without a second query; within a client, paused/completed schedules
     (`next_run_at IS NULL`) sink to the bottom rather than interleaving by a NULL that would
-    otherwise sort first. Eager-loads `client` — the template reads its name on every row, and
-    this page can list hundreds of schedules, so a lazy load there would be its own N+1 alongside
-    the one `find_all_overlap_counts` already guards against.
+    otherwise sort first. Eager-loads `client` and `created_by` — the template reads the client's
+    name on every row, and (T9 follow-up) the owner's name for the target cell's subtitle and the
+    search index, so this page can list hundreds of schedules without either becoming its own N+1
+    alongside the one `find_all_overlap_counts` already guards against.
     """
     return db.scalars(
         select(RunSchedule)
         .join(Client, RunSchedule.client_id == Client.id)
-        .options(joinedload(RunSchedule.client))
+        .options(joinedload(RunSchedule.client), joinedload(RunSchedule.created_by))
         .order_by(Client.name.asc(), RunSchedule.is_active.desc(), RunSchedule.next_run_at.asc().nulls_last())
     ).all()
 
@@ -843,6 +844,37 @@ def _grouped_schedules_by_client(t, schedules: list[RunSchedule]) -> list[dict]:
     return groups
 
 
+def _owner_deactivated_schedule_groups(db: Session, t) -> list[dict]:
+    """[{owner_name, schedules: [{schedule, client_name, target_label, target_url}]}] for the
+
+    /schedules "owner deactivated" warning banner (T9, design decision 23) — one group per former
+    owner, so an admin deactivating several people at once still sees one clearly attributed block
+    per person rather than a flat, unexplained list. Deliberately has no action of its own: the
+    banner links each row to the schedule's existing Resume button (`toggle_schedule`), which
+    already reactivates and reassigns `updated_by_user_id` to whoever clicks it — no separate
+    "take over" route to keep in sync with that one.
+    """
+    schedules = db.scalars(
+        select(RunSchedule)
+        .options(joinedload(RunSchedule.client), joinedload(RunSchedule.created_by))
+        .where(RunSchedule.inactive_reason == "owner_deactivated")
+    ).all()
+    if not schedules:
+        return []
+    schedules = sorted(schedules, key=lambda s: (s.created_by.name, s.client.name))
+
+    groups = []
+    for owner_name, group_iter in groupby(schedules, key=lambda s: s.created_by.name):
+        entries = []
+        for schedule in group_iter:
+            target_label, target_url, _ = schedule_target_display(db, schedule)
+            entries.append(
+                {"schedule": schedule, "client_name": schedule.client.name, "target_label": target_label, "target_url": target_url}
+            )
+        groups.append({"owner_name": owner_name, "schedules": entries})
+    return groups
+
+
 def _health_strip_groups(db: Session, t) -> list[dict]:
     """[{client_id, client_name, has_problem, schedule_count, schedules}] for the "Historie"
 
@@ -946,6 +978,13 @@ def _notification_text_and_url(t, notification: NotificationOutbox) -> tuple[str
         )
         url = f"/clients/{payload['client_id']}" if payload.get("client_id") else None
         return text, url
+    if notification.event_type == "schedule.owner_deactivated":
+        text = t("notifications.schedule_owner_deactivated").format(
+            user_name=payload.get("deactivated_user_name") or "?",
+            count=payload.get("count", 0),
+            client_names=", ".join(payload.get("client_names", [])) or "?",
+        )
+        return text, "/schedules?view=schedules"
     return notification.event_type, None
 
 
@@ -1041,6 +1080,7 @@ def schedules_monitor(
                 "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
                 "schedule_targets": {s.id: schedule_target_display(db, s) for s in schedules},
                 "overlap_counts": find_all_overlap_counts(db, schedules),
+                "owner_deactivated_groups": _owner_deactivated_schedule_groups(db, t),
             }
         )
     elif view == "queue":
