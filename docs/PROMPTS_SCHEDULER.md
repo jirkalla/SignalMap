@@ -1,6 +1,12 @@
 # SignalMap — Claude Code Session Prompts: Scheduler
 
-## v1.1 | Září 2026
+## v1.2 | Září 2026
+##
+## v1.2 (2026-09-21) — přibyl prompt SCH-5c (upozornění na překryv
+## rozvrhů), objevil se v konverzaci při SCH-5b jako reálný scénář: dva
+## nezávislé rozvrhy (jeden na prompt, jeden na set obsahující ten samý
+## prompt) se stejným modelem/personou se nijak nekontrolují a obě
+## proběhnou. Design decision 36 v TASKS_SCHEDULER.md.
 ##
 ## v1.1 (2026-09-18) — revize po zpětné vazbě od Philipa. Přibyl prompt
 ## SCH-5b (set-level rozvrh) a do SCH-0/1/5/8/10 povinné ukončení rozvrhu,
@@ -9,8 +15,8 @@
 ##
 ## JAK POUŽÍVAT:
 ## 1. git checkout -b feature/signalmap-scheduler (z aktuálního master)
-## 2. Třináct kódových promptů (SCH-0 až SCH-11 včetně SCH-5b), POŘADÍ
-##    VYNUCENÉ — viz
+## 2. Čtrnáct kódových promptů (SCH-0 až SCH-11 včetně SCH-5b a SCH-5c),
+##    POŘADÍ VYNUCENÉ — viz
 ##    docs/TASKS_SCHEDULER.md "Task Index" pro odůvodnění (SCH-1 a SCH-2 jsou
 ##    nezávislé stavební kameny, které SCH-3 potřebuje oba; SCH-4 bez SCH-3
 ##    nemá co spouštět; SCH-5 zakládá data, která SCH-6 zobrazuje).
@@ -456,11 +462,71 @@ feat(scheduler): add prompt-set level schedules
 
 ---
 
+## SCH-5c — Upozornění na překryv rozvrhů
+
+Viz `docs/TASKS_SCHEDULER.md` T5c a design decision 36. Shrnutí: vznikl
+z reálného scénáře objeveného při SCH-5b — rozvrh na prompt (54, 8:30)
+a nezávislý rozvrh na prompt set (9, 8:45), který prompt 54 obsahuje,
+se stejným modelem/personou nijak nekolidují a oba proběhnou; nic
+existujícího to nehlídá (idempotence z SCH-0 chrání jen dvojí zařazení
+TÉHOŽ okna, ne dvě různá okna se stejným obsahem). Řešení: `find_
+overlapping_schedules(db, *, client_id, exclude_schedule_id, prompt_ids,
+model_ids, persona_ids)` v `app/routers/schedules.py`, zapojené do
+`GET /schedules/preview`, a nový amber warning blok v
+`_occurrence_preview.html`.
+
+Nejdřív navrhni CO uděláš + PROČ, včetně přesného SQL/ORM dotazu pro
+`find_overlapping_schedules` a přesného tvaru warning bloku, a počkej na
+potvrzení.
+
+**Kritické:**
+- **Warn, never block** (decision 36, stejná filozofie jako odhad ceny
+  v decision 29). Překryv může být záměrný (např. vědomě chceš dvojí
+  pokrytí kvůli výpadku providera) — appka o tom jen informuje, nikdy
+  neodmítne uložení.
+- Překryv = průnik na **prompt_id AND model_id AND persona_id** napříč
+  jinými aktivními rozvrhy stejného klienta. Částečná shoda (jen model,
+  jen prompt) se **nehlásí** — jinak by upozornění dostal skoro každý
+  druhý rozvrh a lidi by ho začali ignorovat.
+- Porovnávají se jen `is_active = true` rozvrhy jiné než ten upravovaný
+  (`exclude_schedule_id`) — pozastavený rozvrh nekolidoval nikdy.
+- Set-level rozvrh (SCH-5b) se do porovnání zapojuje přes **resolvnutý
+  seznam promptů** (stejná funkce jako při zařazení do fronty), ne přes
+  `prompt_set_id` — jinak by se rozvrh na set neporovnal s rozvrhem na
+  jeden jeho prompt.
+- Upozornění se počítá živě v `GET /schedules/preview` (stejný HTMX
+  partial jako náhled termínů a ceny z SCH-5), ne při uložení — uživatel
+  ho musí vidět **před** kliknutím na Uložit, ne až po chybové hlášce.
+
+**Po dokončení:**
+1. `pytest -v` — vč. testů: překryv detekován při shodě prompt+model+
+   persona; nedetekován při částečné shodě; nedetekován při porovnání
+   rozvrhu sama se sebou při editaci; nedetekován proti pozastavenému
+   rozvrhu.
+2. V prohlížeči: založit rozvrh na promptu 54 (8:30), pak založit rozvrh
+   na prompt setu 9 obsahujícím prompt 54 (8:45, stejný model/personu) →
+   amber upozornění se zobrazí v náhledu, uložení projde bez blokace.
+3. Responsive ~375 / 768 / desktop na warning bloku.
+4. Implementation summary + navrhni commit message (nespouštěj git)
+
+**Expected commit:**
+```
+feat(scheduler): warn on overlapping schedule targets
+```
+
+### (sem dopiš DONE — commit {hash} až bude hotovo)
+
+---
+
 ## SCH-6 — `/schedules`: rozvrhy, fronta, historie
 
 Viz `docs/TASKS_SCHEDULER.md` T6. Shrnutí: monitorovací stránka se třemi
 pohledy, stavový pruh workeru z heartbeatu, doplnění detailu runu o
 atribuci plánovače.
+
+**Ve v1.2 navíc:** pohled "Rozvrhy" má u každého rozvrhu odznak "překrývá
+se s N dalšími" z `find_overlapping_schedules` (SCH-5c, decision 36) —
+stejné pravidlo, jen teď viditelné trvale, ne jen v náhledu při ukládání.
 
 Nejdřív navrhni CO uděláš + PROČ, včetně tvaru každého ze tří pohledů, a
 počkej na potvrzení.
@@ -469,6 +535,9 @@ počkej na potvrzení.
 - **Jinja2 + HTMX, žádný Vue ostrůvek.** Jsou to tabulky a stavové
   odznaky, ne sdílený client-side stav — podmínka z `TASKS_PHASE4.md`
   design decision 1 není splněná.
+- Odznak překryvu se počítá **jednou pro všechny rozvrhy stránky**, ne
+  voláním `find_overlapping_schedules` v cyklu (N+1 dotazů) — se
+  stovkami rozvrhů klienta by to stránku znatelně zpomalilo.
 - Stavový pruh workeru (decision 19) je důvod, proč heartbeat vůbec
   existuje: monitoring, který při vypnutém workeru vypadá stejně jako
   prázdná fronta, aktivně lže. Musí umět `Plánovač běží · poslední signál
@@ -484,6 +553,9 @@ počkej na potvrzení.
 **Po dokončení:**
 1. `docker compose up -d --build`
 2. `/schedules` — všechny tři pohledy na datech z dry-runu.
+2b. Ověřit odznak překryvu na dvou rozvrzích ze SCH-5c (prompt 54 a
+   prompt set 9) a že se na stránce s víc rozvrhy negeneruje N+1 dotazů
+   (zkontrolovat SQL log / počet dotazů).
 3. `docker compose stop worker`, počkat, obnovit stránku → pruh musí
    přepnout na "neodpovídá". Pak `docker compose start worker`.
 4. Viewer → 403. Responsive ~375 / 768 / desktop na všech třech pohledech.
