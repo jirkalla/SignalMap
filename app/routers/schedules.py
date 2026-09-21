@@ -14,12 +14,13 @@ future `users.can_schedule` column changes only that one place (design decision 
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
+from itertools import groupby
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.auth import current_active_user, require_role
 from app.database import get_db
@@ -30,6 +31,15 @@ from app.models.schedule import RunSchedule
 from app.routers.prompt_sets import _get_prompt_set_or_404
 from app.routers.prompts import _get_prompt_or_404, _runnable_model_groups
 from app.services.cost import average_historical_cost
+from app.services.schedule_monitor import (
+    active_queue_rows,
+    format_duration_short,
+    history_batches,
+    oldest_queued_age_seconds,
+    queue_summary,
+    schedule_health,
+    worker_statuses,
+)
 from app.services.scheduling import ScheduleOccurrenceInput, compute_next_run_at, max_end_date, upcoming_occurrences
 from app.templating import get_t, render
 from app.utils import current_prompt_version, market_options, persona_options
@@ -37,6 +47,10 @@ from app.utils import current_prompt_version, market_options, persona_options
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 _editor_or_admin = [Depends(require_role("admin", "editor"))]
+
+# How many recent windows each schedule's health strip shows (design decision 37) — one place so
+# the label ("Health, last N windows") and the query's own LIMIT never drift apart.
+_HEALTH_STRIP_WINDOW_COUNT = 10
 
 _FREQUENCIES = ("daily", "weekly", "monthly")
 # ISO weekday numbers (Monday=1 ... Sunday=7), matching compute_next_run_at's own convention
@@ -106,6 +120,26 @@ def schedules_for_client(db: Session, client_id: int) -> list[RunSchedule]:
     """
     return db.scalars(
         select(RunSchedule).where(RunSchedule.client_id == client_id).order_by(RunSchedule.created_at.desc())
+    ).all()
+
+
+def all_schedules(db: Session) -> list[RunSchedule]:
+    """Every schedule across every client, grouped by client name then soonest-next-run first —
+
+    backs the /schedules "Rozvrhy" view (T6), unlike `schedules_for_client`, which scopes to one
+    client for that client's own detail page. Ordered by `Client.name` first so the router can
+    group rows with `itertools.groupby` (which, like Jinja's own `groupby` filter, requires
+    pre-sorted input) without a second query; within a client, paused/completed schedules
+    (`next_run_at IS NULL`) sink to the bottom rather than interleaving by a NULL that would
+    otherwise sort first. Eager-loads `client` — the template reads its name on every row, and
+    this page can list hundreds of schedules, so a lazy load there would be its own N+1 alongside
+    the one `find_all_overlap_counts` already guards against.
+    """
+    return db.scalars(
+        select(RunSchedule)
+        .join(Client, RunSchedule.client_id == Client.id)
+        .options(joinedload(RunSchedule.client))
+        .order_by(Client.name.asc(), RunSchedule.is_active.desc(), RunSchedule.next_run_at.asc().nulls_last())
     ).all()
 
 
@@ -226,6 +260,45 @@ def find_overlapping_schedules(
                 )
             )
     return overlaps
+
+
+def find_all_overlap_counts(db: Session, schedules: list[RunSchedule]) -> dict[int, int]:
+    """{schedule_id: count of other ACTIVE schedules it overlaps with} for every schedule in
+
+    `schedules` at once — the /schedules "Rozvrhy" view's persistent badge (T6, extending SCH-5c's
+    save-time warning to decision 36). Resolves each schedule's target exactly once, then compares
+    every pair in memory, instead of calling `find_overlapping_schedules` once per row — that
+    function itself resolves every OTHER schedule's target on every call, so doing that once per
+    row on a page listing N schedules would be O(N) work repeated N times. Only active schedules
+    are compared, and only within the same client, matching `find_overlapping_schedules`'s own
+    scoping (design decision 36).
+    """
+    resolved = []
+    for schedule in schedules:
+        if not schedule.is_active:
+            continue
+        target = _resolve_target(db, schedule.target_type, schedule.target_id)
+        if target is None:
+            continue
+        _label, client, _url, prompts = target
+        resolved.append(
+            (
+                schedule.id,
+                client.id,
+                {p.root_prompt_id or p.id for p in prompts},
+                set(schedule.model_ids),
+                set(schedule.persona_ids),
+            )
+        )
+
+    counts: dict[int, int] = {}
+    for i, (schedule_id, client_id, prompt_ids, model_ids, persona_ids) in enumerate(resolved):
+        for j, (_other_id, other_client_id, other_prompt_ids, other_model_ids, other_persona_ids) in enumerate(resolved):
+            if i == j or client_id != other_client_id:
+                continue
+            if prompt_ids & other_prompt_ids and model_ids & other_model_ids and persona_ids & other_persona_ids:
+                counts[schedule_id] = counts.get(schedule_id, 0) + 1
+    return counts
 
 
 def _redirect_url_for(db: Session, schedule: RunSchedule) -> str:
@@ -736,3 +809,161 @@ def preview_occurrences(
             "overlaps": overlaps,
         },
     )
+
+
+def _grouped_schedules_by_client(t, schedules: list[RunSchedule]) -> list[dict]:
+    """[{client_id, client_name, schedules, summary}] from `all_schedules`'s pre-sorted-by-
+
+    client-name list — `summary` is a pre-composed "N active, M paused" string (omitting a zero
+    category rather than saying "0 paused"), built here so the template only has to iterate, not
+    compose i18n strings inline with conditional Jinja logic.
+    """
+    groups = []
+    for client_name, group_iter in groupby(schedules, key=lambda s: s.client.name):
+        group = list(group_iter)
+        active_count = sum(1 for s in group if s.is_active)
+        paused_count = len(group) - active_count
+        parts = []
+        if active_count:
+            parts.append(t("schedules.group_active_count").format(count=active_count))
+        if paused_count:
+            parts.append(t("schedules.group_paused_count").format(count=paused_count))
+        groups.append(
+            {
+                "client_id": group[0].client_id,
+                "client_name": client_name,
+                "schedules": group,
+                "summary": ", ".join(parts),
+            }
+        )
+    return groups
+
+
+def _health_strip_groups(db: Session, t) -> list[dict]:
+    """[{client_id, client_name, has_problem, schedule_count, schedules}] for the "Historie"
+
+    health strip (design decision 37) — one entry per client that has at least one schedule with
+    terminal history, `schedules` being [{schedule, target_label, target_url, tiles, has_problem}].
+    A client with no `error` tile anywhere in its schedules' last ~10 windows collapses by default
+    in the template (`has_problem=False`); one with any error stays expanded so it's the first
+    thing visible.
+    """
+    health = schedule_health(db, limit_per_schedule=_HEALTH_STRIP_WINDOW_COUNT)
+    if not health:
+        return []
+    schedules = db.scalars(
+        select(RunSchedule)
+        .join(Client, RunSchedule.client_id == Client.id)
+        .options(joinedload(RunSchedule.client))
+        .where(RunSchedule.id.in_(health.keys()))
+        .order_by(Client.name.asc())
+    ).all()
+
+    groups = []
+    for client_name, group_iter in groupby(schedules, key=lambda s: s.client.name):
+        group = list(group_iter)
+        schedule_entries = []
+        client_has_problem = False
+        for schedule in group:
+            tiles = health.get(schedule.id, [])
+            has_problem = any(tile.outcome == "error" for tile in tiles)
+            client_has_problem = client_has_problem or has_problem
+            target_label, target_url, target_detail = schedule_target_display(db, schedule)
+            subtitle = (
+                t("schedules.target_subtitle_set").format(count=target_detail)
+                if schedule.target_type == "prompt_set"
+                else t("schedules.target_subtitle_prompt").format(set_name=target_detail)
+            )
+            schedule_entries.append(
+                {
+                    "schedule": schedule,
+                    "target_label": target_label,
+                    "target_url": target_url,
+                    "subtitle": subtitle,
+                    "tiles": tiles,
+                    "has_problem": has_problem,
+                }
+            )
+        groups.append(
+            {
+                "client_id": group[0].client_id,
+                "client_name": client_name,
+                "has_problem": client_has_problem,
+                "schedule_count": len(group),
+                "schedules": schedule_entries,
+            }
+        )
+    return groups
+
+
+@router.get("", dependencies=_editor_or_admin)
+def schedules_monitor(
+    request: Request,
+    view: Literal["schedules", "queue", "history"] = Query("schedules", description="Which of the three monitoring views to show."),
+    status: Literal["all", "errors", "skipped"] = Query(
+        "all", description="History view only: keep only batches with at least one item in that status."
+    ),
+    q: str = Query("", description="History view only: free-text search across prompt text and client name."),
+    page: int = Query(1, ge=1, description="History view only: 1-indexed page of batches."),
+    db: Session = Depends(get_db),
+):
+    """Monitoring page (docs/TASKS_SCHEDULER.md T6): worker liveness, then one of three views —
+
+    every schedule across every client, grouped by client with search/filter and its overlap
+    badge (T6, extending SCH-5c's save-time warning to a persistent one); the active queue in
+    claim order with a KPI summary, auto-refreshed client-side via HTMX polling; or searchable,
+    batched history. Each view's data is computed only when it's the one being shown, not all
+    three on every request.
+    """
+    t = get_t(request)
+    now = datetime.now(timezone.utc)
+
+    workers = [
+        {
+            "worker_name": worker_status.worker_name,
+            "text": t("schedules.worker_stale" if worker_status.is_stale else "schedules.worker_running").format(
+                duration=format_duration_short(t, worker_status.seconds_since)
+            ),
+            "is_stale": worker_status.is_stale,
+            "dry_run": worker_status.dry_run,
+        }
+        for worker_status in worker_statuses(db, now=now)
+    ]
+
+    context = {"view": view, "status": status, "q": q, "page": page, "workers": workers}
+
+    if view == "schedules":
+        schedules = all_schedules(db)
+        context.update(
+            {
+                "schedule_groups": _grouped_schedules_by_client(t, schedules),
+                "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
+                "schedule_targets": {s.id: schedule_target_display(db, s) for s in schedules},
+                "overlap_counts": find_all_overlap_counts(db, schedules),
+            }
+        )
+    elif view == "queue":
+        oldest_age = oldest_queued_age_seconds(db, now=now)
+        context.update(
+            {
+                "queue_rows": active_queue_rows(db),
+                "queue_summary": queue_summary(db),
+                "oldest_queued_duration": format_duration_short(t, oldest_age) if oldest_age is not None else None,
+            }
+        )
+    else:
+        batches, has_next = history_batches(db, status_filter=status, search=q, page=page, page_size=50)
+        # The health strip is a landing-page overview, not another filtered result — once the
+        # user is searching or paging, they're already investigating something specific, and
+        # showing it would be redundant (design decision 37).
+        show_health_strip = page == 1 and not q and status == "all"
+        context.update(
+            {
+                "history_batches": batches,
+                "history_has_next": has_next,
+                "health_groups": _health_strip_groups(db, t) if show_health_strip else [],
+                "health_window_count": _HEALTH_STRIP_WINDOW_COUNT,
+            }
+        )
+
+    return render(request, "schedules/index.html", context)

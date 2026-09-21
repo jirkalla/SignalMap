@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AIModel, Client, Persona, Prompt, PromptSet, User
 from app.models.schedule import RunSchedule
-from app.routers.schedules import find_overlapping_schedules
+from app.routers.schedules import find_all_overlap_counts, find_overlapping_schedules
 
 TODAY = date(2026, 9, 21)
 
@@ -215,3 +215,40 @@ def test_detects_overlap_between_prompt_and_prompt_set_schedules(
     assert len(overlaps) == 1
     assert overlaps[0].schedule.id == existing.id
     assert overlaps[0].shared_prompt_count == 1
+
+
+def test_find_all_overlap_counts_counts_mutual_overlaps(db_session, seed, sample_prompt, second_prompt, admin_user):
+    """The /schedules "Rozvrhy" badge (T6): computed once for a whole page of schedules, so a pair
+
+    that overlaps must show up on BOTH sides, not just when one of them is the one being edited.
+    """
+    client = sample_prompt.prompt_set.client
+    on_prompt = _make_schedule(
+        db_session, client=client, target_type="prompt", target_id=sample_prompt.id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id], created_by=admin_user,
+    )
+    on_set = _make_schedule(
+        db_session, client=client, target_type="prompt_set", target_id=sample_prompt.prompt_set_id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id], created_by=admin_user,
+    )
+
+    counts = find_all_overlap_counts(db_session, [on_prompt, on_set])
+
+    assert counts == {on_prompt.id: 1, on_set.id: 1}
+
+
+def test_find_all_overlap_counts_ignores_paused_schedules(db_session, seed, sample_prompt, admin_user):
+    client = sample_prompt.prompt_set.client
+    active = _make_schedule(
+        db_session, client=client, target_type="prompt", target_id=sample_prompt.id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id], created_by=admin_user,
+    )
+    paused = _make_schedule(
+        db_session, client=client, target_type="prompt", target_id=sample_prompt.id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id], created_by=admin_user,
+        is_active=False, inactive_reason="user",
+    )
+
+    counts = find_all_overlap_counts(db_session, [active, paused])
+
+    assert counts == {}

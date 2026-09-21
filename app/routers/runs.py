@@ -35,6 +35,7 @@ from app.models import (
     SearchQuery,
     User,
 )
+from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
 from app.services.export import (
@@ -296,6 +297,22 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
     )
+    # `triggered_by_user_id IS NULL` on a scheduled run isn't "nobody" (design decision 21) — it's
+    # the scheduler pseudo-user, and `run.triggered_by` alone has no path back to which schedule or
+    # who set it up. Only looked up for scheduled runs: a manual run's RunQueueItem, if any, never
+    # carries a schedule anyway (design decision 5).
+    schedule_attribution = None
+    if run.trigger_type == "scheduled":
+        queue_item = db.scalars(
+            select(RunQueueItem)
+            .options(joinedload(RunQueueItem.schedule).joinedload(RunSchedule.created_by))
+            .where(RunQueueItem.run_id == run.id)
+        ).first()
+        if queue_item is not None and queue_item.schedule is not None:
+            schedule_attribution = {
+                "schedule_id": queue_item.schedule.id,
+                "created_by_name": queue_item.schedule.created_by.name,
+            }
     return render(
         request,
         "runs/detail.html",
@@ -310,6 +327,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "tracked_entities_configured": tracked_entities_configured,
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
+            "schedule_attribution": schedule_attribution,
         },
     )
 

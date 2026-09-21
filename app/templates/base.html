@@ -35,6 +35,9 @@
         {% if can_edit(current_user) %}
         <a href="/ops" class="text-stone-600 hover:text-stone-900">{{ t('nav.ops') }}</a>
         {% endif %}
+        {% if can_schedule(current_user) %}
+        <a href="/schedules" class="text-stone-600 hover:text-stone-900">{{ t('nav.schedules') }}</a>
+        {% endif %}
 
         {% if can_edit(current_user) %}
         <div class="relative">

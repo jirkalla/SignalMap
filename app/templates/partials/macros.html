@@ -206,16 +206,38 @@
 <svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l8 14H2l8-14z" stroke-linejoin="round"/><path d="M10 8.5v3.5" stroke-linecap="round"/><circle cx="10" cy="14.5" r="0.9" fill="currentColor" stroke="none"/></svg>
 {% endmacro %}
 
-{# Target-type markers for the client-level schedule list (app/templates/schedules/_list.html),
-   which is the one place schedules on a single prompt and schedules on a whole prompt set are
-   ever mixed in the same table — everywhere else (a prompt's or a prompt set's own detail page)
-   every row already shares the same target, so this distinction isn't needed there. #}
+{% macro icon_check(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M6.5 10.2l2.3 2.3 4.7-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{# Target-type markers for the schedule lists that mix schedules on a single prompt with
+   schedules on a whole prompt set in the same table — the client-level list
+   (app/templates/schedules/_list.html) and the global monitoring page
+   (app/templates/schedules/index.html, T6). Everywhere else (a prompt's or a prompt set's own
+   detail page) every row already shares the same target, so this distinction isn't needed there. #}
 {% macro icon_document(cls='w-4 h-4') %}
 <svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2.5h5l3 3v11a1 1 0 01-1 1H6a1 1 0 01-1-1v-13a1 1 0 011-1z" stroke-linejoin="round"/><path d="M11 2.5v3h3" stroke-linejoin="round"/><path d="M7 10.5h6M7 13.5h6" stroke-linecap="round"/></svg>
 {% endmacro %}
 
 {% macro icon_stack(cls='w-4 h-4') %}
 <svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l7 4-7 4-7-4 7-4z" stroke-linejoin="round"/><path d="M3 11l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 14.5l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{# The icon + name + type-subtitle block itself, shared by both tables above instead of each
+   duplicating the same markup — `subtitle` is pre-translated by the caller (this app's macros
+   never call t() themselves, see local_time/pill_badge for the same convention). #}
+{% macro schedule_target_cell(schedule, target_label, target_url, subtitle) %}
+<div class="flex items-start gap-2">
+  {% if schedule.target_type == 'prompt_set' %}
+  <span class="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md bg-sky-50 text-sky-600 shrink-0">{{ icon_stack('w-3.5 h-3.5') }}</span>
+  {% else %}
+  <span class="mt-0.5 text-stone-400 shrink-0">{{ icon_document('w-4 h-4') }}</span>
+  {% endif %}
+  <div>
+    <a href="{{ target_url }}" class="font-medium text-stone-700 hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+    <div class="text-xs text-stone-500 mt-0.5">{{ subtitle }}</div>
+  </div>
+</div>
 {% endmacro %}
 
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
