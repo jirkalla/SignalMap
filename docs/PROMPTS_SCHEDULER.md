@@ -639,7 +639,7 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 feat(scheduler): add notification outbox with in-app channel
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit b0f50ae
 
 ---
 
