@@ -444,7 +444,7 @@ runs                          -- existující tabulka, jen úprava indexu
 | T5c | Upozornění na překryv rozvrhů (stejný prompt+model+persona, jiný rozvrh) při uložení | ⏳ |
 | T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru + trvalé upozornění na překryv | ⏳ |
 | T7 | Dead letter: opakování chyb, hromadné akce | ⏳ |
-| T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ⏳ |
+| T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ✅ |
 | T9 | Pozastavení rozvrhů při deaktivaci uživatele | ⏳ |
 | T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ⏳ |
 | T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ⏳ |
