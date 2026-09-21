@@ -4,6 +4,8 @@ Strategy/reputation fields are explicitly out of scope for phase 1 — see
 the skill's "Build sequencing" section.
 """
 
+from decimal import Decimal, InvalidOperation
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
@@ -11,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
+from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
 from app.models import Client, ClientAlias, Prompt, PromptSet, Run, TrackedEntity, TrackedEntityAlias
@@ -190,7 +193,7 @@ def client_detail(request: Request, client_id: int, db: Session = Depends(get_db
 
 @router.get("/{client_id}/edit", dependencies=_editor_or_admin)
 def edit_client_form(request: Request, client_id: int, db: Session = Depends(get_db)):
-    """Render the client edit form, pre-filled with current values (FR-3)."""
+    """Render the client edit form, pre-filled with current values (FR-3, T10)."""
     client = _get_client_or_404(db, request, client_id)
     t = get_t(request)
     return render(
@@ -201,6 +204,7 @@ def edit_client_form(request: Request, client_id: int, db: Session = Depends(get
             "action": f"/clients/{client_id}/edit",
             "cancel_url": f"/clients/{client_id}",
             "client": client,
+            "default_daily_run_limit": get_settings().scheduler_default_daily_run_limit,
         },
     )
 
@@ -217,14 +221,40 @@ def update_client(
         description="Client's own primary domain, e.g. 'acme.com' — used to detect when the client's "
         "own site is among a run's cited sources.",
     ),
+    priority: int = Form(100, description="Scheduler priority weight — higher runs first when the queue is contested."),
+    daily_run_limit: str = Form(
+        "", description="Hard cap on runs per rolling 24h for this client. Empty uses the app-wide default."
+    ),
+    monthly_budget_usd: str = Form(
+        "", description="Soft monthly spend threshold in USD — crossing it only sends a notification. Empty means no threshold."
+    ),
     db: Session = Depends(get_db),
 ):
-    """Update an existing client's name, industry, notes, and domain (FR-3). The slug is immutable."""
+    """Update an existing client's name, industry, notes, domain, and scheduler settings (FR-3,
+
+    docs/TASKS_SCHEDULER.md T10). The slug is immutable.
+    """
+    t = get_t(request)
     client = _get_client_or_404(db, request, client_id)
     client.name = name.strip()
     client.industry = industry.strip() or None
     client.notes = notes.strip() or None
     client.domain = domain.strip().lower() or None
+    client.priority = priority
+    if daily_run_limit.strip():
+        try:
+            client.daily_run_limit = int(daily_run_limit.strip())
+        except ValueError:
+            raise AppError("invalid_daily_run_limit", t("errors.invalid_daily_run_limit"), status_code=400) from None
+    else:
+        client.daily_run_limit = None
+    if monthly_budget_usd.strip():
+        try:
+            client.monthly_budget_usd = Decimal(monthly_budget_usd.strip())
+        except InvalidOperation:
+            raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400) from None
+    else:
+        client.monthly_budget_usd = None
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 

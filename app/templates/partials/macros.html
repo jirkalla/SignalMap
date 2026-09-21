@@ -1,10 +1,11 @@
 {# Reusable form-field and UI macros shared across all CRUD screens (NFR-3). #}
 
-{% macro text_field(name, label, value='', type='text', required=False, placeholder='') %}
+{% macro text_field(name, label, value='', type='text', required=False, placeholder='', step=none) %}
 <div class="mb-4">
   <label for="{{ name }}" class="block text-sm font-medium text-stone-700 mb-1">{{ label }}{% if required %} *{% endif %}</label>
   <input type="{{ type }}" id="{{ name }}" name="{{ name }}" value="{{ value or '' }}" placeholder="{{ placeholder }}"
          {% if required %}required{% endif %}
+         {% if step is not none %}step="{{ step }}"{% endif %}
          class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
 </div>
 {% endmacro %}

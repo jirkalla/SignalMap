@@ -29,7 +29,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -44,9 +44,9 @@ from app.models.prompt import Prompt
 from app.models.provider import AIModel
 from app.models.run import Run
 from app.models.schedule import RunQueueItem
-from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify
+from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_quota_exceeded
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
-from app.services.run_execution import build_request_payload, execute_run
+from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ def process_claimed_item(
     now: datetime,
     dry_run: bool,
     grace_period_minutes: int,
+    default_daily_run_limit: int,
 ) -> None:
     """Execute (or skip) one already-`leased` queue item — the executor half of the worker.
 
@@ -134,6 +135,20 @@ def process_claimed_item(
         item.status, item.skip_reason = "skipped", "inactive_model"
         item.finished_at = now
         db.commit()
+        return
+
+    # T10, design decision 26 — the same check_daily_quota the manual trigger calls, so neither
+    # path can spend past a client's own daily_run_limit just because the other forgot to check.
+    try:
+        check_daily_quota(db, client_id=item.client_id, now=now, default_limit=default_daily_run_limit)
+    except QuotaExceededError:
+        item.status, item.skip_reason = "skipped", "quota_exceeded"
+        item.finished_at = now
+        db.commit()
+        client = db.get(Client, item.client_id)
+        notify_quota_exceeded(
+            db, client_id=item.client_id, client_name=client.name if client is not None else "?", reason="daily_run_limit", now=now
+        )
         return
 
     # Design decision 17 — mirrors the manual-trigger guard in app/routers/runs.py's
@@ -240,6 +255,21 @@ def write_heartbeat(db: Session, *, worker_name: str, dry_run: bool, now: dateti
     HEARTBEAT_FILE.write_text(now.isoformat())
 
 
+def deregister_heartbeat(db: Session, *, worker_name: str) -> None:
+    """Delete this worker's own `worker_heartbeats` row on a clean shutdown (SIGTERM/SIGINT).
+
+    `worker_name` defaults to the container's own hostname (T10, docs/TASKS_SCHEDULER.md, for
+    `docker compose up --scale worker=N` support) — without this cleanup, every ordinary
+    redeploy would abandon its old row forever: it never gets another heartbeat, so /schedules
+    would show a worker that was deliberately replaced as permanently "not responding", and
+    `notify_worker_stale` would eventually fire a false alarm over it. A worker that goes away
+    without a clean shutdown (SIGKILL, OOM, crash) skips this and correctly stays stale — that IS
+    a real failure someone should hear about.
+    """
+    db.execute(delete(WorkerHeartbeat).where(WorkerHeartbeat.worker_name == worker_name))
+    db.commit()
+
+
 def run_forever() -> None:
     """The worker's main loop — see module docstring for the per-iteration sequence."""
     configure_logging()
@@ -274,7 +304,12 @@ def run_forever() -> None:
 
             if now - last_ticker_run >= _TICKER_INTERVAL:
                 if settings.scheduler_enabled:
-                    enqueue_due_schedules(db, now=now, grace_period_minutes=settings.scheduler_grace_period_minutes)
+                    enqueue_due_schedules(
+                        db,
+                        now=now,
+                        grace_period_minutes=settings.scheduler_grace_period_minutes,
+                        max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
+                    )
                 release_expired_leases(db, now=now)
                 reconcile_interrupted_runs(db, now=now)
                 check_expiring_schedules(db, now=now)
@@ -289,10 +324,15 @@ def run_forever() -> None:
                     now=now,
                     dry_run=settings.scheduler_dry_run,
                     grace_period_minutes=settings.scheduler_grace_period_minutes,
+                    default_daily_run_limit=settings.scheduler_default_daily_run_limit,
                 )
 
         if not stop_requested:
             time.sleep(_ITEM_POLL_INTERVAL_SECONDS)
+
+    with SessionLocal() as db:
+        deregister_heartbeat(db, worker_name=settings.worker_name)
+    HEARTBEAT_FILE.unlink(missing_ok=True)
 
     logger.info("Worker %s stopped", settings.worker_name)
 

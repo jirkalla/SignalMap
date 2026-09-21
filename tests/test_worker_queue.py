@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import RawResponsePayload
 from app.models import AIModel, Client, Persona, Prompt, PromptSet, Run
-from app.models.notification import NotificationOutbox
+from app.models.notification import NotificationOutbox, WorkerHeartbeat
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.queue import (
     CLIENT_PRIORITY_WEIGHT,
@@ -27,7 +27,7 @@ from app.services.queue import (
     release_expired_leases,
     retry_all_errors,
 )
-from app.worker import process_claimed_item
+from app.worker import deregister_heartbeat, process_claimed_item
 from tests.conftest import TestSessionLocal
 from tests.fake_adapter import FakeAdapter
 
@@ -90,6 +90,31 @@ def _make_queue_item(db_session: Session, *, prompt: Prompt, client: Client, mod
 @pytest.fixture
 def prompt_client(sample_prompt: Prompt, db_session: Session) -> Client:
     return sample_prompt.prompt_set.client
+
+
+# ---------------------------------------------------------------------------
+# deregister_heartbeat
+# ---------------------------------------------------------------------------
+
+
+def test_deregister_heartbeat_removes_only_its_own_row(db_session):
+    """docs/TASKS_SCHEDULER.md T10 — a worker's own row disappears on a clean shutdown, so a
+
+    replaced-not-dead worker (a routine redeploy) never shows as permanently "not responding" on
+    /schedules; another worker's row is untouched.
+    """
+    db_session.add_all(
+        [
+            WorkerHeartbeat(worker_name="this-one", last_seen_at=NOW, dry_run=True),
+            WorkerHeartbeat(worker_name="another-worker", last_seen_at=NOW, dry_run=True),
+        ]
+    )
+    db_session.commit()
+
+    deregister_heartbeat(db_session, worker_name="this-one")
+
+    remaining = db_session.scalars(select(WorkerHeartbeat)).all()
+    assert [w.worker_name for w in remaining] == ["another-worker"]
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +256,7 @@ def test_grace_expired_item_is_skipped_without_running(db_session, seed, sample_
         scheduled_for=NOW - timedelta(hours=7),
     )
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "skipped"
     assert item.skip_reason == "grace_expired"
@@ -243,7 +268,7 @@ def test_inactive_prompt_is_skipped_not_errored(db_session, seed, sample_prompt,
     db_session.commit()
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "skipped"
     assert item.skip_reason == "inactive_prompt"
@@ -254,10 +279,31 @@ def test_inactive_model_is_skipped_not_errored(db_session, seed, sample_prompt, 
     db_session.commit()
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "skipped"
     assert item.skip_reason == "inactive_model"
+
+
+def test_client_over_daily_quota_is_skipped_and_notifies_once(db_session, seed, sample_prompt, prompt_client):
+    """docs/TASKS_SCHEDULER.md T10, design decision 26 — the worker enforces the exact same
+
+    check_daily_quota the manual trigger does; the item is skipped/quota_exceeded, never errored,
+    and exactly one quota.exceeded notification is written for it.
+    """
+    prompt_client.daily_run_limit = 0
+    db_session.commit()
+    item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
+
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
+
+    assert item.status == "skipped"
+    assert item.skip_reason == "quota_exceeded"
+    assert item.run_id is None
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "quota.exceeded")).all()
+    assert len(notifications) == 1
+    assert notifications[0].payload["client_id"] == prompt_client.id
+    assert notifications[0].payload["reason"] == "daily_run_limit"
 
 
 def test_collision_with_pending_run_defers_instead_of_erroring(db_session, seed, sample_prompt, prompt_client):
@@ -269,7 +315,7 @@ def test_collision_with_pending_run_defers_instead_of_erroring(db_session, seed,
     db_session.commit()
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "deferred"
     assert item.run_id is None
@@ -280,7 +326,7 @@ def test_dry_run_skips_without_calling_the_adapter_or_creating_a_run(db_session,
     FakeAdapter.error_to_raise = RuntimeError("must never be called in dry-run")
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=True, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=True, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "skipped"
     assert item.skip_reason == "dry_run"
@@ -294,7 +340,7 @@ def test_successful_execution_marks_item_done_and_writes_run_id_before_no_longer
     )
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "done"
     assert item.run_id is not None
@@ -308,7 +354,7 @@ def test_retryable_error_requeues_with_backoff_and_keeps_the_run_as_error(db_ses
     FakeAdapter.error_to_raise = _RetryableError(503)
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "queued"
     assert item.scheduled_for == NOW + timedelta(minutes=1)
@@ -320,7 +366,7 @@ def test_terminal_error_marks_item_error_immediately(db_session, seed, sample_pr
     FakeAdapter.error_to_raise = _RetryableError(400)  # not 429/5xx -> terminal
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "error"
     assert item.last_error is not None
@@ -339,7 +385,7 @@ def test_retryable_error_does_not_notify(db_session, seed, sample_prompt, prompt
     FakeAdapter.error_to_raise = _RetryableError(503)
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=0)
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "queued"
     assert db_session.scalars(select(NotificationOutbox)).all() == []
@@ -349,7 +395,7 @@ def test_retryable_error_becomes_terminal_after_max_attempts(db_session, seed, s
     FakeAdapter.error_to_raise = _RetryableError(503)
     item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=3)
 
-    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360)
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "error"
 
@@ -367,7 +413,7 @@ def test_enqueue_creates_a_queued_item_with_client_weighted_priority(db_session,
         admin_user=admin_user, priority=7,
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     item = db_session.scalar(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id))
     assert item is not None
@@ -382,7 +428,7 @@ def test_enqueue_advances_next_run_at_from_the_window_not_now(db_session, seed, 
         admin_user=admin_user, frequency="daily", next_run_at=NOW - timedelta(minutes=1),
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     db_session.refresh(schedule)
     assert schedule.next_run_at > NOW
@@ -395,13 +441,13 @@ def test_enqueue_is_idempotent_against_a_concurrent_duplicate_insert(db_session,
     )
     original_window = schedule.next_run_at
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     # Simulate a second ticker pass that read the schedule before the first pass advanced it.
     db_session.refresh(schedule)
     schedule.next_run_at = original_window
     db_session.commit()
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     assert len(items) == 1
@@ -413,7 +459,7 @@ def test_enqueue_marks_schedule_completed_when_it_has_no_further_occurrences(db_
         admin_user=admin_user, ends_on=None, max_occurrences=1, occurrences_count=0,
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     db_session.refresh(schedule)
     assert schedule.is_active is False
@@ -434,7 +480,7 @@ def test_enqueue_skips_a_window_past_grace_as_worker_down(db_session, seed, samp
         next_run_at=stale_window,
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     assert len(items) == 1
@@ -447,6 +493,45 @@ def test_enqueue_skips_a_window_past_grace_as_worker_down(db_session, seed, samp
     assert len(notifications) == 1
     assert notifications[0].payload["count"] == 1
     assert notifications[0].payload["schedule_ids"] == [schedule.id]
+
+
+def test_enqueue_skips_a_window_when_client_queue_depth_is_full(db_session, seed, sample_prompt, prompt_client, admin_user):
+    """docs/TASKS_SCHEDULER.md T10 point 2 — a client already sitting at its queue-depth cap gets
+
+    its next due window skipped/queue_depth_exceeded instead of growing the queue further, and
+    the occurrence still consumes the schedule's own lifetime (design decision 31), same as a
+    worker_down skip does.
+    """
+    _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], status="queued")
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], admin_user=admin_user
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=1)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    assert len(items) == 1
+    assert items[0].status == "skipped"
+    assert items[0].skip_reason == "queue_depth_exceeded"
+    db_session.refresh(schedule)
+    assert schedule.occurrences_count == 1
+
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "quota.exceeded")).all()
+    assert len(notifications) == 1
+    assert notifications[0].payload["client_id"] == prompt_client.id
+    assert notifications[0].payload["reason"] == "queue_depth"
+
+
+def test_enqueue_does_not_skip_when_client_queue_depth_has_room(db_session, seed, sample_prompt, prompt_client, admin_user):
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], admin_user=admin_user
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    assert len(items) == 1
+    assert items[0].status == "queued"
 
 
 def test_enqueue_window_skipped_notification_is_one_row_for_the_whole_pass(db_session, seed, sample_prompt, prompt_client, admin_user):
@@ -466,7 +551,7 @@ def test_enqueue_window_skipped_notification_is_one_row_for_the_whole_pass(db_se
         admin_user=admin_user, time_of_day=local_time_of_day, next_run_at=stale_window,
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.window_skipped")).all()
     assert len(notifications) == 1
@@ -507,7 +592,7 @@ def test_enqueue_prompt_set_fans_out_prompts_times_models_times_personas_with_sh
         model_ids=[seed["model"].id, seed["anthropic_model"].id], persona_ids=[seed["persona"].id],
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     # 2 prompts x 2 models x 1 persona = 4
@@ -529,7 +614,7 @@ def test_enqueue_prompt_set_skips_inactive_prompts_without_a_row(db_session, see
         model_ids=[seed["model"].id], persona_ids=[seed["persona"].id],
     )
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     assert len(items) == 1
@@ -549,7 +634,7 @@ def test_enqueue_prompt_set_is_idempotent_against_a_concurrent_duplicate_insert(
     )
     original_window = schedule.next_run_at
 
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
     first_pass_count = len(db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all())
 
     # Simulate a second ticker pass that read the schedule before the first pass advanced it --
@@ -557,7 +642,7 @@ def test_enqueue_prompt_set_is_idempotent_against_a_concurrent_duplicate_insert(
     db_session.refresh(schedule)
     schedule.next_run_at = original_window
     db_session.commit()
-    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=500)
 
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     assert first_pass_count == 2  # 2 prompts x 1 model x 1 persona

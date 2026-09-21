@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, status_badge, delete_button, cost_badge, export_button_group, local_time, icon_edit, icon_trash, icon_play, icon_calendar, icon_history %}
+{% from "partials/macros.html" import select_field, status_badge, delete_button, cost_badge, export_button_group, local_time, icon_edit, icon_trash, icon_play, icon_calendar, icon_history, icon_warning %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -98,8 +98,12 @@
   <button type="submit" id="run-trigger-submit" disabled
           data-default-label="{{ t('prompt.trigger_run') }}" data-count-label="{{ t('prompt.trigger_runs_count') }}"
           class="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition disabled:opacity-40 disabled:cursor-not-allowed">{{ t('prompt.trigger_run') }}</button>
+  <div id="run-trigger-error" class="w-full flex items-start gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mt-3 mb-3" style="display: none;">
+    {{ icon_warning('w-4 h-4 text-red-800 mt-0.5 shrink-0') }}
+    <p class="text-sm text-red-800"></p>
+  </div>
 </form>
-<div class="-mt-2 space-y-1">
+<div class="mt-2 space-y-1">
   <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
   <p class="text-xs text-stone-400">{{ t('prompt.persona_override_hint') }}</p>
   {% if not model_groups %}
@@ -202,6 +206,8 @@
     if (!form) return;
     var submitButton = document.getElementById('run-trigger-submit');
     var errorBox = document.getElementById('model-selection-error');
+    var triggerErrorBox = document.getElementById('run-trigger-error');
+    var triggerErrorText = triggerErrorBox ? triggerErrorBox.querySelector('p') : null;
 
     form.addEventListener('submit', function (event) {
       event.preventDefault();
@@ -213,12 +219,21 @@
         return;
       }
       if (errorBox) errorBox.hidden = true;
+      // .hidden (the IDL property for the `hidden` attribute) loses to Tailwind's own `.flex`
+      // utility class here — both resolve to the same CSS specificity, and the CDN build's
+      // stylesheet loads after the browser's built-in `[hidden]` rule, so `.flex` wins and the
+      // box stayed visible (empty) from first page load, found live 2026-09-21. An inline
+      // style always wins regardless of load order, so visibility is driven by style.display
+      // instead, on both this element and the one below.
+      if (triggerErrorBox) { triggerErrorBox.style.display = 'none'; }
+      if (triggerErrorText) { triggerErrorText.textContent = ''; }
 
       submitButton.disabled = true;
       submitButton.textContent = form.getAttribute('data-pending-label');
 
       var marketId = form.querySelector('[name="market_id"]').value;
       var personaId = form.querySelector('[name="persona_id"]').value;
+      var anySucceeded = false;
 
       var requests = checked.map(function (checkbox) {
         var statusEl = form.querySelector('[data-model-status="' + checkbox.value + '"]');
@@ -227,9 +242,23 @@
         body.append('model_id', checkbox.value);
         body.append('market_id', marketId);
         body.append('persona_id', personaId);
-        return fetch(form.action, { method: 'POST', body: body })
+        // Accept: application/json (app/errors.py) — this is a fetch() call that needs the
+        // structured {message} body to show the person why their run didn't start, not a full
+        // HTML error page a plain form navigation would otherwise get.
+        return fetch(form.action, { method: 'POST', body: body, headers: { Accept: 'application/json' } })
           .then(function (response) {
-            if (statusEl) statusEl.textContent = response.ok ? '✅' : '❌';
+            if (response.ok) {
+              anySucceeded = true;
+              if (statusEl) statusEl.textContent = '✅';
+              return;
+            }
+            if (statusEl) statusEl.textContent = '❌';
+            return response.json().then(function (data) {
+              if (triggerErrorBox && triggerErrorBox.style.display !== 'flex') {
+                if (triggerErrorText) triggerErrorText.textContent = data.message || form.getAttribute('data-pending-label');
+                triggerErrorBox.style.display = 'flex';
+              }
+            }).catch(function () {});
           })
           .catch(function () {
             if (statusEl) statusEl.textContent = '❌';
@@ -237,7 +266,12 @@
       });
 
       Promise.all(requests).then(function () {
-        window.location.reload();
+        if (anySucceeded) {
+          window.location.reload();
+          return;
+        }
+        submitButton.disabled = false;
+        submitButton.textContent = submitButton.getAttribute('data-count-label').replace('{count}', checked.length);
       });
     });
   })();

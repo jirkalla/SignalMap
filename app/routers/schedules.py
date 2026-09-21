@@ -985,6 +985,16 @@ def _notification_text_and_url(t, notification: NotificationOutbox) -> tuple[str
             client_names=", ".join(payload.get("client_names", [])) or "?",
         )
         return text, "/schedules?view=schedules"
+    if notification.event_type == "quota.exceeded":
+        client_name = payload.get("client_name") or "?"
+        reason_key = (
+            "notifications.quota_exceeded_daily_limit"
+            if payload.get("reason") == "daily_run_limit"
+            else "notifications.quota_exceeded_queue_depth"
+        )
+        text = t(reason_key).format(client_name=client_name)
+        url = f"/clients/{payload['client_id']}/edit" if payload.get("client_id") else None
+        return text, url
     return notification.event_type, None
 
 

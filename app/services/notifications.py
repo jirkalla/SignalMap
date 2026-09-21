@@ -166,3 +166,18 @@ def notify_worker_stale(db: Session, *, worker_name: str, seconds_since: float, 
     ):
         return
     notify(db, "worker.stale", {"worker_name": worker_name, "seconds_since": round(seconds_since)})
+
+
+def notify_quota_exceeded(db: Session, *, client_id: int, client_name: str, reason: str, now: datetime) -> None:
+    """Fire `quota.exceeded` at most once per client per calendar day (T10), regardless of which
+
+    of the two hard caps tripped it (`reason='daily_run_limit'` from
+    app/services/run_execution.py's `check_daily_quota`, `reason='queue_depth'` from
+    app/services/queue.py's enqueue-time check) or how many separate attempts/windows hit the
+    same cap that day — once an admin knows this client is capacity-constrained today, repeating
+    the same alert for every subsequent blocked attempt adds noise, not information.
+    """
+    since = datetime(now.year, now.month, now.day, tzinfo=now.tzinfo)
+    if _already_notified(db, event_type="quota.exceeded", payload_key="client_id", payload_value=str(client_id), since=since):
+        return
+    notify(db, "quota.exceeded", {"client_id": client_id, "client_name": client_name, "reason": reason})

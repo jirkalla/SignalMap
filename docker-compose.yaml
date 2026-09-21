@@ -47,6 +47,10 @@ services:
       DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-}
       DEV_ADMIN_NAME: ${DEV_ADMIN_NAME:-}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-}
+      # Read by app/services/run_execution.py's check_daily_quota (docs/TASKS_SCHEDULER.md T10) —
+      # needed here too, not just on `worker` below, since a manual trigger (this service) must
+      # enforce the exact same cap the scheduler does (design decision 26).
+      SCHEDULER_DEFAULT_DAILY_RUN_LIMIT: ${SCHEDULER_DEFAULT_DAILY_RUN_LIMIT:-50}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 15s
@@ -83,7 +87,16 @@ services:
       SCHEDULER_DRY_RUN: ${SCHEDULER_DRY_RUN:-true}
       SCHEDULER_GRACE_PERIOD_MINUTES: ${SCHEDULER_GRACE_PERIOD_MINUTES:-360}
       SCHEDULER_LEASE_MINUTES: ${SCHEDULER_LEASE_MINUTES:-15}
-      WORKER_NAME: ${WORKER_NAME:-scheduler-1}
+      SCHEDULER_DEFAULT_DAILY_RUN_LIMIT: ${SCHEDULER_DEFAULT_DAILY_RUN_LIMIT:-50}
+      SCHEDULER_MAX_QUEUE_DEPTH_PER_CLIENT: ${SCHEDULER_MAX_QUEUE_DEPTH_PER_CLIENT:-500}
+      SCHEDULER_PROVIDER_CONCURRENCY: ${SCHEDULER_PROVIDER_CONCURRENCY:-1}
+      # No `:-default` fallback here, deliberately (docs/TASKS_SCHEDULER.md T10) — a bare `KEY:`
+      # passes the host's own WORKER_NAME through only if it's actually set there, otherwise the
+      # container gets no WORKER_NAME env var at all, and app/config.py's own default (the
+      # container's own hostname) applies. A `${WORKER_NAME:-scheduler-1}`-style fallback would
+      # set the SAME literal value in every `docker compose up --scale worker=N` replica, breaking
+      # the one-heartbeat-row-per-worker identity this is meant to give for free.
+      WORKER_NAME:
     # No HTTP port to probe (design decision 19) — checks that app/worker.py's main loop is
     # still touching its liveness file, written on every iteration (~every 5s). 30s = 6x that
     # interval, so one slow iteration doesn't flap the container between healthy/unhealthy.

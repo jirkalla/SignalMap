@@ -12,9 +12,9 @@ try/except to translate into a localized `AppError`, exactly as it did before th
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.adapters import get_adapter
@@ -28,6 +28,7 @@ from app.models import (
     Market,
     Persona,
     Prompt,
+    PromptSet,
     Provider,
     RawResponse,
     Run,
@@ -37,6 +38,45 @@ from app.models import (
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
 
 logger = logging.getLogger(__name__)
+
+
+class QuotaExceededError(Exception):
+    """Raised by `check_daily_quota` when a client has already hit its rolling-24h run cap.
+
+    Deliberately a plain exception, not an `AppError` — this module has no `Request`/locale to
+    build a translated message with (see module docstring), so each caller catches this and
+    decides what "rejected" means in its own context: `app/routers/runs.py`'s manual trigger
+    turns it into a localized 409, `app/worker.py` turns it into a `skipped`/`quota_exceeded`
+    queue item. Carries `client_id` so a caller that only has this exception (not the client
+    object) can still build a useful message or notification payload.
+    """
+
+    def __init__(self, client_id: int):
+        self.client_id = client_id
+        super().__init__(f"client {client_id} has exceeded its daily run quota")
+
+
+def check_daily_quota(db: Session, *, client_id: int, now: datetime, default_limit: int) -> None:
+    """Raise `QuotaExceededError` if `client_id` has already run `daily_run_limit` (or
+
+    `default_limit`, when that column is NULL) Runs in the trailing 24h — docs/TASKS_SCHEDULER.md
+    T10, design decision 26. Called from both the manual HTTP trigger and the scheduler worker so
+    neither path can bypass the cap the other enforces; every status counts (including `pending`
+    and `error`), since each Run row represents one dispatched attempt regardless of how it ended,
+    not just the ones that happened to succeed.
+    """
+    client = db.get(Client, client_id)
+    limit = client.daily_run_limit if client.daily_run_limit is not None else default_limit
+    since = now - timedelta(hours=24)
+    count = db.scalar(
+        select(func.count(Run.id))
+        .select_from(Run)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .where(PromptSet.client_id == client_id, Run.started_at >= since)
+    )
+    if (count or 0) >= limit:
+        raise QuotaExceededError(client_id)
 
 
 def _build_system_instruction(db: Session, provider: Provider, market: Market, persona: Persona) -> str | None:

@@ -17,9 +17,10 @@ from the scheduler side.
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -27,7 +28,7 @@ from app.models.client import Client
 from app.models.prompt import Prompt
 from app.models.run import Run
 from app.models.schedule import RunQueueItem, RunSchedule
-from app.services.notifications import notify
+from app.services.notifications import notify, notify_quota_exceeded
 from app.services.scheduling import compute_next_run_at
 from app.utils import current_prompt_version
 
@@ -41,6 +42,18 @@ CLIENT_PRIORITY_WEIGHT = 1000
 # decision 11) — a schedule that missed weeks of windows gets one summary row instead of
 # hundreds of near-identical ones.
 _MAX_MISSED_WINDOW_ROWS = 30
+
+
+@dataclass(frozen=True)
+class _EnqueueResult:
+    """How many due windows of one schedule this pass skipped, broken down by reason — kept as
+
+    two separate counts (T10) rather than one total, since `enqueue_due_schedules` rolls each up
+    into its own distinct notification (`schedule.window_skipped` vs `quota.exceeded`).
+    """
+
+    worker_down_windows: int
+    queue_depth_windows: int
 
 _UNIQUE_OCCURRENCE_COLUMNS = ("schedule_id", "scheduled_for", "prompt_id", "model_id", "persona_id")
 
@@ -122,13 +135,15 @@ def _target_prompts(db: Session, schedule: RunSchedule) -> list[Prompt]:
     raise NotImplementedError(f"schedule {schedule.id}: unknown target_type={schedule.target_type!r}")
 
 
-def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int) -> int:
+def _enqueue_one_schedule(
+    db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int, max_queue_depth_per_client: int
+) -> "_EnqueueResult":
     """Enqueue every due window of `schedule`. Returns the number of windows skipped as
 
-    `worker_down` this pass — not the number of DB rows written, since windows beyond
-    `_MAX_MISSED_WINDOW_ROWS` collapse into one summary row but still count as real missed
-    windows here — so the caller can roll this up into one `schedule.window_skipped`
-    notification per ticker pass rather than one per schedule (design decision 25 / T8).
+    `worker_down` and, separately, as `queue_depth_exceeded` this pass — not the number of DB
+    rows written, since windows beyond `_MAX_MISSED_WINDOW_ROWS` collapse into one summary row
+    but still count as real missed windows here — so the caller can roll each count up into its
+    own notification per ticker pass rather than one per schedule (design decision 25 / T8).
     """
     prompts = _target_prompts(db, schedule)
     is_batch = schedule.target_type == "prompt_set"
@@ -141,9 +156,20 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
     priority = schedule.client.priority * CLIENT_PRIORITY_WEIGHT + schedule.priority
     grace_period = timedelta(minutes=grace_period_minutes)
 
+    # T10 point 2 — checked once here and tracked in Python rather than re-querying per window:
+    # a fresh COUNT would still see this same pass's own not-yet-committed inserts (same
+    # transaction), but incrementing a local counter is cheaper across a long catch-up loop and
+    # gives the identical result. T5b point 5: this must gate a set-level window's fan-out
+    # *before* its rows are inserted, not after — otherwise 225 rows could land and only then
+    # discover they didn't fit.
+    queued_depth = db.scalar(
+        select(func.count(RunQueueItem.id)).where(RunQueueItem.client_id == schedule.client_id, RunQueueItem.status == "queued")
+    ) or 0
+
     missed_window_rows_written = 0
     extra_missed_windows = 0
     last_extra_window: datetime | None = None
+    queue_depth_skipped_windows = 0
 
     while schedule.next_run_at is not None and schedule.next_run_at <= now:
         window = schedule.next_run_at
@@ -174,6 +200,23 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
             else:
                 extra_missed_windows += 1
                 last_extra_window = window
+        elif fanout and queued_depth + len(fanout) > max_queue_depth_per_client:
+            for prompt_id, model_id, market_id, persona_id in fanout:
+                _insert_queue_item(
+                    db,
+                    schedule=schedule,
+                    prompt_id=prompt_id,
+                    model_id=model_id,
+                    market_id=market_id,
+                    persona_id=persona_id,
+                    scheduled_for=window,
+                    priority=priority,
+                    status="skipped",
+                    skip_reason="queue_depth_exceeded",
+                    now=now,
+                    batch_id=window_batch_id,
+                )
+            queue_depth_skipped_windows += 1
         else:
             for prompt_id, model_id, market_id, persona_id in fanout:
                 _insert_queue_item(
@@ -190,9 +233,10 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
                     now=now,
                     batch_id=window_batch_id,
                 )
+            queued_depth += len(fanout)
 
-        # Every window consumes one occurrence, whether it ran or was skipped for lateness —
-        # otherwise a worker outage would silently extend a schedule past the lifetime its
+        # Every window consumes one occurrence, whether it ran or was skipped — otherwise a
+        # worker outage or a full queue would silently extend a schedule past the lifetime its
         # max_occurrences was meant to cap (design decision 31).
         schedule.occurrences_count += 1
         schedule.next_run_at = compute_next_run_at(schedule, after=window)
@@ -220,10 +264,13 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
         )
 
     schedule.last_enqueued_at = now
-    return missed_window_rows_written + extra_missed_windows
+    return _EnqueueResult(
+        worker_down_windows=missed_window_rows_written + extra_missed_windows,
+        queue_depth_windows=queue_depth_skipped_windows,
+    )
 
 
-def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: int) -> None:
+def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: int, max_queue_depth_per_client: int) -> None:
     """The ticker: turn every active, due `RunSchedule` into `run_queue` rows.
 
     Runs regardless of `SCHEDULER_DRY_RUN` (design decision 15) — dry-run only short-circuits
@@ -232,7 +279,10 @@ def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: i
 
     Fires one `schedule.window_skipped` notification for the WHOLE pass when any schedule missed
     a window as `worker_down`, not one per schedule or per window (T8) — a worker that was down
-    for an hour affecting ten schedules should read as one event, not ten.
+    for an hour affecting ten schedules should read as one event, not ten. Separately, fires
+    `quota.exceeded` (T10) once per affected client when a window couldn't fit under
+    `max_queue_depth_per_client` — `notify_quota_exceeded` itself dedupes to once/client/day, so
+    several schedules for the same client hitting the cap in one pass still reads as one alert.
     """
     schedules = db.scalars(
         select(RunSchedule).where(
@@ -244,13 +294,18 @@ def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: i
     total_skipped_windows = 0
     affected_schedule_ids: list[int] = []
     affected_client_names: list[str] = []
+    queue_full_clients: dict[int, str] = {}
     for schedule in schedules:
-        skipped = _enqueue_one_schedule(db, schedule, now=now, grace_period_minutes=grace_period_minutes)
-        if skipped:
-            total_skipped_windows += skipped
+        result = _enqueue_one_schedule(
+            db, schedule, now=now, grace_period_minutes=grace_period_minutes, max_queue_depth_per_client=max_queue_depth_per_client
+        )
+        if result.worker_down_windows:
+            total_skipped_windows += result.worker_down_windows
             affected_schedule_ids.append(schedule.id)
             if schedule.client.name not in affected_client_names:
                 affected_client_names.append(schedule.client.name)
+        if result.queue_depth_windows:
+            queue_full_clients[schedule.client_id] = schedule.client.name
     db.commit()
 
     if total_skipped_windows:
@@ -259,6 +314,9 @@ def enqueue_due_schedules(db: Session, *, now: datetime, grace_period_minutes: i
             "schedule.window_skipped",
             {"count": total_skipped_windows, "schedule_ids": affected_schedule_ids, "client_names": affected_client_names},
         )
+
+    for client_id, client_name in queue_full_clients.items():
+        notify_quota_exceeded(db, client_id=client_id, client_name=client_name, reason="queue_depth", now=now)
 
 
 def claim_next(db: Session, *, worker_name: str, now: datetime, lease_minutes: int) -> RunQueueItem | None:

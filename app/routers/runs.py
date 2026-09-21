@@ -11,6 +11,7 @@ or a recorded error) is always visible in the UI, never silently missing
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.adapters import has_adapter
 from app.auth import current_active_user, require_role
+from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
 from app.models import (
@@ -48,7 +50,7 @@ from app.services.export import (
     runs_for_prompt,
     runs_for_run,
 )
-from app.services.run_execution import execute_run
+from app.services.run_execution import QuotaExceededError, check_daily_quota, execute_run
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -186,6 +188,16 @@ def trigger_run(
 
     if not prompt.is_active:
         raise AppError("prompt_inactive", t("errors.prompt_inactive"), status_code=409)
+
+    try:
+        check_daily_quota(
+            db,
+            client_id=prompt.prompt_set.client_id,
+            now=datetime.now(timezone.utc),
+            default_limit=get_settings().scheduler_default_daily_run_limit,
+        )
+    except QuotaExceededError:
+        raise AppError("client_quota_exceeded", t("errors.client_quota_exceeded"), status_code=409) from None
 
     pending_run = db.scalar(
         select(Run.id)
