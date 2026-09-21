@@ -180,6 +180,12 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   its original form. Subdomains are a deliberate exception — `blog.acme.com`
   is never unified with `acme.com`, since it is a different source, not a
   formatting variant of the same one.
+The scheduler (FR-9) is the first part of the app that can spend money
+without a person clicking a button. NFR-14 through NFR-17 are its
+safeguard story, told as four independent mechanisms rather than one —
+each protects against a different way unattended spend could go wrong,
+and losing any single one reopens exactly that one gap, not the whole
+story.
 - NFR-14 (Scheduled spend is capped by two independent mechanisms, not
   one): a hard per-client daily run limit (`clients.daily_run_limit`,
   falling back to a configured default) blocks — enforced in
@@ -210,6 +216,15 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   (docs/TASKS_SCHEDULER.md design decision 22), not just hidden from the
   `viewer` role in the navigation, the same discipline NFR-10 already
   requires for `/ops`.
+- NFR-17 (A schedule pauses with its owner, and never resumes on its own):
+  deactivating a user account pauses every schedule they own
+  (`inactive_reason='owner_deactivated'`) and fires one notification —
+  reactivating that same account is deliberately **not** enough to resume
+  them (docs/TASKS_SCHEDULER.md design decision 23). Silently continuing
+  paid runs on behalf of someone no longer with the company is worse than
+  the pause itself going unnoticed a while longer; resuming is a separate,
+  conscious admin action on `/schedules`, never a side effect of an
+  unrelated account change.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 
