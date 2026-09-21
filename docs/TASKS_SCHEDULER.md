@@ -313,6 +313,27 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     filozofie jako odhad ceny (decision 29). Realizuje T5c (kontrola při
     uložení) a rozšiřuje T6 (trvalé zobrazení na monitorovací stránce).
 
+### Doplněno 2026-09-21 (po prvním nasazení T6, v konverzaci)
+
+37. **Historie na `/schedules` dostává "health strip" — řádek barevných
+    dlaždic (poslední ~10 oken) na rozvrh, seskupený podle klienta,
+    zdraví klienti defaultně sbalení.** Vzniklo z konkrétní zpětné vazby,
+    že textový součet ("0 done · 0 error · 2 skipped") se čte pomalu a
+    nedává rychlou odpověď na "stíhám to pro všechny klienty?". Vzor je
+    zavedený u monitorovacích nástrojů (healthchecks.io, UptimeRobot,
+    GitHub Actions' workflow health) — barevná dlaždice na okno
+    (zelená/červená/šedá) se čte bez čtení textu. Klasifikace jednoho
+    okna je all-or-nothing jako u CI buildu: `error_count > 0` →
+    `error`, jinak `done_count > 0` → `done`, jinak `skipped_count > 0`
+    → `skipped`, jinak `cancelled`. Klient s alespoň jedním `error`
+    dlaždicí v posledních ~10 oknech je defaultně rozbalený; jinak
+    sbalený na "✓ Klient · vše v pořádku, N rozvrhů". Strip je *triage*
+    vrstva nad existující timeline (T6/SCH-6b), ne její náhrada — klik
+    do rozbaleného klienta pořád vede k plnému seznamu dávek pod ním.
+    Jedna nová SQL agregace s window funkcí (`ROW_NUMBER() OVER
+    (PARTITION BY schedule_id ORDER BY scheduled_for DESC)`), žádná
+    smyčka v Pythonu — stejná disciplína jako zbytek T6.
+
 ---
 
 ## Nové schéma (migrace 0029)
@@ -764,6 +785,12 @@ před uložením; uložení samotné není ničím blokované.
 **Target:** nová `app/templates/schedules/index.html`, rozšíření
 `app/routers/schedules.py`, nová `app/services/schedule_monitor.py`,
 odkaz v `app/templates/base.html`, i18n
+
+**Doplněno po prvním nasazení:** search + filtr chipy na Rozvrhách a
+Historii, seskupení Rozvrh podle klienta, živé auto-refreshování Fronty
+přes HTMX, a **health strip na Historii** (decision 37) — barevné
+dlaždice posledních ~10 oken na rozvrh, seskupené podle klienta,
+problémoví klienti rozbalení, zdraví sbalení.
 
 1. Stránka se třemi pohledy (stejný trojlístek jako GitHub Actions a
    Airflow): **Rozvrhy** (všechna pravidla, příští běh, poslední výsledek,
