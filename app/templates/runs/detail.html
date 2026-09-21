@@ -48,7 +48,7 @@
       <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>
       <dd>{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</dd>
     </div>
-    <div class="flex justify-between sm:block">
+    <div class="sm:col-span-2">
       <dt class="text-stone-500">{{ t('run.triggered_by_label') }}</dt>
       <dd>
         {% if schedule_attribution %}

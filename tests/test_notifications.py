@@ -181,8 +181,21 @@ def test_check_budget_thresholds_ignores_client_below_budget(db_session, seed, s
 
 
 def test_notify_worker_stale_respects_cooldown(db_session):
+    """Bug fix, 2026-09-21 — `_already_notified` compares against `NotificationOutbox.created_at`,
+
+    which is stamped by the DB's own `server_default=func.now()` at insert time, not by the `now`
+    this test passes in. The original version of this test relied on real wall-clock time landing
+    inside the right window relative to a fixed `NOW`, which made it pass or fail depending on
+    when it happened to run rather than on the behavior under test. Backdating the first
+    notification's `created_at` directly makes the cooldown window deterministic regardless of
+    when the suite actually runs.
+    """
     notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=4000, now=NOW)
-    notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=4010, now=NOW + timedelta(minutes=5))
+    first = db_session.scalar(select(NotificationOutbox).where(NotificationOutbox.event_type == "worker.stale"))
+    first.created_at = NOW - timedelta(minutes=5)
+    db_session.commit()
+
+    notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=4010, now=NOW)
 
     notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "worker.stale")).all()
     assert len(notifications) == 1
@@ -190,7 +203,11 @@ def test_notify_worker_stale_respects_cooldown(db_session):
 
 def test_notify_worker_stale_refires_after_cooldown(db_session):
     notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=4000, now=NOW)
-    notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=8000, now=NOW + timedelta(minutes=90))
+    first = db_session.scalar(select(NotificationOutbox).where(NotificationOutbox.event_type == "worker.stale"))
+    first.created_at = NOW - timedelta(minutes=90)
+    db_session.commit()
+
+    notify_worker_stale(db_session, worker_name="scheduler-1", seconds_since=8000, now=NOW)
 
     notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "worker.stale")).all()
     assert len(notifications) == 2
