@@ -18,10 +18,13 @@ from app.models import AIModel, Client, Persona, Prompt, PromptSet, Run
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.queue import (
     CLIENT_PRIORITY_WEIGHT,
+    cancel_queued_item,
     claim_next,
+    create_retry,
     enqueue_due_schedules,
     reconcile_interrupted_runs,
     release_expired_leases,
+    retry_all_errors,
 )
 from app.worker import process_claimed_item
 from tests.conftest import TestSessionLocal
@@ -510,3 +513,87 @@ def test_enqueue_prompt_set_is_idempotent_against_a_concurrent_duplicate_insert(
     items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
     assert first_pass_count == 2  # 2 prompts x 1 model x 1 persona
     assert len(items) == 2
+
+
+# ---------------------------------------------------------------------------
+# create_retry / cancel_queued_item / retry_all_errors (T7)
+# ---------------------------------------------------------------------------
+
+
+def test_create_retry_inserts_new_item_and_leaves_original_untouched(db_session, seed, sample_prompt, prompt_client):
+    original = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="error", last_error="boom", scheduled_for=NOW - timedelta(hours=1),
+    )
+
+    retry = create_retry(db_session, original=original, now=NOW)
+
+    assert retry.id != original.id
+    assert retry.retry_of_id == original.id
+    assert retry.status == "queued"
+    assert retry.scheduled_for == NOW
+    assert retry.batch_id is None
+    assert retry.prompt_id == original.prompt_id
+    assert retry.priority == original.priority
+
+    db_session.refresh(original)
+    assert original.status == "error"
+    assert original.last_error == "boom"
+
+
+@pytest.mark.parametrize("status", ["done", "queued", "leased", "deferred"])
+def test_create_retry_rejects_non_retryable_status(db_session, seed, sample_prompt, prompt_client, status):
+    original = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], status=status
+    )
+
+    with pytest.raises(ValueError):
+        create_retry(db_session, original=original, now=NOW)
+
+
+def test_cancel_queued_item_marks_cancelled(db_session, seed, sample_prompt, prompt_client):
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], status="queued"
+    )
+
+    cancel_queued_item(db_session, item=item, now=NOW)
+
+    assert item.status == "cancelled"
+    assert item.finished_at == NOW
+
+
+def test_cancel_queued_item_rejects_leased(db_session, seed, sample_prompt, prompt_client):
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="leased", leased_by="scheduler-1",
+    )
+
+    with pytest.raises(ValueError):
+        cancel_queued_item(db_session, item=item, now=NOW)
+
+    db_session.refresh(item)
+    assert item.status == "leased"
+
+
+def test_retry_all_errors_respects_search_filter(db_session, seed, sample_prompt, prompt_client):
+    prompt_set = sample_prompt.prompt_set
+    other_prompt = Prompt(prompt_set_id=prompt_set.id, text="A completely different prompt", market_id=seed["market"].id)
+    db_session.add(other_prompt)
+    db_session.commit()
+    db_session.refresh(other_prompt)
+
+    matching = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="error", last_error="boom",
+    )
+    _make_queue_item(
+        db_session, prompt=other_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="error", last_error="boom too",
+    )
+
+    retried_count = retry_all_errors(db_session, search=sample_prompt.text[:15], now=NOW)
+
+    assert retried_count == 1
+    retries = db_session.scalars(select(RunQueueItem).where(RunQueueItem.retry_of_id.is_not(None))).all()
+    assert len(retries) == 1
+    assert retries[0].retry_of_id == matching.id

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from itertools import groupby
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse, Response
@@ -27,10 +28,11 @@ from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Client, Persona, PromptSet, User
 from app.models.prompt import Prompt
-from app.models.schedule import RunSchedule
+from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.prompt_sets import _get_prompt_set_or_404
 from app.routers.prompts import _get_prompt_or_404, _runnable_model_groups
 from app.services.cost import average_historical_cost
+from app.services.queue import cancel_queued_item, create_retry, retry_all_errors
 from app.services.schedule_monitor import (
     active_queue_rows,
     format_duration_short,
@@ -967,3 +969,59 @@ def schedules_monitor(
         )
 
     return render(request, "schedules/index.html", context)
+
+
+def _get_queue_item_or_404(db: Session, request: Request, item_id: int) -> RunQueueItem:
+    item = db.get(RunQueueItem, item_id)
+    if item is None:
+        raise AppError("queue_item_not_found", get_t(request)("errors.queue_item_not_found"), status_code=404)
+    return item
+
+
+@router.post("/queue/{item_id}/retry", dependencies=_editor_or_admin)
+def retry_queue_item(request: Request, item_id: int, db: Session = Depends(get_db)):
+    """Retry one terminal queue item (docs/TASKS_SCHEDULER.md T7): inserts a new row and leaves
+
+    the old one untouched (NFR-6 — history is never rewritten). Only `error`/`skipped`/
+    `cancelled` items are retryable (`create_retry`'s own precondition, design decision — the
+    router only translates the resulting `ValueError` into a localized 409, it doesn't duplicate
+    the status list itself).
+    """
+    t = get_t(request)
+    item = _get_queue_item_or_404(db, request, item_id)
+    try:
+        create_retry(db, original=item, now=datetime.now(timezone.utc))
+    except ValueError as exc:
+        raise AppError("queue_item_not_retryable", t("errors.queue_item_not_retryable"), status_code=409) from exc
+    return RedirectResponse(url="/schedules?view=history", status_code=303)
+
+
+@router.post("/queue/{item_id}/cancel", dependencies=_editor_or_admin)
+def cancel_queue_item(request: Request, item_id: int, db: Session = Depends(get_db)):
+    """Cancel a still-`queued` item (docs/TASKS_SCHEDULER.md T7). Never reachable for a `leased`
+
+    item — that one is in a worker's hands right now, not waiting (`cancel_queued_item`'s own
+    precondition; see `retry_queue_item` for why the router doesn't duplicate it).
+    """
+    t = get_t(request)
+    item = _get_queue_item_or_404(db, request, item_id)
+    try:
+        cancel_queued_item(db, item=item, now=datetime.now(timezone.utc))
+    except ValueError as exc:
+        raise AppError("queue_item_not_cancellable", t("errors.queue_item_not_cancellable"), status_code=409) from exc
+    return RedirectResponse(url="/schedules?view=queue", status_code=303)
+
+
+@router.post("/queue/retry-errors", dependencies=_editor_or_admin)
+def retry_all_errors_route(
+    request: Request,
+    q: str = Form("", description="Same free-text filter as the History search box — the bulk action never reaches outside it."),
+    db: Session = Depends(get_db),
+):
+    """Retry every current error item matching the History page's active search text
+
+    (docs/TASKS_SCHEDULER.md T7's "Retry all errors" bulk action) — deliberately scoped to
+    exactly what the user is looking at, not every error in the system.
+    """
+    retry_all_errors(db, search=q, now=datetime.now(timezone.utc))
+    return RedirectResponse(url=f"/schedules?view=history&status=errors&q={quote(q)}", status_code=303)

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import local_time, pill_badge, status_badge, icon_calendar, icon_check, icon_edit, icon_warning, schedule_target_cell %}
+{% from "partials/macros.html" import local_time, pill_badge, status_badge, delete_button, icon_calendar, icon_check, icon_edit, icon_warning, schedule_target_cell %}
 {% block title %}{{ t('schedules.monitor_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <h1 class="text-xl font-semibold mb-4 flex items-center gap-2">{{ icon_calendar('w-5 h-5 text-stone-400') }}{{ t('schedules.monitor_title') }}</h1>
@@ -194,6 +194,7 @@
           <th class="py-3 px-4 font-medium">{{ t('schedules.scheduled_for_column') }}</th>
           <th class="py-3 px-4 font-medium">{{ t('schedules.priority_label') }}</th>
           <th class="py-3 px-4 font-medium">{{ t('common.status') }}</th>
+          <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -209,6 +210,11 @@
             {{ status_badge(row.status, t('schedules.queue_status_' ~ row.status)) }}
             {% if row.status == 'leased' and row.leased_by %}
             <div class="text-xs text-stone-400 mt-0.5">{{ t('schedules.queue_lease_label') }}: {{ row.leased_by }}</div>
+            {% endif %}
+          </td>
+          <td class="py-3 px-4 text-right">
+            {% if row.status == 'queued' %}
+            {{ delete_button('/schedules/queue/' ~ row.id ~ '/cancel', t('schedules.queue_cancel_confirm'), t('schedules.queue_cancel_button')) }}
             {% endif %}
           </td>
         </tr>
@@ -228,6 +234,11 @@
       <div class="text-xs text-stone-400 mt-1">{{ local_time(row.scheduled_for, t('common.utc_suffix'), seconds=False) }} · {{ t('schedules.priority_label') }}: {{ row.priority }}</div>
       {% if row.status == 'leased' and row.leased_by %}
       <div class="text-xs text-stone-400 mt-1">{{ t('schedules.queue_lease_label') }}: {{ row.leased_by }}</div>
+      {% endif %}
+      {% if row.status == 'queued' %}
+      <div class="mt-2 text-sm">
+        {{ delete_button('/schedules/queue/' ~ row.id ~ '/cancel', t('schedules.queue_cancel_confirm'), t('schedules.queue_cancel_button')) }}
+      </div>
       {% endif %}
     </div>
     {% endfor %}
@@ -286,10 +297,16 @@
   </div>
   <button type="submit" class="px-3 py-1.5 rounded-md text-sm font-medium border border-stone-300 text-stone-600 hover:bg-stone-50">{{ t('schedules.history_search_button') }}</button>
 </form>
-<div class="flex gap-2 mb-4 text-sm">
+<div class="flex flex-wrap gap-2 mb-4 items-center text-sm">
   <a href="?view=history&status=all&q={{ q|urlencode }}" class="px-3 py-1.5 rounded-md font-medium {{ 'bg-stone-800 text-white' if status == 'all' else 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-50' }}">{{ t('schedules.history_filter_all') }}</a>
   <a href="?view=history&status=errors&q={{ q|urlencode }}" class="px-3 py-1.5 rounded-md font-medium {{ 'bg-stone-800 text-white' if status == 'errors' else 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-50' }}">{{ t('schedules.history_filter_errors') }}</a>
   <a href="?view=history&status=skipped&q={{ q|urlencode }}" class="px-3 py-1.5 rounded-md font-medium {{ 'bg-stone-800 text-white' if status == 'skipped' else 'bg-white border border-stone-300 text-stone-600 hover:bg-stone-50' }}">{{ t('schedules.history_filter_skipped') }}</a>
+  {% if status == 'errors' and history_batches %}
+  <form method="post" action="/schedules/queue/retry-errors" data-confirm="{{ t('schedules.history_retry_all_confirm') }}" class="inline">
+    <input type="hidden" name="q" value="{{ q }}">
+    <button type="submit" class="px-3 py-1.5 rounded-md font-medium border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100">{{ t('schedules.history_retry_all_button') }}</button>
+  </form>
+  {% endif %}
 </div>
 
 {% if history_batches %}
@@ -327,7 +344,14 @@
               {% if item.message %}<div class="text-xs text-stone-400 mt-0.5">{{ item.message[:120] }}</div>{% endif %}
             </td>
             <td class="py-2 pr-4">
-              {% if item.run_id %}<a href="/runs/{{ item.run_id }}" class="text-stone-600 hover:underline">{{ t('run.view_link') }}</a>{% endif %}
+              <div class="flex items-center gap-3">
+                {% if item.run_id %}<a href="/runs/{{ item.run_id }}" class="text-stone-600 hover:underline">{{ t('run.view_link') }}</a>{% endif %}
+                {% if item.status in ('error', 'skipped', 'cancelled') %}
+                <form method="post" action="/schedules/queue/{{ item.id }}/retry" class="inline">
+                  <button type="submit" class="text-stone-600 hover:underline">{{ t('schedules.history_retry_button') }}</button>
+                </form>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% endfor %}

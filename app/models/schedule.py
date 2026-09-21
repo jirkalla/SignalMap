@@ -145,6 +145,10 @@ class RunQueueItem(Base):
     idempotence guard against paying twice for one occurrence lives on this column, not on a lock
     held for the adapter call's duration, because a killed worker releases locks but must not
     cause the occurrence to be picked up and paid for again.
+
+    `retry_of_id` (T7) links a manually-retried item back to the one it retries — set only on the
+    NEW row, never written onto the old one, since retrying never rewrites history (NFR-6): the
+    original keeps whatever terminal status ('error'/'skipped'/'cancelled') it actually ended with.
     """
 
     __tablename__ = "run_queue"
@@ -193,6 +197,9 @@ class RunQueueItem(Base):
     leased_by: Mapped[str | None] = mapped_column(String(64))
     leased_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"))
+    # T7: which item this one retries, if any — never rewritten onto the original row itself, so
+    # a retry is always a new row and the item it retries stays queryable, unchanged (NFR-6).
+    retry_of_id: Mapped[int | None] = mapped_column(ForeignKey("run_queue.id"))
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -203,4 +210,5 @@ class RunQueueItem(Base):
     model: Mapped["AIModel"] = relationship()
     market: Mapped["Market"] = relationship()
     persona: Mapped["Persona"] = relationship()
+    retry_of: Mapped["RunQueueItem | None"] = relationship(remote_side=[id])
     run: Mapped["Run | None"] = relationship()

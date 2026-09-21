@@ -19,10 +19,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.models.client import Client
 from app.models.prompt import Prompt
 from app.models.run import Run
 from app.models.schedule import RunQueueItem, RunSchedule
@@ -311,3 +312,80 @@ def reconcile_interrupted_runs(db: Session, *, now: datetime) -> int:
 
     db.commit()
     return len(stale_runs)
+
+
+#: Terminal states worth retrying — 'done' already succeeded, and 'queued'/'leased'/'deferred'
+#: aren't history yet (docs/TASKS_SCHEDULER.md T7).
+RETRYABLE_STATUSES = ("error", "skipped", "cancelled")
+
+
+def create_retry(db: Session, *, original: RunQueueItem, now: datetime) -> RunQueueItem:
+    """Insert a new `run_queue` row that retries `original` (docs/TASKS_SCHEDULER.md T7) — same
+
+    schedule/target/priority, a fresh `scheduled_for=now`, and `retry_of_id` pointing back at the
+    original. Never modifies `original` itself: history is never rewritten (NFR-6), so a retried
+    item's own terminal status stays exactly what it actually was. No `batch_id` — a retry is a
+    new, standalone occurrence, not a continuation of whatever window the original came from (that
+    window has already fully resolved).
+
+    Raises `ValueError` if `original.status` isn't in `RETRYABLE_STATUSES` — validated here rather
+    than only in the router, so this precondition is exercised by a plain service-level test like
+    every other function in this module, not only through an HTTP round trip. The router still
+    owns turning that into a translated `AppError`, per this app's usual service/router split.
+    """
+    if original.status not in RETRYABLE_STATUSES:
+        raise ValueError(f"queue item {original.id} has status {original.status!r}, not retryable")
+    retry = RunQueueItem(
+        schedule_id=original.schedule_id,
+        source=original.source,
+        batch_id=None,
+        client_id=original.client_id,
+        prompt_id=original.prompt_id,
+        model_id=original.model_id,
+        market_id=original.market_id,
+        persona_id=original.persona_id,
+        scheduled_for=now,
+        priority=original.priority,
+        status="queued",
+        retry_of_id=original.id,
+    )
+    db.add(retry)
+    db.commit()
+    db.refresh(retry)
+    return retry
+
+
+def cancel_queued_item(db: Session, *, item: RunQueueItem, now: datetime) -> None:
+    """Mark a still-`queued` item 'cancelled' (docs/TASKS_SCHEDULER.md T7).
+
+    Raises `ValueError` for anything other than `status == 'queued'` — most importantly a
+    `leased` item, which is in a worker's hands right now and must never be touched here.
+    """
+    if item.status != "queued":
+        raise ValueError(f"queue item {item.id} has status {item.status!r}, not cancellable")
+    item.status = "cancelled"
+    item.finished_at = now
+    db.commit()
+
+
+def retry_all_errors(db: Session, *, search: str, now: datetime) -> int:
+    """Retry every current `status='error'` item whose prompt text or client name matches
+
+    `search` (case-insensitive substring; every error item when `search` is empty) — the History
+    page's "Retry all errors" bulk action, deliberately scoped to exactly the filter the user is
+    looking at (T7: "hromadná akce nesáhne mimo filtr") rather than every error in the system.
+    Returns how many were retried.
+    """
+    query = (
+        select(RunQueueItem)
+        .join(Prompt, RunQueueItem.prompt_id == Prompt.id)
+        .join(Client, RunQueueItem.client_id == Client.id)
+        .where(RunQueueItem.status == "error")
+    )
+    if search:
+        like = f"%{search}%"
+        query = query.where(or_(Prompt.text.ilike(like), Client.name.ilike(like)))
+    items = db.scalars(query).all()
+    for item in items:
+        create_retry(db, original=item, now=now)
+    return len(items)
