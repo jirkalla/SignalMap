@@ -18,14 +18,14 @@ from the scheduler side.
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.prompt import Prompt
 from app.models.run import Run
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.scheduling import compute_next_run_at
+from app.utils import current_prompt_version
 
 logger = logging.getLogger(__name__)
 
@@ -39,22 +39,6 @@ CLIENT_PRIORITY_WEIGHT = 1000
 _MAX_MISSED_WINDOW_ROWS = 30
 
 _UNIQUE_OCCURRENCE_COLUMNS = ("schedule_id", "scheduled_for", "prompt_id", "model_id", "persona_id")
-
-
-def _resolve_current_prompt(db: Session, root_prompt_id: int) -> Prompt:
-    """The current version of a prompt lineage rooted at `root_prompt_id` (design decision 6) —
-
-    same `WHERE id = root_id OR root_prompt_id = root_id` shape as app/services/export.py, then
-    narrowed to the one row with `is_current_version=True`. A schedule stores this root id
-    (`RunSchedule.target_id`), never a specific version, precisely so an edited prompt is picked
-    up on the very next window instead of the schedule running stale text forever.
-    """
-    return db.scalar(
-        select(Prompt).where(
-            or_(Prompt.id == root_prompt_id, Prompt.root_prompt_id == root_prompt_id),
-            Prompt.is_current_version.is_(True),
-        )
-    )
 
 
 def _insert_queue_item(
@@ -113,7 +97,7 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
             "in docs/TASKS_SCHEDULER.md T5b, not here"
         )
 
-    prompt = _resolve_current_prompt(db, schedule.target_id)
+    prompt = current_prompt_version(db, schedule.target_id)
     market_id = schedule.market_id or prompt.market_id
     fanout = [(model_id, persona_id) for model_id in schedule.model_ids for persona_id in schedule.persona_ids]
     priority = schedule.client.priority * CLIENT_PRIORITY_WEIGHT + schedule.priority

@@ -14,8 +14,9 @@ from sqlalchemy import Float, case, cast, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import AIModel, AIModelPriceComponent
+from app.models import AIModel, AIModelPriceComponent, Run
 from app.models.provider import COMPONENT_TYPES
+from app.utils import prompt_lineage_ids
 
 
 @dataclass(frozen=True)
@@ -459,3 +460,39 @@ def current_prices(db: Session, model_ids: list[int]) -> dict[int, dict[str, Dec
     components_by_model = load_price_components(db, model_ids)
     now = datetime.now(timezone.utc)
     return {model_id: prices_at(components_by_model.get(model_id, []), now) for model_id in model_ids}
+
+
+def average_historical_cost(db: Session, *, root_prompt_id: int, model_id: int) -> float | None:
+    """Average cost of this prompt lineage's own past successful runs against `model_id`, for
+    the schedule form's cost preview (docs/TASKS_SCHEDULER.md design decision 29).
+
+    Spans the whole lineage (every version under `root_prompt_id`), not just the current
+    version's own runs — otherwise editing a prompt (which creates a new current version with
+    no runs of its own yet) would reset a schedule's cost preview to "unknown" for no reason a
+    user setting up a schedule would understand.
+
+    `None` — never a guessed number — when this exact (lineage, model) pair has no successful,
+    priced run yet. A schedule targeting a never-before-run combination genuinely has no basis
+    for an estimate; showing one anyway would be exactly the kind of fabricated number
+    `estimate_run_cost`'s own "no price means unknown, never free" discipline (design decision
+    14) exists to avoid.
+    """
+    prompt_ids = prompt_lineage_ids(db, root_prompt_id)
+    model = db.get(AIModel, model_id)
+    if not prompt_ids or model is None:
+        return None
+
+    runs = db.scalars(
+        select(Run).where(Run.prompt_id.in_(prompt_ids), Run.model_id == model_id, Run.status == "success")
+    ).all()
+    components = load_price_components(db, [model_id]).get(model_id, [])
+
+    costs: list[float] = []
+    for run in runs:
+        if run.raw_response is None:
+            continue
+        cost = estimate_run_cost(run.raw_response.token_usage, model, prices_at(components, run.started_at))
+        if cost is not None:
+            costs.append(cost)
+
+    return sum(costs) / len(costs) if costs else None

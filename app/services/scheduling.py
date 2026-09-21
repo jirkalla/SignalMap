@@ -13,7 +13,8 @@ exactly what tests/test_scheduling_recurrence.py's drift test checks.
 """
 
 import calendar
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -101,6 +102,65 @@ def max_end_date(frequency: str, *, starts_on: date) -> date:
     if frequency == "monthly":
         return _add_months(starts_on, 12)
     raise ValueError(f"unknown schedule frequency: {frequency!r}")
+
+
+@dataclass(frozen=True)
+class ScheduleOccurrenceInput:
+    """The subset of `RunSchedule` (app/models/schedule.py) that determines its occurrences —
+
+    a plain dataclass, not the ORM row itself, so app/routers/schedules.py's live occurrence
+    preview (design decision 29) can build one straight from unsaved form input, before a
+    `RunSchedule` row exists to read from at all.
+    """
+
+    frequency: str
+    days_of_week: list[int] | None
+    day_of_month: int | None
+    time_of_day: time
+    timezone: str
+    starts_on: date
+    ends_on: date | None
+    max_occurrences: int | None
+    occurrences_count: int
+
+
+# Safety cap on simulated occurrences when counting a schedule through to its end (design
+# decision 29's "total runs before this schedule ends" figure) — every real schedule already has
+# a mandatory end within ~30 occurrences (design decision 31), so this is only ever a backstop
+# against a bug producing an endless series, never a limit real usage should approach.
+_MAX_SIMULATED_OCCURRENCES = 2000
+
+
+def upcoming_occurrences(
+    schedule: ScheduleOccurrenceInput, *, after: datetime, preview_count: int = 5
+) -> tuple[list[datetime], int | None]:
+    """The next `preview_count` UTC instants this schedule fires after `after`, and the total
+    number of occurrences remaining until it ends (design decisions 29 and 34's "one window" vs.
+    "whole schedule" cost figures) — `None` for the total if the safety cap is hit first, so the
+    form shows "many" rather than a count that might be wrong.
+
+    Never touches `RunSchedule.occurrences_count`/`next_run_at` on any real row — advances a
+    local counter via `dataclasses.replace` instead, since this simulates what *would* happen
+    without it actually happening (the ticker, `enqueue_due_schedules`, is the only code that
+    ever advances a schedule for real).
+    """
+    occurrences_count = schedule.occurrences_count
+    cursor = after
+    upcoming: list[datetime] = []
+    total = 0
+
+    for _ in range(_MAX_SIMULATED_OCCURRENCES):
+        probe = replace(schedule, occurrences_count=occurrences_count)
+        next_at = compute_next_run_at(probe, after=cursor)
+        if next_at is None:
+            return upcoming, total
+        total += 1
+        if len(upcoming) < preview_count:
+            upcoming.append(next_at)
+        occurrences_count += 1
+        cursor = next_at
+
+    return upcoming, None
 
 
 def _add_months(start: date, months: int) -> date:

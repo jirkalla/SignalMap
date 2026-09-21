@@ -16,7 +16,7 @@ from app.auth import current_user_from_cookie
 from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
 
-__all__ = ["can_edit", "can_flag_test_client", "get_t", "render", "templates"]
+__all__ = ["can_edit", "can_flag_test_client", "can_schedule", "get_t", "render", "templates"]
 
 templates = Jinja2Templates(directory="app/templates")
 
@@ -52,6 +52,23 @@ def can_flag_test_client(user: "User | None") -> bool:
 
 
 templates.env.globals["can_flag_test_client"] = can_flag_test_client
+
+
+def can_schedule(user: "User | None") -> bool:
+    """True for a logged-in admin/editor — the single place every template and router reads
+
+    "who may create/edit a run schedule" from (docs/TASKS_SCHEDULER.md design decision 22).
+    Identical to `can_edit()` today, but deliberately its own function: a later per-user
+    `users.can_schedule` flag (not added yet — decision 22 explicitly defers it until something
+    actually needs it) would then change only this one definition, not every template and route
+    that currently inlines `role in (...)`. Display only, same caveat as `can_edit` — the real
+    enforcement is `require_role("admin", "editor")` on each mutating route in
+    app/routers/schedules.py.
+    """
+    return user is not None and user.role in ("admin", "editor")
+
+
+templates.env.globals["can_schedule"] = can_schedule
 
 # The two Unicode line-terminator characters a JSON string may legally contain but a raw JS
 # string literal may not — see _tojson_filter's docstring. Built via chr() rather than typed as

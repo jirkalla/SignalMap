@@ -164,9 +164,29 @@ def create_client(
 @router.get("/{client_id}")
 def client_detail(request: Request, client_id: int, db: Session = Depends(get_db)):
     """Show one client's details, its aliases, and its prompt sets."""
+    # Deferred: app/routers/schedules.py imports from app/routers/prompts.py, so a top-level
+    # import here (clients -> schedules -> prompts) risks the same cycle app/errors.py's
+    # deferred `app.templating` import already documents a precedent for.
+    from app.routers.schedules import schedule_summary_text, schedules_for_client
+    from app.utils import current_prompt_version
+
     client = _get_client_or_404(db, request, client_id)
     prompt_sets = _prompt_sets_for_client(db, client_id)
-    return render(request, "clients/detail.html", {"client": client, "prompt_sets": prompt_sets})
+    t = get_t(request)
+    schedules = schedules_for_client(db, client_id)
+    return render(
+        request,
+        "clients/detail.html",
+        {
+            "client": client,
+            "prompt_sets": prompt_sets,
+            "schedules": schedules,
+            "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
+            "schedule_prompts": {s.id: current_prompt_version(db, s.target_id) for s in schedules},
+            "show_prompt_column": True,
+            "new_schedule_url": None,
+        },
+    )
 
 
 @router.get("/{client_id}/edit", dependencies=_editor_or_admin)

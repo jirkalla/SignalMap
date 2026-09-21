@@ -1,0 +1,31 @@
+{% from "partials/macros.html" import local_time %}
+{% if incomplete %}
+<p class="text-stone-500">{{ t('schedules.preview_incomplete') }}</p>
+{% else %}
+<p class="font-medium text-stone-700 mb-2">{{ t('schedules.preview_next_title') }}</p>
+{% if upcoming %}
+<ul class="list-disc list-inside text-stone-600 mb-3">
+  {% for occurrence in upcoming %}
+  <li>{{ local_time(occurrence, t('common.utc_suffix'), seconds=False) }}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="text-stone-500 mb-3">{{ t('schedules.preview_none') }}</p>
+{% endif %}
+<p class="text-stone-600">
+  {{ t('schedules.preview_runs_per_window').format(count=run_count_per_window) }}
+  {% if total_occurrences is not none %}
+  · {{ t('schedules.preview_total_occurrences').format(count=total_occurrences) }}
+  {% endif %}
+</p>
+<p class="text-stone-600 mt-1">
+  {% if per_window_cost is not none %}
+  {{ t('schedules.preview_cost_per_window').format(amount='%.4f'|format(per_window_cost)) }}
+  {% if total_cost is not none %}
+  · {{ t('schedules.preview_cost_total').format(amount='%.4f'|format(total_cost)) }}
+  {% endif %}
+  {% else %}
+  <span class="text-stone-400">{{ t('schedules.preview_cost_unknown') }}</span>
+  {% endif %}
+</p>
+{% endif %}

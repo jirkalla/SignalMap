@@ -63,7 +63,7 @@
 
 {% macro delete_button(action, confirm_text, label, extra_classes='') %}
 <form method="post" action="{{ action }}" class="inline" data-confirm="{{ confirm_text }}">
-  <button type="submit" class="text-red-700 hover:underline{{ ' ' ~ extra_classes if extra_classes }}">{{ label }}</button>
+  <button type="submit" class="inline-flex items-center gap-1 text-red-700 hover:underline{{ ' ' ~ extra_classes if extra_classes }}">{{ label }}</button>
 </form>
 {% endmacro %}
 
@@ -120,7 +120,7 @@
    same kind of thing across screens. #}
 {% macro toggle_button(action, active, active_label, inactive_label, tone='positive') %}
 <form method="post" action="{{ action }}" class="inline">
-  <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ ('bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-emerald-100 text-emerald-800') if active else 'bg-stone-100 text-stone-500' }}">
+  <button type="submit" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium {{ ('bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-emerald-100 text-emerald-800') if active else 'bg-stone-100 text-stone-500' }}">
     {{ active_label if active else inactive_label }}
   </button>
 </form>
@@ -164,6 +164,42 @@
 {%- if dt -%}
 <time datetime="{{ dt.isoformat() }}" data-local-time>{{ dt.strftime('%Y-%m-%d %H:%M:%S' if seconds else '%Y-%m-%d %H:%M') }} {{ utc_label }}</time>
 {%- endif -%}
+{% endmacro %}
+
+{# Small inline SVG icons — stroke="currentColor" so they inherit the surrounding text color,
+   sized via the `class` a caller passes (e.g. "w-4 h-4"). No icon font/library: consistent with
+   base.html's own one hand-rolled inline SVG (the nav dropdown chevron) rather than adding a
+   new frontend dependency for a handful of glyphs. #}
+{% macro icon_play(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4l11 6-11 6V4z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_calendar(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="1.5"/><path d="M3 8h14M7 2.5v3M13 2.5v3"/></svg>
+{% endmacro %}
+
+{% macro icon_history(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7v3.5l2.5 1.5" stroke-linecap="round"/><path d="M4 4v3h3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_edit(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13.5 3.5l3 3L6 17l-3.5 1L3.5 14.5 13.5 3.5z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_pause(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4v12M14 4v12" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{% macro icon_trash(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_filter(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4h14l-5.5 6.5V16l-3 1.5v-7L3 4z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_download(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15.5h12" stroke-linecap="round"/></svg>
 {% endmacro %}
 
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}
