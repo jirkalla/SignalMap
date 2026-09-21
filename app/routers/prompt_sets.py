@@ -100,7 +100,13 @@ def _current_prompts(db: Session, prompt_set_id: int) -> list[Prompt]:
 
 
 def _prompt_set_detail_context(
-    db: Session, prompt_set: PromptSet, prompts: list[Prompt], *, imported: int | None = None, error: str | None = None
+    request: Request,
+    db: Session,
+    prompt_set: PromptSet,
+    prompts: list[Prompt],
+    *,
+    imported: int | None = None,
+    error: str | None = None,
 ) -> dict:
     """Shared render context for `prompt_sets/detail.html`, built by both `prompt_set_detail`
     and `delete_prompt_set`'s blocked-delete re-render — factored out so the two never drift on
@@ -108,6 +114,13 @@ def _prompt_set_detail_context(
     in particular; a template that references them unconditionally would hit Jinja's default
     `Undefined` on any render call that forgot to pass them).
     """
+    # Deferred: app/routers/schedules.py imports from this module (for _get_prompt_set_or_404),
+    # so a top-level import here would be circular — same reasoning as app/routers/clients.py's
+    # and app/routers/prompts.py's own deferred imports of the same module.
+    from app.routers.schedules import schedule_summary_text, schedules_for_prompt_set
+
+    t = get_t(request)
+    schedules = schedules_for_prompt_set(db, prompt_set.id)
     return {
         "prompt_set": prompt_set,
         "prompts": prompts,
@@ -116,6 +129,10 @@ def _prompt_set_detail_context(
         "error": error,
         "distinct_topics": sorted({p.topic for p in prompts if p.topic}),
         "distinct_markets": sorted({p.market.code for p in prompts}),
+        "schedules": schedules,
+        "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
+        "show_prompt_column": False,
+        "new_schedule_url": f"/schedules/new?prompt_set_id={prompt_set.id}",
     }
 
 
@@ -170,7 +187,7 @@ def prompt_set_detail(
     return render(
         request,
         "prompt_sets/detail.html",
-        _prompt_set_detail_context(db, prompt_set, prompts, imported=imported),
+        _prompt_set_detail_context(request, db, prompt_set, prompts, imported=imported),
     )
 
 
@@ -225,6 +242,7 @@ def delete_prompt_set(request: Request, prompt_set_id: int, db: Session = Depend
             request,
             "prompt_sets/detail.html",
             _prompt_set_detail_context(
+                request,
                 db,
                 prompt_set,
                 _current_prompts(db, prompt_set_id),

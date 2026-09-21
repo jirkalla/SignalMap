@@ -16,12 +16,14 @@ from the scheduler side.
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.models.prompt import Prompt
 from app.models.run import Run
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.scheduling import compute_next_run_at
@@ -54,6 +56,7 @@ def _insert_queue_item(
     status: str,
     skip_reason: str | None,
     now: datetime,
+    batch_id: "uuid.UUID | None" = None,
     last_error: str | None = None,
 ) -> None:
     """Insert one `run_queue` row, silently doing nothing if its five-column occurrence key
@@ -69,6 +72,7 @@ def _insert_queue_item(
         .values(
             schedule_id=schedule.id,
             source="schedule",
+            batch_id=batch_id,
             client_id=schedule.client_id,
             prompt_id=prompt_id,
             model_id=model_id,
@@ -86,20 +90,45 @@ def _insert_queue_item(
     db.execute(stmt)
 
 
-def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int) -> None:
-    if schedule.target_type != "prompt":
-        # docs/TASKS_SCHEDULER.md T5b implements the prompt_set fanout; nothing in this branch's
-        # UI can create one yet (T5 only offers target_type='prompt'), so this is unreachable in
-        # practice today — raised loudly instead of silently mis-enqueuing, per AI_INSTRUCTIONS.md
-        # §4, rather than guessing at behavior a later task explicitly owns.
-        raise NotImplementedError(
-            f"schedule {schedule.id}: target_type={schedule.target_type!r} fanout is implemented "
-            "in docs/TASKS_SCHEDULER.md T5b, not here"
-        )
+def _target_prompts(db: Session, schedule: RunSchedule) -> list[Prompt]:
+    """The prompt(s) one window of this schedule fans out across.
 
-    prompt = current_prompt_version(db, schedule.target_id)
-    market_id = schedule.market_id or prompt.market_id
-    fanout = [(model_id, persona_id) for model_id in schedule.model_ids for persona_id in schedule.persona_ids]
+    `target_type='prompt'`: exactly the one current lineage version, regardless of its
+    `is_active` — an inactive prompt still gets a queue row here, which the worker turns into a
+    `skipped`/`inactive_prompt` row at claim time (design decision 18), preserving a visible
+    history entry for that specific schedule's occurrence.
+
+    `target_type='prompt_set'` (design decisions 24, 32): every *active* current-version prompt
+    in the set. Deliberately filtered here, not left to the worker — a 25-prompt set is a living
+    list (T5b), so a temporarily-deactivated prompt simply isn't a member of this window's fanout
+    rather than generating a row that only exists to say "skipped". A prompt added to the set
+    next week is picked up automatically, since this query re-reads set membership on every
+    enqueue pass rather than resolving it once at schedule-creation time (same reasoning as the
+    prompt-lineage resolution design decision 6 already relies on).
+    """
+    if schedule.target_type == "prompt":
+        prompt = current_prompt_version(db, schedule.target_id)
+        return [prompt] if prompt is not None else []
+    if schedule.target_type == "prompt_set":
+        return db.scalars(
+            select(Prompt).where(
+                Prompt.prompt_set_id == schedule.target_id,
+                Prompt.is_current_version.is_(True),
+                Prompt.is_active.is_(True),
+            )
+        ).all()
+    raise NotImplementedError(f"schedule {schedule.id}: unknown target_type={schedule.target_type!r}")
+
+
+def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, grace_period_minutes: int) -> None:
+    prompts = _target_prompts(db, schedule)
+    is_batch = schedule.target_type == "prompt_set"
+    fanout = [
+        (prompt.id, model_id, schedule.market_id or prompt.market_id, persona_id)
+        for prompt in prompts
+        for model_id in schedule.model_ids
+        for persona_id in schedule.persona_ids
+    ]
     priority = schedule.client.priority * CLIENT_PRIORITY_WEIGHT + schedule.priority
     grace_period = timedelta(minutes=grace_period_minutes)
 
@@ -110,14 +139,18 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
     while schedule.next_run_at is not None and schedule.next_run_at <= now:
         window = schedule.next_run_at
         late_by = now - window
+        # One batch_id per window (not one per ticker pass): a catch-up run that finds several
+        # missed windows for the same schedule must group each window's own fanout separately,
+        # so a future T6 "one row, expand to see the batch" view can tell them apart.
+        window_batch_id = uuid.uuid4() if is_batch else None
 
         if late_by > grace_period:
             if missed_window_rows_written < _MAX_MISSED_WINDOW_ROWS:
-                for model_id, persona_id in fanout:
+                for prompt_id, model_id, market_id, persona_id in fanout:
                     _insert_queue_item(
                         db,
                         schedule=schedule,
-                        prompt_id=prompt.id,
+                        prompt_id=prompt_id,
                         model_id=model_id,
                         market_id=market_id,
                         persona_id=persona_id,
@@ -126,17 +159,18 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
                         status="skipped",
                         skip_reason="worker_down",
                         now=now,
+                        batch_id=window_batch_id,
                     )
                 missed_window_rows_written += 1
             else:
                 extra_missed_windows += 1
                 last_extra_window = window
         else:
-            for model_id, persona_id in fanout:
+            for prompt_id, model_id, market_id, persona_id in fanout:
                 _insert_queue_item(
                     db,
                     schedule=schedule,
-                    prompt_id=prompt.id,
+                    prompt_id=prompt_id,
                     model_id=model_id,
                     market_id=market_id,
                     persona_id=persona_id,
@@ -145,6 +179,7 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
                     status="queued",
                     skip_reason=None,
                     now=now,
+                    batch_id=window_batch_id,
                 )
 
         # Every window consumes one occurrence, whether it ran or was skipped for lateness —
@@ -156,12 +191,12 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
             schedule.is_active = False
             schedule.inactive_reason = "completed"
 
-    if extra_missed_windows:
-        model_id, persona_id = fanout[0]
+    if extra_missed_windows and fanout:
+        prompt_id, model_id, market_id, persona_id = fanout[0]
         _insert_queue_item(
             db,
             schedule=schedule,
-            prompt_id=prompt.id,
+            prompt_id=prompt_id,
             model_id=model_id,
             market_id=market_id,
             persona_id=persona_id,
@@ -170,6 +205,7 @@ def _enqueue_one_schedule(db: Session, schedule: RunSchedule, *, now: datetime, 
             status="skipped",
             skip_reason="worker_down",
             now=now,
+            batch_id=uuid.uuid4() if is_batch else None,
             last_error=f"{extra_missed_windows} additional missed windows beyond the first "
             f"{_MAX_MISSED_WINDOW_ROWS} were also skipped (worker_down)",
         )

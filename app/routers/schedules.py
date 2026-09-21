@@ -1,8 +1,10 @@
-"""Run schedule CRUD (docs/TASKS_SCHEDULER.md T5) — the recurrence rule half of the scheduler;
+"""Run schedule CRUD (docs/TASKS_SCHEDULER.md T5/T5b) — the recurrence rule half of the
+scheduler; see app/models/schedule.py for why that's a separate concern from `run_queue`/`Run`.
 
-see app/models/schedule.py for why that's a separate concern from `run_queue`/`Run`. Only
-`target_type='prompt'` exists here — a whole-prompt-set schedule is T5b, built on top of this
-form rather than beside it.
+Two target types share one form and one set of routes: `target_type='prompt'` (one prompt
+lineage, T5) and `target_type='prompt_set'` (every active prompt in a set, T5b, design decisions
+24/32). `_resolve_target` is the one place that tells the two apart — everything downstream
+(the form, the preview, redirects) reads through it rather than re-branching on `target_type`.
 
 Every mutating route is gated by `require_role("admin", "editor")` directly (never just a
 hidden UI element — docs/TASKS_PHASE6.md design decision 4); `can_schedule()`
@@ -21,10 +23,12 @@ from sqlalchemy.orm import Session
 from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
-from app.models import User
+from app.models import Client, PromptSet, User
+from app.models.prompt import Prompt
 from app.models.schedule import RunSchedule
+from app.routers.prompt_sets import _get_prompt_set_or_404
 from app.routers.prompts import _get_prompt_or_404, _runnable_model_groups
-from app.services.cost import average_historical_cost, current_prices
+from app.services.cost import average_historical_cost
 from app.services.scheduling import ScheduleOccurrenceInput, compute_next_run_at, max_end_date, upcoming_occurrences
 from app.templating import get_t, render
 from app.utils import current_prompt_version, market_options, persona_options
@@ -82,14 +86,78 @@ def schedules_for_prompt(db: Session, root_prompt_id: int) -> list[RunSchedule]:
     ).all()
 
 
-def schedules_for_client(db: Session, client_id: int) -> list[RunSchedule]:
-    """Every schedule belonging to this client, across all of its prompts — shown as a partial
+def schedules_for_prompt_set(db: Session, prompt_set_id: int) -> list[RunSchedule]:
+    """Every schedule targeting this whole prompt set (design decisions 24, 32) — shown on the
 
-    on the client detail page.
+    prompt set's own detail page, same partial as `schedules_for_prompt`.
+    """
+    return db.scalars(
+        select(RunSchedule)
+        .where(RunSchedule.target_type == "prompt_set", RunSchedule.target_id == prompt_set_id)
+        .order_by(RunSchedule.created_at.desc())
+    ).all()
+
+
+def schedules_for_client(db: Session, client_id: int) -> list[RunSchedule]:
+    """Every schedule belonging to this client, across all of its prompts and prompt sets —
+
+    shown as a partial on the client detail page.
     """
     return db.scalars(
         select(RunSchedule).where(RunSchedule.client_id == client_id).order_by(RunSchedule.created_at.desc())
     ).all()
+
+
+def _resolve_target(db: Session, target_type: str, target_id: int) -> tuple[str, Client, str, list[Prompt]] | None:
+    """(display label, client, redirect url, active prompts) for a schedule's target — the one
+
+    place `target_type` is ever branched on outside app/services/queue.py's own fanout (which
+    has to re-resolve this itself at enqueue time, per design decision 6, rather than share this
+    request-scoped helper). `None` if the target no longer exists (deleted prompt/prompt set).
+    """
+    if target_type == "prompt":
+        prompt = current_prompt_version(db, target_id)
+        if prompt is None:
+            return None
+        return prompt.text, prompt.prompt_set.client, f"/prompts/{prompt.id}", [prompt]
+    if target_type == "prompt_set":
+        prompt_set = db.get(PromptSet, target_id)
+        if prompt_set is None:
+            return None
+        active_prompts = db.scalars(
+            select(Prompt).where(
+                Prompt.prompt_set_id == target_id,
+                Prompt.is_current_version.is_(True),
+                Prompt.is_active.is_(True),
+            )
+        ).all()
+        return prompt_set.name, prompt_set.client, f"/prompt-sets/{prompt_set.id}", active_prompts
+    raise ValueError(f"unknown schedule target_type: {target_type!r}")
+
+
+def schedule_target_display(db: Session, schedule: RunSchedule) -> tuple[str, str]:
+    """(short label, link url) for a schedule's target, for the schedule list partial
+
+    (app/templates/schedules/_list.html) on the client detail page, where one table mixes
+    `target_type='prompt'` and `'prompt_set'` rows side by side.
+    """
+    resolved = _resolve_target(db, schedule.target_type, schedule.target_id)
+    if resolved is None:
+        return "", "#"
+    label, _client, url, _prompts = resolved
+    return label, url
+
+
+def _redirect_url_for(db: Session, schedule: RunSchedule) -> str:
+    """Where a mutating schedule route sends the browser back to — the target's own detail page,
+
+    resolved fresh (not cached on the schedule) since the target's id is all `RunSchedule`
+    stores.
+    """
+    resolved = _resolve_target(db, schedule.target_type, schedule.target_id)
+    if resolved is None:
+        return "/clients"
+    return resolved[2]
 
 
 def _weekday_options(t) -> list[tuple[int, str]]:
@@ -129,20 +197,6 @@ def _max_end_dates(starts_on: date) -> dict[str, str]:
     return {frequency: max_end_date(frequency, starts_on=starts_on).isoformat() for frequency in _FREQUENCIES}
 
 
-def _occurrence_input(schedule: RunSchedule) -> ScheduleOccurrenceInput:
-    return ScheduleOccurrenceInput(
-        frequency=schedule.frequency,
-        days_of_week=schedule.days_of_week,
-        day_of_month=schedule.day_of_month,
-        time_of_day=schedule.time_of_day,
-        timezone=schedule.timezone,
-        starts_on=schedule.starts_on,
-        ends_on=schedule.ends_on,
-        max_occurrences=schedule.max_occurrences,
-        occurrences_count=schedule.occurrences_count,
-    )
-
-
 def _schedule_form_context(
     request: Request,
     db: Session,
@@ -150,19 +204,25 @@ def _schedule_form_context(
     title: str,
     action: str,
     cancel_url: str,
-    root_prompt_id: int,
+    target_type: str,
+    target_id: int,
     schedule: RunSchedule | None,
 ) -> dict:
     t = get_t(request)
-    prompt = current_prompt_version(db, root_prompt_id)
+    resolved = _resolve_target(db, target_type, target_id)
+    if resolved is None:
+        raise AppError("prompt_not_found", t("errors.prompt_not_found"), status_code=404)
+    target_label, client, _redirect_url, prompts = resolved
     starts_on = schedule.starts_on if schedule else date.today()
     return {
         "title": title,
         "action": action,
         "cancel_url": cancel_url,
-        "prompt": prompt,
-        "client": prompt.prompt_set.client,
-        "root_prompt_id": root_prompt_id,
+        "target_type": target_type,
+        "target_id": target_id,
+        "target_label": target_label,
+        "client": client,
+        "prompt_count": len(prompts),
         "schedule": schedule,
         "model_groups": _runnable_model_groups(db),
         "selected_model_ids": set(schedule.model_ids) if schedule else set(),
@@ -178,14 +238,26 @@ def _schedule_form_context(
 
 
 @router.get("/new", dependencies=_editor_or_admin)
-def new_schedule_form(request: Request, prompt_id: int = Query(...), db: Session = Depends(get_db)):
-    """Render the schedule-creation form for one prompt (design decision 6: stored against the
+def new_schedule_form(
+    request: Request,
+    prompt_id: int | None = Query(None, description="Target one prompt lineage (design decision 6)."),
+    prompt_set_id: int | None = Query(None, description="Target every active prompt in a set (design decision 32)."),
+    db: Session = Depends(get_db),
+):
+    """Render the schedule-creation form, targeting either one prompt (resolved to its lineage
 
-    prompt's lineage root, resolved here from whichever version the user was looking at).
+    root) or a whole prompt set — exactly one of `prompt_id`/`prompt_set_id` is expected.
     """
-    prompt = _get_prompt_or_404(db, request, prompt_id)
-    root_prompt_id = prompt.root_prompt_id or prompt.id
     t = get_t(request)
+    if prompt_id is not None:
+        prompt = _get_prompt_or_404(db, request, prompt_id)
+        target_type, target_id, cancel_url = "prompt", prompt.root_prompt_id or prompt.id, f"/prompts/{prompt_id}"
+    elif prompt_set_id is not None:
+        prompt_set = _get_prompt_set_or_404(db, request, prompt_set_id)
+        target_type, target_id, cancel_url = "prompt_set", prompt_set.id, f"/prompt-sets/{prompt_set_id}"
+    else:
+        raise AppError("schedule_target_required", t("errors.schedule_target_required"), status_code=422)
+
     return render(
         request,
         "schedules/form.html",
@@ -194,8 +266,9 @@ def new_schedule_form(request: Request, prompt_id: int = Query(...), db: Session
             db,
             title=t("schedules.create_title"),
             action="/schedules",
-            cancel_url=f"/prompts/{prompt_id}",
-            root_prompt_id=root_prompt_id,
+            cancel_url=cancel_url,
+            target_type=target_type,
+            target_id=target_id,
             schedule=None,
         ),
     )
@@ -241,7 +314,10 @@ def _validate_frequency_fields(t, frequency: str, days_of_week: list[int], day_o
 @router.post("", dependencies=_editor_or_admin)
 def create_schedule(
     request: Request,
-    target_id: int = Form(..., description="The prompt lineage's root id (design decision 6)."),
+    target_type: Literal["prompt", "prompt_set"] = Form(
+        ..., description="'prompt' targets one lineage (design decision 6); 'prompt_set' every active prompt in a set (design decision 32)."
+    ),
+    target_id: int = Form(..., description="Root prompt id or prompt set id, matching target_type."),
     frequency: Literal["daily", "weekly", "monthly"] = Form(...),
     time_of_day: str = Form(..., description="Local wall-clock time, HH:MM, in the schedule's own timezone."),
     days_of_week: list[int] = Form(default=[], description="ISO weekday numbers (1=Mon..7=Sun); required for weekly."),
@@ -256,11 +332,15 @@ def create_schedule(
     db: Session = Depends(get_db),
     user: User = Depends(current_active_user),
 ):
-    """Create a schedule against one prompt lineage (design decisions 6, 7, 20, 31, 34)."""
+    """Create a schedule against one prompt lineage or a whole prompt set (design decisions 6,
+
+    7, 20, 24, 31, 32, 34).
+    """
     t = get_t(request)
-    prompt = current_prompt_version(db, target_id)
-    if prompt is None:
+    resolved = _resolve_target(db, target_type, target_id)
+    if resolved is None:
         raise AppError("prompt_not_found", t("errors.prompt_not_found"), status_code=404)
+    _label, client, redirect_url, _prompts = resolved
 
     day_of_month = _parse_optional_int(day_of_month)
     ends_on = _parse_optional_date(ends_on)
@@ -278,8 +358,8 @@ def create_schedule(
     )
 
     schedule = RunSchedule(
-        client_id=prompt.prompt_set.client_id,
-        target_type="prompt",
+        client_id=client.id,
+        target_type=target_type,
         target_id=target_id,
         model_ids=model_ids,
         market_id=int(market_id) if market_id else None,
@@ -308,7 +388,7 @@ def create_schedule(
     db.add(schedule)
     db.commit()
 
-    target_url = f"/prompts/{prompt.id}"
+    target_url = redirect_url
     if request.headers.get("HX-Request") == "true":
         response = Response(status_code=200)
         response.headers["HX-Redirect"] = target_url
@@ -328,8 +408,9 @@ def edit_schedule_form(request: Request, schedule_id: int, db: Session = Depends
             db,
             title=t("schedules.edit_title"),
             action=f"/schedules/{schedule_id}/edit",
-            cancel_url=f"/prompts/{current_prompt_version(db, schedule.target_id).id}",
-            root_prompt_id=schedule.target_id,
+            cancel_url=_redirect_url_for(db, schedule),
+            target_type=schedule.target_type,
+            target_id=schedule.target_id,
             schedule=schedule,
         ),
     )
@@ -394,8 +475,7 @@ def update_schedule(
             schedule.inactive_reason = "completed"
     db.commit()
 
-    prompt = current_prompt_version(db, schedule.target_id)
-    target_url = f"/prompts/{prompt.id}"
+    target_url = _redirect_url_for(db, schedule)
     if request.headers.get("HX-Request") == "true":
         response = Response(status_code=200)
         response.headers["HX-Redirect"] = target_url
@@ -433,8 +513,7 @@ def toggle_schedule(request: Request, schedule_id: int, db: Session = Depends(ge
     schedule.updated_by_user_id = user.id
     db.commit()
 
-    prompt = current_prompt_version(db, schedule.target_id)
-    return RedirectResponse(url=f"/prompts/{prompt.id}", status_code=303)
+    return RedirectResponse(url=_redirect_url_for(db, schedule), status_code=303)
 
 
 @router.post("/{schedule_id}/delete", dependencies=_editor_or_admin)
@@ -445,15 +524,43 @@ def delete_schedule(request: Request, schedule_id: int, db: Session = Depends(ge
     stays queryable by id even though the rule itself is gone.
     """
     schedule = _get_schedule_or_404(db, request, schedule_id)
-    prompt = current_prompt_version(db, schedule.target_id)
+    target_url = _redirect_url_for(db, schedule)
     db.delete(schedule)
     db.commit()
-    return RedirectResponse(url=f"/prompts/{prompt.id}", status_code=303)
+    return RedirectResponse(url=target_url, status_code=303)
+
+
+def _estimate_window_cost(
+    db: Session, prompts: list[Prompt], model_ids: list[int], persona_count: int
+) -> tuple[float | None, int, int]:
+    """(estimated USD cost of one window, combinations with history, total combinations).
+
+    Sums `average_historical_cost` over every (prompt, model) combination this window fans out
+    across, times `persona_count` (design decisions 29, 32, 34). A combination with no run
+    history yet is simply left out of the sum rather than blanking the whole estimate — SCH-5's
+    original single-prompt version went all-or-nothing, which would show "unknown" forever for
+    a freshly-created 25-prompt set where most combinations have never run once. The caller
+    shows both numbers so "unknown" and "known but partial" stay visibly different.
+    """
+    total = 0.0
+    known_combos = 0
+    total_combos = 0
+    for prompt in prompts:
+        root_id = prompt.root_prompt_id or prompt.id
+        for model_id in model_ids:
+            total_combos += 1
+            average = average_historical_cost(db, root_prompt_id=root_id, model_id=model_id)
+            if average is not None:
+                total += average * persona_count
+                known_combos += 1
+    return (total if known_combos else None), known_combos, total_combos
 
 
 @router.get("/preview", dependencies=_editor_or_admin)
 def preview_occurrences(
     request: Request,
+    target_type: Literal["prompt", "prompt_set"] = Query(...),
+    target_id: int = Query(...),
     frequency: Literal["daily", "weekly", "monthly"] = Query(...),
     time_of_day: str = Query(...),
     days_of_week: list[int] = Query(default=[]),
@@ -465,18 +572,16 @@ def preview_occurrences(
     max_occurrences: str = Query(""),
     starts_on: str = Query(""),
     occurrences_count: int = Query(0),
-    root_prompt_id: int = Query(...),
     db: Session = Depends(get_db),
 ):
     """Live HTMX partial: the next five occurrences and a cost estimate for the form's current,
 
-    unsaved values (design decisions 29 and 34) — never touches any `RunSchedule` row. Silently
-    tolerant of an incomplete/invalid form (e.g. weekly with no day checked yet, or both end
-    fields empty while the user is still choosing) — this is a live preview, not a submission, so
-    it renders "pick a valid combination" rather than a 422 for every incomplete intermediate
-    keystroke.
+    unsaved values (design decisions 29, 32 and 34) — never touches any `RunSchedule` row.
+    Silently tolerant of an incomplete/invalid form (e.g. weekly with no day checked yet, or
+    both end fields empty while the user is still choosing) — this is a live preview, not a
+    submission, so it renders "pick a valid combination" rather than a 422 for every incomplete
+    intermediate keystroke.
     """
-    t = get_t(request)
     day_of_month = _parse_optional_int(day_of_month)
     ends_on = _parse_optional_date(ends_on)
     max_occurrences = _parse_optional_int(max_occurrences)
@@ -493,6 +598,15 @@ def preview_occurrences(
     if incomplete:
         return render(request, "schedules/_occurrence_preview.html", {"incomplete": True})
 
+    resolved = _resolve_target(db, target_type, target_id)
+    if resolved is None:
+        return render(request, "schedules/_occurrence_preview.html", {"incomplete": True})
+    _label, _client, _redirect_url, prompts = resolved
+    if not prompts:
+        # A prompt_set with no active prompts right now (design decision 18: "a living list") —
+        # a real, valid state, not an error, but there is nothing to estimate or fan out yet.
+        return render(request, "schedules/_occurrence_preview.html", {"incomplete": True})
+
     occurrence_input = ScheduleOccurrenceInput(
         frequency=frequency,
         days_of_week=days_of_week if frequency == "weekly" else None,
@@ -507,15 +621,7 @@ def preview_occurrences(
     after = datetime.combine(effective_starts_on, time.min, tzinfo=timezone.utc)
     upcoming, total_occurrences = upcoming_occurrences(occurrence_input, after=after)
 
-    prices = current_prices(db, model_ids)
-    per_window_cost = 0.0
-    per_window_cost_known = True
-    for model_id in model_ids:
-        model_avg = average_historical_cost(db, root_prompt_id=root_prompt_id, model_id=model_id)
-        if model_avg is None:
-            per_window_cost_known = False
-            continue
-        per_window_cost += model_avg * len(persona_ids)
+    per_window_cost, known_combos, total_combos = _estimate_window_cost(db, prompts, model_ids, len(persona_ids))
 
     return render(
         request,
@@ -523,13 +629,18 @@ def preview_occurrences(
         {
             "incomplete": False,
             "upcoming": upcoming,
-            "run_count_per_window": len(model_ids) * len(persona_ids),
+            "prompt_count": len(prompts),
+            "model_count": len(model_ids),
+            "persona_count": len(persona_ids),
+            "run_count_per_window": len(prompts) * len(model_ids) * len(persona_ids),
             "total_occurrences": total_occurrences,
-            "per_window_cost": per_window_cost if per_window_cost_known else None,
+            "per_window_cost": per_window_cost,
             "total_cost": (
                 per_window_cost * total_occurrences
-                if per_window_cost_known and total_occurrences is not None
+                if per_window_cost is not None and total_occurrences is not None
                 else None
             ),
+            "cost_known_combos": known_combos,
+            "cost_total_combos": total_combos,
         },
     )

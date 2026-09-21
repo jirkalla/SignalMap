@@ -23,9 +23,9 @@
       <tr class="border-t border-stone-100 hover:bg-stone-50">
         {% if show_prompt_column %}
         <td class="py-3 px-4">
-          {% if schedule_prompts.get(schedule.id) %}
-          <a href="/prompts/{{ schedule_prompts[schedule.id].id }}" class="hover:underline">{{ schedule_prompts[schedule.id].text[:60] }}{% if schedule_prompts[schedule.id].text|length > 60 %}…{% endif %}</a>
-          {% endif %}
+          {% set target_label, target_url = schedule_targets.get(schedule.id, ('', '#')) %}
+          <a href="{{ target_url }}" class="hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+          {% if schedule.target_type == 'prompt_set' %}<span class="text-xs text-stone-400 ml-1">({{ t('schedules.prompt_set_badge') }})</span>{% endif %}
         </td>
         {% endif %}
         <td class="py-3 px-4 text-stone-600">{{ schedule_summaries[schedule.id] }}</td>
@@ -69,9 +69,11 @@
       {{ pill_badge(schedule.is_active, t('schedules.status_active'), t('schedules.status_paused')) }}
       {% endif %}
     </div>
-    {% if show_prompt_column and schedule_prompts.get(schedule.id) %}
+    {% if show_prompt_column %}
+    {% set target_label, target_url = schedule_targets.get(schedule.id, ('', '#')) %}
     <div class="text-xs text-stone-500 mt-1">
-      <a href="/prompts/{{ schedule_prompts[schedule.id].id }}" class="hover:underline">{{ schedule_prompts[schedule.id].text[:60] }}{% if schedule_prompts[schedule.id].text|length > 60 %}…{% endif %}</a>
+      <a href="{{ target_url }}" class="hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+      {% if schedule.target_type == 'prompt_set' %}<span class="text-stone-400">({{ t('schedules.prompt_set_badge') }})</span>{% endif %}
     </div>
     {% endif %}
     <div class="text-xs text-stone-400 mt-2">

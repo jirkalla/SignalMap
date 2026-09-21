@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters.base import RawResponsePayload
-from app.models import AIModel, Client, Persona, Prompt, Run
+from app.models import AIModel, Client, Persona, Prompt, PromptSet, Run
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.services.queue import (
     CLIENT_PRIORITY_WEIGHT,
@@ -420,3 +420,93 @@ def test_enqueue_skips_a_window_past_grace_as_worker_down(db_session, seed, samp
     db_session.refresh(schedule)
     assert schedule.occurrences_count == 1
     assert schedule.next_run_at > NOW
+
+
+# ---------------------------------------------------------------------------
+# enqueue_due_schedules -- target_type='prompt_set' (docs/TASKS_SCHEDULER.md T5b)
+# ---------------------------------------------------------------------------
+
+
+def _make_prompt_set(db_session: Session, *, client: Client) -> PromptSet:
+    prompt_set = PromptSet(client_id=client.id, name="Test Set")
+    db_session.add(prompt_set)
+    db_session.commit()
+    db_session.refresh(prompt_set)
+    return prompt_set
+
+
+def _make_prompt(db_session: Session, *, prompt_set: PromptSet, market, text: str, is_active: bool = True) -> Prompt:
+    prompt = Prompt(prompt_set_id=prompt_set.id, text=text, market_id=market.id, is_active=is_active)
+    db_session.add(prompt)
+    db_session.commit()
+    db_session.refresh(prompt)
+    return prompt
+
+
+def test_enqueue_prompt_set_fans_out_prompts_times_models_times_personas_with_shared_batch_id(
+    db_session, seed, sample_prompt, prompt_client, admin_user
+):
+    prompt_set = _make_prompt_set(db_session, client=prompt_client)
+    prompt_a = _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Prompt A")
+    prompt_b = _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Prompt B")
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        admin_user=admin_user, target_type="prompt_set", target_id=prompt_set.id,
+        model_ids=[seed["model"].id, seed["anthropic_model"].id], persona_ids=[seed["persona"].id],
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    # 2 prompts x 2 models x 1 persona = 4
+    assert len(items) == 4
+    assert {item.prompt_id for item in items} == {prompt_a.id, prompt_b.id}
+    assert {item.model_id for item in items} == {seed["model"].id, seed["anthropic_model"].id}
+    batch_ids = {item.batch_id for item in items}
+    assert len(batch_ids) == 1
+    assert None not in batch_ids
+
+
+def test_enqueue_prompt_set_skips_inactive_prompts_without_a_row(db_session, seed, sample_prompt, prompt_client, admin_user):
+    prompt_set = _make_prompt_set(db_session, client=prompt_client)
+    active_prompt = _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Active", is_active=True)
+    _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Inactive", is_active=False)
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        admin_user=admin_user, target_type="prompt_set", target_id=prompt_set.id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id],
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    assert len(items) == 1
+    assert items[0].prompt_id == active_prompt.id
+
+
+def test_enqueue_prompt_set_is_idempotent_against_a_concurrent_duplicate_insert(
+    db_session, seed, sample_prompt, prompt_client, admin_user
+):
+    prompt_set = _make_prompt_set(db_session, client=prompt_client)
+    _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Prompt A")
+    _make_prompt(db_session, prompt_set=prompt_set, market=seed["market"], text="Prompt B")
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        admin_user=admin_user, target_type="prompt_set", target_id=prompt_set.id,
+        model_ids=[seed["model"].id], persona_ids=[seed["persona"].id],
+    )
+    original_window = schedule.next_run_at
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+    first_pass_count = len(db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all())
+
+    # Simulate a second ticker pass that read the schedule before the first pass advanced it --
+    # same scenario as the single-prompt idempotency test, but here one window is N rows, not 1.
+    db_session.refresh(schedule)
+    schedule.next_run_at = original_window
+    db_session.commit()
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    assert first_pass_count == 2  # 2 prompts x 1 model x 1 persona
+    assert len(items) == 2

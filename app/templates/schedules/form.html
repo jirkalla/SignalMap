@@ -5,10 +5,16 @@
 <div class="text-sm text-stone-500 mb-1">
   <a href="/clients/{{ client.id }}" class="hover:underline">{{ client.name }}</a>
   <span class="mx-1">/</span>
-  <a href="/prompts/{{ prompt.id }}" class="hover:underline">{{ t('schedules.prompt_link') }}</a>
+  <a href="{{ cancel_url }}" class="hover:underline">{{ t('schedules.prompt_set_link') if target_type == 'prompt_set' else t('schedules.prompt_link') }}</a>
 </div>
 <h1 class="text-xl font-semibold mb-2">{{ title }}</h1>
-<p class="text-sm text-stone-600 bg-white border border-stone-200 rounded-lg p-3 mb-6">{{ prompt.text }}</p>
+{% if target_type == 'prompt_set' %}
+<p class="text-sm text-stone-600 bg-white border border-stone-200 rounded-lg p-3 mb-6">
+  {{ t('schedules.target_prompt_set').format(name=target_label, count=prompt_count) }}
+</p>
+{% else %}
+<p class="text-sm text-stone-600 bg-white border border-stone-200 rounded-lg p-3 mb-6">{{ target_label }}</p>
+{% endif %}
 
 <form
   id="schedule-form"
@@ -20,8 +26,8 @@
   hx-swap="innerHTML"
   class="bg-white border border-stone-200 rounded-lg p-6 max-w-3xl space-y-6"
 >
-  <input type="hidden" name="target_id" value="{{ root_prompt_id }}">
-  <input type="hidden" name="root_prompt_id" value="{{ root_prompt_id }}">
+  <input type="hidden" name="target_type" value="{{ target_type }}">
+  <input type="hidden" name="target_id" value="{{ target_id }}">
   <input type="hidden" name="starts_on" value="{{ schedule.starts_on.isoformat() if schedule else '' }}">
   <input type="hidden" name="occurrences_count" value="{{ schedule.occurrences_count if schedule else 0 }}">
 

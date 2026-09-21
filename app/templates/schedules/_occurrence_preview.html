@@ -13,7 +13,7 @@
 <p class="text-stone-500 mb-3">{{ t('schedules.preview_none') }}</p>
 {% endif %}
 <p class="text-stone-600">
-  {{ t('schedules.preview_runs_per_window').format(count=run_count_per_window) }}
+  {{ t('schedules.preview_multiplication').format(prompts=prompt_count, models=model_count, personas=persona_count, total=run_count_per_window) }}
   {% if total_occurrences is not none %}
   · {{ t('schedules.preview_total_occurrences').format(count=total_occurrences) }}
   {% endif %}
@@ -28,4 +28,7 @@
   <span class="text-stone-400">{{ t('schedules.preview_cost_unknown') }}</span>
   {% endif %}
 </p>
+{% if cost_known_combos is defined and cost_known_combos < cost_total_combos %}
+<p class="text-xs text-stone-400 mt-0.5">{{ t('schedules.preview_cost_partial_note').format(known=cost_known_combos, total=cost_total_combos) }}</p>
+{% endif %}
 {% endif %}
