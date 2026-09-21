@@ -4,7 +4,6 @@
   "nav.dashboard": "Dashboard",
   "nav.ops": "Ops",
   "nav.docs": "API-Dokumentation",
-  "nav.help": "Anleitung",
   "nav.markets": "Märkte",
   "nav.personas": "Personas",
   "nav.providers": "Anbieter",
@@ -12,6 +11,8 @@
   "nav.settings": "Einstellungen",
   "nav.users": "Benutzer",
   "nav.config_menu": "Konfiguration",
+  "nav.monitoring_menu": "Monitoring",
+  "nav.system_menu": "System",
   "nav.help_menu": "Hilfe",
   "nav.schedules": "Zeitpläne",
 
