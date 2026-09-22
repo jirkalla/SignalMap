@@ -334,6 +334,25 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     (PARTITION BY schedule_id ORDER BY scheduled_for DESC)`), žádná
     smyčka v Pythonu — stejná disciplína jako zbytek T6.
 
+38. **`schema_phase1.sql` se prohlašuje za historický snapshot fáze 1, ne
+    za živý popis schématu — `AI_INSTRUCTIONS.md` se podle toho mění
+    (v1.2, 2026-09-22).** Zjištěno při zavírání téhle branch: soubor
+    neobsahuje ani scheduler tabulky, ani 12 dalších tabulek přidaných
+    napříč staršími fázemi (`users`, `personas`,
+    `ai_model_price_components`, `analysis_skills`, ...) — nikdy nebyl po
+    fázi 1 aktualizován, přestože si na to `AI_INSTRUCTIONS.md` §3 dosud
+    dělal nárok. Zvažovaly se tři varianty: nechat být (prohlubuje rozpor
+    psaného pravidla s realitou), dohnat soubor na aktuální stav všech ~21
+    tabulek (netriviální, bez testového pokrytí správnosti, bez
+    vynucovacího mechanismu by byl za pár měsíců zase pozadu), nebo
+    přiznat, že autoritativním zdrojem je od teď historie Alembic migrací
+    a `schema_phase1.sql` nechat jako pojmenovaný snapshot prvního
+    vertical slice. Zvoleno poslední — nejmenší riziko/náklad, sladí
+    pravidlo se skutečnou praxí posledních 12 tabulek, a je to i běžný
+    vzor v SQLAlchemy/Alembic projektech. Soubor samotný a migrace `0001`
+    (která ho pořád spouští doslovně pro čerstvou DB) zůstávají
+    nezměněné — mění se jen jejich popisky a `AI_INSTRUCTIONS.md`.
+
 ---
 
 ## Nové schéma (migrace 0029)
