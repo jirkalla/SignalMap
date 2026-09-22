@@ -240,19 +240,40 @@ def update_client(
     client.industry = industry.strip() or None
     client.notes = notes.strip() or None
     client.domain = domain.strip().lower() or None
+    # Bounds found in code review, 2026-09-22: `priority` feeds `client.priority * 1000 +
+    # schedule.priority` (app/services/queue.py) on every enqueue, stored into run_queue's own
+    # `integer` column — an unbounded value here could overflow that column and crash the next
+    # enqueue pass with a 500 instead of a friendly validation error at the one place it was
+    # actually typed in. 10000 leaves ample room for that multiplication to never approach the
+    # ~2.1 billion `integer` ceiling even with a large schedule-level priority on top.
+    if not (1 <= priority <= 10000):
+        raise AppError("invalid_priority", t("errors.invalid_priority"), status_code=400)
     client.priority = priority
     if daily_run_limit.strip():
         try:
-            client.daily_run_limit = int(daily_run_limit.strip())
+            parsed_daily_run_limit = int(daily_run_limit.strip())
         except ValueError:
             raise AppError("invalid_daily_run_limit", t("errors.invalid_daily_run_limit"), status_code=400) from None
+        if not (0 <= parsed_daily_run_limit <= 100000):
+            raise AppError("invalid_daily_run_limit", t("errors.invalid_daily_run_limit"), status_code=400)
+        client.daily_run_limit = parsed_daily_run_limit
     else:
         client.daily_run_limit = None
     if monthly_budget_usd.strip():
         try:
-            client.monthly_budget_usd = Decimal(monthly_budget_usd.strip())
+            parsed_monthly_budget = Decimal(monthly_budget_usd.strip())
         except InvalidOperation:
             raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400) from None
+        # `Decimal` parses "Infinity"/"NaN" without raising (found in code review, 2026-09-22) —
+        # "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" test
+        # forever (never warns again), and "NaN" makes that same comparison False every time,
+        # firing on every check instead of once a month. Neither is a number a real budget can be.
+        # The upper bound matches the column's own Numeric(10, 2) precision (found live, 2026-09-22
+        # — a value at or above 100 million overflowed the column and 500'd instead of showing this
+        # message): 8 digits before the point is the most that actually fits.
+        if not parsed_monthly_budget.is_finite() or not (0 <= parsed_monthly_budget < 100_000_000):
+            raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400)
+        client.monthly_budget_usd = parsed_monthly_budget
     else:
         client.monthly_budget_usd = None
     db.commit()

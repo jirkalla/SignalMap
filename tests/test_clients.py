@@ -1,5 +1,6 @@
 """Client CRUD (docs/REQUIREMENTS.md FR-1..FR-3) and its delete policy (HD-T4)."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -147,6 +148,65 @@ def test_editing_a_client_rejects_a_non_numeric_monthly_budget(authed_client: Te
 
     assert response.status_code == 400
     assert db_session.get(Client, client_id).monthly_budget_usd is None
+
+
+@pytest.mark.parametrize("bad_budget", ["Infinity", "-Infinity", "NaN", "-5", "100000000", "999999999999.00"])
+def test_editing_a_client_rejects_a_non_finite_or_negative_monthly_budget(
+    authed_client: TestClient, db_session: Session, bad_budget: str
+):
+    """`Decimal` parses "Infinity"/"NaN" without raising (found in code review, 2026-09-22) —
+
+    "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" comparison
+    forever (never warns again); "NaN" makes that same comparison False every time, firing on
+    every check instead of once a month. Neither is a number a real budget can be. The two large
+    values (found live the same day, testing this exact fix) overflow the column's own
+    `Numeric(10, 2)` precision and used to 500 instead of rejecting cleanly here.
+    """
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "", "monthly_budget_usd": bad_budget},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).monthly_budget_usd is None
+
+
+@pytest.mark.parametrize("bad_priority", [0, -1, 10001])
+def test_editing_a_client_rejects_an_out_of_range_priority(authed_client: TestClient, db_session: Session, bad_priority: int):
+    """Found in code review, 2026-09-22 — `priority` feeds `client.priority * 1000 +
+
+    schedule.priority` (app/services/queue.py) on every enqueue, stored into run_queue's own
+    `integer` column. An unbounded value here could overflow that column and crash the next
+    enqueue pass with a 500 instead of a friendly validation error at the one place it was
+    actually typed in.
+    """
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": str(bad_priority), "daily_run_limit": "", "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).priority == 100
+
+
+@pytest.mark.parametrize("bad_limit", [-1, 100001])
+def test_editing_a_client_rejects_an_out_of_range_daily_run_limit(authed_client: TestClient, db_session: Session, bad_limit: int):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": str(bad_limit), "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).daily_run_limit is None
 
 
 # --- PRE-1: the is_test flag, admin-only and never written by the client form --------------------

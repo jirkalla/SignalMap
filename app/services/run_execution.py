@@ -64,7 +64,18 @@ def check_daily_quota(db: Session, *, client_id: int, now: datetime, default_lim
     neither path can bypass the cap the other enforces; every status counts (including `pending`
     and `error`), since each Run row represents one dispatched attempt regardless of how it ended,
     not just the ones that happened to succeed.
+
+    Takes a transaction-scoped Postgres advisory lock on `client_id` first (found in code review,
+    2026-09-22) — without it, two concurrent callers for the same client (a manual trigger racing
+    the worker, or two manual triggers) could both count before either commits its own new Run
+    row, letting the "hard cap, never bypassed" guarantee slip by a run or two under real
+    concurrency. `pg_advisory_xact_lock` releases automatically when the caller's own transaction
+    commits or rolls back — for both callers, that happens right after the Run row this check is
+    guarding is written — so a second concurrent caller blocks here until the first one's count
+    already reflects that new row, the same "let Postgres serialize it" idiom `claim_next`
+    (app/services/queue.py) already uses for the queue itself.
     """
+    db.execute(select(func.pg_advisory_xact_lock(client_id)))
     client = db.get(Client, client_id)
     limit = client.daily_run_limit if client.daily_run_limit is not None else default_limit
     since = now - timedelta(hours=24)
