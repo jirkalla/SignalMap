@@ -523,7 +523,7 @@
   "errors.client_alias_duplicate": "Dieser Alias ist für diesen Klienten bereits registriert.",
   "errors.client_alias_not_found": "Alias nicht gefunden.",
   "errors.invalid_daily_run_limit": "Das tägliche Lauf-Limit muss eine ganze Zahl zwischen 0 und 100000 sein.",
-  "errors.invalid_monthly_budget": "Das Monatsbudget muss eine Zahl zwischen 0 und 99999999.99 sein, z. B. 500 oder 500.00.",
+  "errors.invalid_monthly_budget": "Das Monatsbudget muss eine Zahl zwischen 0 und 100000 sein, z. B. 500 oder 500.00.",
   "errors.invalid_priority": "Die Planer-Priorität muss eine ganze Zahl zwischen 1 und 10000 sein.",
   "errors.invalid_domain_type": "Kein gültiger Domain-Typ.",
   "errors.tracked_entity_duplicate": "Dieser Wettbewerber wird für diesen Klienten bereits beobachtet.",

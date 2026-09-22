@@ -150,7 +150,7 @@ def test_editing_a_client_rejects_a_non_numeric_monthly_budget(authed_client: Te
     assert db_session.get(Client, client_id).monthly_budget_usd is None
 
 
-@pytest.mark.parametrize("bad_budget", ["Infinity", "-Infinity", "NaN", "-5", "100000000", "999999999999.00"])
+@pytest.mark.parametrize("bad_budget", ["Infinity", "-Infinity", "NaN", "-5", "100000", "150000", "999999999999.00"])
 def test_editing_a_client_rejects_a_non_finite_or_negative_monthly_budget(
     authed_client: TestClient, db_session: Session, bad_budget: str
 ):
@@ -158,9 +158,11 @@ def test_editing_a_client_rejects_a_non_finite_or_negative_monthly_budget(
 
     "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" comparison
     forever (never warns again); "NaN" makes that same comparison False every time, firing on
-    every check instead of once a month. Neither is a number a real budget can be. The two large
-    values (found live the same day, testing this exact fix) overflow the column's own
-    `Numeric(10, 2)` precision and used to 500 instead of rejecting cleanly here.
+    every check instead of once a month. Neither is a number a real budget can be. The ceiling
+    itself is a business one, not the column's `Numeric(10, 2)` capacity (revised 2026-09-22) —
+    realistic per-client spend is tens to low hundreds of dollars a month, so $100,000 is already
+    a huge margin; "999999999999.00" is kept in the list since a value that large used to 500
+    instead of rejecting cleanly (found live testing the original, column-sized ceiling).
     """
     client_id = _create_client(authed_client)
 

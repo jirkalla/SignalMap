@@ -268,10 +268,12 @@ def update_client(
         # "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" test
         # forever (never warns again), and "NaN" makes that same comparison False every time,
         # firing on every check instead of once a month. Neither is a number a real budget can be.
-        # The upper bound matches the column's own Numeric(10, 2) precision (found live, 2026-09-22
-        # — a value at or above 100 million overflowed the column and 500'd instead of showing this
-        # message): 8 digits before the point is the most that actually fits.
-        if not parsed_monthly_budget.is_finite() or not (0 <= parsed_monthly_budget < 100_000_000):
+        # The upper bound is a business ceiling, not the column's Numeric(10, 2) capacity (revised
+        # 2026-09-22) — realistic per-client spend is tens to low hundreds of dollars a month, so
+        # $100,000 is already a 1000x+ margin above anything legitimate while still catching an
+        # obvious typo (an extra digit, cents entered as dollars) far sooner than the column's own
+        # ~$100M ceiling would.
+        if not parsed_monthly_budget.is_finite() or not (0 <= parsed_monthly_budget < 100_000):
             raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400)
         client.monthly_budget_usd = parsed_monthly_budget
     else:
