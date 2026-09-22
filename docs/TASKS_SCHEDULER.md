@@ -434,20 +434,20 @@ runs                          -- existující tabulka, jen úprava indexu
 
 | ID | Name | Status |
 |----|------|--------|
-| T0 | Migrace 0029 — čtyři tabulky, sloupce na `clients`, indexy, rozšíření indexu z 0024 | ⏳ |
-| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy + konec rozvrhu | ⏳ |
-| T2 | `app/services/run_execution.py` — vytažení exekuce, beze změny chování | ⏳ |
-| T3 | `app/worker.py` — ticker, executor, lease, heartbeat, rekonciliace, dry-run | ⏳ |
-| T4 | `worker` služba v Compose + env + healthcheck | ⏳ |
-| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s povinným koncem a náhledem termínů i ceny | ⏳ |
-| T5b | Set-level rozvrh (`target_type='prompt_set'`) + rozstřel přes `batch_id` | ⏳ |
-| T5c | Upozornění na překryv rozvrhů (stejný prompt+model+persona, jiný rozvrh) při uložení | ⏳ |
-| T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru + trvalé upozornění na překryv | ⏳ |
-| T7 | Dead letter: opakování chyb, hromadné akce | ⏳ |
+| T0 | Migrace 0029 — čtyři tabulky, sloupce na `clients`, indexy, rozšíření indexu z 0024 | ✅ |
+| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy + konec rozvrhu | ✅ |
+| T2 | `app/services/run_execution.py` — vytažení exekuce, beze změny chování | ✅ |
+| T3 | `app/worker.py` — ticker, executor, lease, heartbeat, rekonciliace, dry-run | ✅ |
+| T4 | `worker` služba v Compose + env + healthcheck | ✅ |
+| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s povinným koncem a náhledem termínů i ceny | ✅ |
+| T5b | Set-level rozvrh (`target_type='prompt_set'`) + rozstřel přes `batch_id` | ✅ |
+| T5c | Upozornění na překryv rozvrhů (stejný prompt+model+persona, jiný rozvrh) při uložení | ✅ |
+| T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru + trvalé upozornění na překryv | ✅ |
+| T7 | Dead letter: opakování chyb, hromadné akce | ✅ |
 | T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ✅ |
-| T9 | Pozastavení rozvrhů při deaktivaci uživatele | ⏳ |
-| T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ⏳ |
-| T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ⏳ |
+| T9 | Pozastavení rozvrhů při deaktivaci uživatele | ✅ |
+| T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ✅ |
+| T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ✅ |
 
 Pořadí je vynucené: T1 a T2 jsou nezávislé stavební kameny, které T3
 potřebuje oba; T4 bez T3 nemá co spouštět; T5 zakládá data, která T6

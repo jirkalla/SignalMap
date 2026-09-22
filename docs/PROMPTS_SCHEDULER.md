@@ -169,7 +169,7 @@ zapsal u `idx_runs_one_pending_per_prompt_model`.
 feat(infra): add scheduler, run queue and notification tables
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 4be2d07
 
 ---
 
@@ -228,7 +228,7 @@ funkcí, kterou testuješ.
 feat(scheduler): add timezone-aware recurrence calculation
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 4ccba86
 
 ---
 
@@ -268,7 +268,7 @@ Dvě věci, které se při přesunu snadno rozbijí:
 refactor(runs): extract run execution into a shared service
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit eef393a
 
 ---
 
@@ -315,7 +315,7 @@ psaním.
 feat(scheduler): add queue worker with ticker, leases and reconciliation
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit e6dbb1a
 
 ---
 
@@ -358,7 +358,7 @@ Caddy se nemění — worker zvenku dostupný není a být nemá.
 chore(infra): add scheduler worker service to Compose
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit bacc764
 
 ---
 
@@ -414,7 +414,7 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 feat(scheduler): add schedule CRUD with occurrence and cost preview
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 19da629
 
 ---
 
@@ -458,7 +458,7 @@ placených volání:**
 feat(scheduler): add prompt-set level schedules
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 9d8b6ec
 
 ---
 
@@ -514,7 +514,7 @@ potvrzení.
 feat(scheduler): warn on overlapping schedule targets
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit e57635b
 
 ---
 
@@ -567,7 +567,7 @@ počkej na potvrzení.
 feat(scheduler): add schedules monitoring page
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 5046b27
 
 ---
 
@@ -595,7 +595,7 @@ jako u evidence (NFR-6). Cancel smí sáhnout jen na `queued`, nikdy na
 feat(scheduler): add queue retry and cancel actions
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 31aeef9
 
 ---
 
@@ -668,7 +668,7 @@ horší varianta než tiché zastavení — ale tiché zapnutí zpátky je taky
 feat(scheduler): pause schedules when their owner is deactivated
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 704f269
 
 ---
 
@@ -708,7 +708,7 @@ ověření můžeš (ty, ne agent) vypnout `SCHEDULER_DRY_RUN`.
 feat(scheduler): enforce per-client run quotas and concurrency limits
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit abc3f97
 
 ---
 
@@ -739,7 +739,7 @@ přístupu k `/schedules`. Ukaž mi diff, neměň to potichu.
 docs(requirements): record scheduler behaviour and quota limits
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 10ae617
 
 ---
 ---
