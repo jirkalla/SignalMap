@@ -236,9 +236,9 @@ Automatické, opakované spouštění runů (`FR-9` bylo ve fázi 1 explicitně 
 scope — teď dává smysl to odemknout).
 
 **Implementováno:** `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md`
-(30 design decisions, SCH-T0–T11) — branch `feature/signalmap-scheduler`,
-**merged \<date> (PR #\<fill in>)**. Viz `docs/TASKS.md` "Scheduler" pro
-shrnutí co dodalo.
+(38 design decisions, SCH-T0–T11) — branch `feature/signalmap-scheduler`,
+**merged 2026-09-22 ([PR #18](https://github.com/jirkalla/SignalMap/pull/18))**.
+Viz `docs/TASKS.md` "Scheduler" pro shrnutí co dodalo.
 
 - Rozšíření `Run.trigger_type` o `'scheduled'` (dnes jen `'manual'`).
 - `triggered_by_user_id` (#1) rozliší, kdo/co run spustil.
@@ -708,7 +708,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 2 | Deploy hardening | ✅ Hotovo 2026-09-18 ([PR #9](https://github.com/jirkalla/SignalMap/pull/9)) — Caddy + HTTPS, porty jen přes proxy, noční zálohy s ověřenou obnovou. Firewall nastavoval Khalid, z naší strany neověřeno |
 | 3 | Jít online | ✅ Hotovo 2026-09-18 — `https://expressyourself.ai` běží, auth ověřená, runbook v `docs/DEPLOYMENT.md` |
 | 4 | Ops dashboard (interní) | ✅ Hotovo, smergnuto ([PR #13](https://github.com/jirkalla/SignalMap/pull/13)) a od 2026-09-18 nasazeno na produkci |
-| 5 | Scheduler | ✅ Hotovo, **smergnuto \<date> (PR #\<fill in>)** — `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md`, 30 design decisions, SCH-T0…T11. Před ostrým provozem: týden pozorování v dry-runu, pak `SCHEDULER_DRY_RUN` vypnout a první den ostrého provozu zkontrolovat `/ops` (řádek "Scheduler" na ose Uživatel proti počtu oken na `/schedules`) |
+| 5 | Scheduler | ✅ Hotovo, **smergnuto 2026-09-22 ([PR #18](https://github.com/jirkalla/SignalMap/pull/18))** — `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md`, 38 design decisions, SCH-T0…T11. `SCHEDULER_DRY_RUN` vypnuto lokálně (dev PC) 2026-09-22; **na produkčním VPS je to samostatný krok** (vlastní `.env` na serveru, viz `docs/DEPLOYMENT.md`), zatím neudělaný. Až se udělá: první dny ostrého provozu sledovat `/ops` (řádek "Scheduler" na ose Uživatel proti počtu oken na `/schedules`) |
 | 6 | Brand-attribute tagging | Neimplementováno, čeká za #11/#12 |
 | 7 | Sentiment | Odemčeno, čeká za #11/#12 |
 | 8 | Gap/opportunity score | Čeká na 7 |

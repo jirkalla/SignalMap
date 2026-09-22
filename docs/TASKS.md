@@ -414,7 +414,7 @@ Full task breakdown, measured figures and design decisions:
 
 ## Scheduler
 
-Branch `feature/signalmap-scheduler` (**merged \<date> — PR #\<fill in>**),
+Branch `feature/signalmap-scheduler` (**merged 2026-09-22 — [PR #18](https://github.com/jirkalla/SignalMap/pull/18)**),
 roadmap item #5. Adds recurring, unattended runs (FR-9) on top of the
 manual-trigger loop everything before this branch was built around: a
 recurrence rule (`run_schedules`), a persistent queue with its own history
