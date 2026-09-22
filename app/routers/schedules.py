@@ -70,6 +70,22 @@ _WEEKDAY_I18N_KEYS = [
 ]
 
 
+def _validate_schedule_priority(t, priority: int) -> None:
+    """Raise a friendly 400 if `priority` is outside the form's own declared 0-999 range (found
+
+    in code review, 2026-09-22) — the range client.priority already enforces (app/routers/
+    clients.py) exists specifically because `client.priority * 1000 + schedule.priority` is
+    written into `run_queue.priority`, a plain Postgres `integer`; that fix never reached this
+    field. An unbounded value here saves fine but crashes the *worker process itself* on the next
+    enqueue pass (no try/except around `enqueue_due_schedules` in app/worker.py) — worse than a
+    single request's 500, since Postgres rejects the same bad row again on every restart until
+    it's fixed. 0-999 matches app/templates/schedules/form.html's own `min`/`max`, which were
+    already correct but client-side only.
+    """
+    if not (0 <= priority <= 999):
+        raise AppError("invalid_schedule_priority", t("errors.invalid_schedule_priority"), status_code=400)
+
+
 def _parse_optional_int(value: str) -> int | None:
     """An HTML number input left blank submits `""`, not an absent field — FastAPI/Pydantic
 
@@ -500,9 +516,22 @@ def create_schedule(
         raise AppError("prompt_not_found", t("errors.prompt_not_found"), status_code=404)
     _label, client, redirect_url, _prompts = resolved
 
-    day_of_month = _parse_optional_int(day_of_month)
-    ends_on = _parse_optional_date(ends_on)
-    max_occurrences = _parse_optional_int(max_occurrences)
+    _validate_schedule_priority(t, priority)
+    # One try/except around every field parsed from a free-text/number form input (found in code
+    # review, 2026-09-22) — a malformed day_of_month/ends_on/max_occurrences/market_id/
+    # time_of_day used to reach app/errors.py's generic catch-all (a plain "Something went wrong"
+    # 500) instead of a field-specific message, the same class of bug the monthly_budget_usd
+    # overflow had before it was fixed (app/routers/clients.py). One shared message rather than
+    # five is deliberate: none of these fields need more than "check your input", and the form
+    # itself already constrains most of them to valid ranges client-side.
+    try:
+        day_of_month = _parse_optional_int(day_of_month)
+        ends_on = _parse_optional_date(ends_on)
+        max_occurrences = _parse_optional_int(max_occurrences)
+        resolved_market_id = int(market_id) if market_id else None
+        resolved_time_of_day = _parse_time_of_day(time_of_day)
+    except ValueError:
+        raise AppError("schedule_invalid_field", t("errors.schedule_invalid_field"), status_code=400) from None
 
     _validate_frequency_fields(t, frequency, days_of_week, day_of_month)
     if not model_ids:
@@ -520,12 +549,12 @@ def create_schedule(
         target_type=target_type,
         target_id=target_id,
         model_ids=model_ids,
-        market_id=int(market_id) if market_id else None,
+        market_id=resolved_market_id,
         persona_ids=persona_ids,
         frequency=frequency,
         days_of_week=days_of_week if frequency == "weekly" else None,
         day_of_month=day_of_month if frequency == "monthly" else None,
-        time_of_day=_parse_time_of_day(time_of_day),
+        time_of_day=resolved_time_of_day,
         # Set explicitly, not left to the column's SQLAlchemy-side `default=` (design decision
         # 7: never shown in the form, always Europe/Prague) — that default only applies once
         # this row is actually flushed, but compute_next_run_at needs a real value on the
@@ -601,9 +630,15 @@ def update_schedule(
     t = get_t(request)
     schedule = _get_schedule_or_404(db, request, schedule_id)
 
-    day_of_month = _parse_optional_int(day_of_month)
-    ends_on = _parse_optional_date(ends_on)
-    max_occurrences = _parse_optional_int(max_occurrences)
+    _validate_schedule_priority(t, priority)
+    try:
+        day_of_month = _parse_optional_int(day_of_month)
+        ends_on = _parse_optional_date(ends_on)
+        max_occurrences = _parse_optional_int(max_occurrences)
+        resolved_market_id = int(market_id) if market_id else None
+        resolved_time_of_day = _parse_time_of_day(time_of_day)
+    except ValueError:
+        raise AppError("schedule_invalid_field", t("errors.schedule_invalid_field"), status_code=400) from None
 
     _validate_frequency_fields(t, frequency, days_of_week, day_of_month)
     if not model_ids:
@@ -618,8 +653,8 @@ def update_schedule(
     schedule.frequency = frequency
     schedule.days_of_week = days_of_week if frequency == "weekly" else None
     schedule.day_of_month = day_of_month if frequency == "monthly" else None
-    schedule.time_of_day = _parse_time_of_day(time_of_day)
-    schedule.market_id = int(market_id) if market_id else None
+    schedule.time_of_day = resolved_time_of_day
+    schedule.market_id = resolved_market_id
     schedule.model_ids = model_ids
     schedule.persona_ids = persona_ids
     schedule.priority = priority
@@ -741,11 +776,20 @@ def preview_occurrences(
     submission, so it renders "pick a valid combination" rather than a 422 for every incomplete
     intermediate keystroke.
     """
-    schedule_id = _parse_optional_int(schedule_id)
-    day_of_month = _parse_optional_int(day_of_month)
-    ends_on = _parse_optional_date(ends_on)
-    max_occurrences = _parse_optional_int(max_occurrences)
-    effective_starts_on = _parse_optional_date(starts_on) or date.today()
+    # A malformed value here (e.g. a hand-edited query string) used to propagate as a raw
+    # ValueError straight into app/errors.py's generic 500 handler (found in code review,
+    # 2026-09-22) — for this endpoint specifically that's the wrong failure mode even more than
+    # usual, since the docstring above already promises "never 422 for an incomplete keystroke";
+    # an invalid one deserves the exact same soft "incomplete" render, not a crash.
+    try:
+        schedule_id = _parse_optional_int(schedule_id)
+        day_of_month = _parse_optional_int(day_of_month)
+        ends_on = _parse_optional_date(ends_on)
+        max_occurrences = _parse_optional_int(max_occurrences)
+        effective_starts_on = _parse_optional_date(starts_on) or date.today()
+        resolved_time_of_day = _parse_time_of_day(time_of_day)
+    except ValueError:
+        return render(request, "schedules/_occurrence_preview.html", {"incomplete": True})
     incomplete = (
         frequency not in _FREQUENCIES
         or (frequency == "weekly" and not days_of_week)
@@ -771,7 +815,7 @@ def preview_occurrences(
         frequency=frequency,
         days_of_week=days_of_week if frequency == "weekly" else None,
         day_of_month=day_of_month if frequency == "monthly" else None,
-        time_of_day=_parse_time_of_day(time_of_day),
+        time_of_day=resolved_time_of_day,
         timezone="Europe/Prague",
         starts_on=effective_starts_on,
         ends_on=ends_on if end_type == "date" else None,

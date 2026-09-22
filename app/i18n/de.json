@@ -557,6 +557,8 @@
   "errors.schedule_day_of_month_required": "Wähle einen Tag im Monat.",
   "errors.schedule_models_required": "Wähle mindestens ein Modell.",
   "errors.schedule_personas_required": "Wähle mindestens eine Persona.",
+  "errors.invalid_schedule_priority": "Die Priorität muss eine ganze Zahl zwischen 0 und 999 sein.",
+  "errors.schedule_invalid_field": "Eines der Zeitplan-Felder hat einen ungültigen Wert — prüfe Tag, Datum, Uhrzeit und Markt und versuche es erneut.",
   "errors.schedule_already_completed": "Dieser Zeitplan ist bereits abgeschlossen und kann so nicht fortgesetzt werden.",
   "errors.queue_item_not_found": "Diese Warteschlangen-Position existiert nicht.",
   "errors.queue_item_not_retryable": "Diese Position kann nicht wiederholt werden — nur Fehler, übersprungene oder abgebrochene Positionen können das.",

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import Float, case, cast, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import AIModel, AIModelPriceComponent, Prompt, PromptSet, RawResponse, Run
@@ -482,8 +482,15 @@ def average_historical_cost(db: Session, *, root_prompt_id: int, model_id: int) 
     if not prompt_ids or model is None:
         return None
 
+    # Eager-loaded (found in code review, 2026-09-22) — the loop below reads `run.raw_response`
+    # for every row, and this function is called once per (prompt, model) combination from the
+    # schedule form's live cost preview; a set-level schedule's prompt set can run to ~225
+    # prompts (design decision 32), so an unguarded lazy-load here turns one keystroke into a
+    # large multiple of N+1 queries.
     runs = db.scalars(
-        select(Run).where(Run.prompt_id.in_(prompt_ids), Run.model_id == model_id, Run.status == "success")
+        select(Run)
+        .where(Run.prompt_id.in_(prompt_ids), Run.model_id == model_id, Run.status == "success")
+        .options(joinedload(Run.raw_response))
     ).all()
     components = load_price_components(db, [model_id]).get(model_id, [])
 

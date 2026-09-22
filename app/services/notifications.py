@@ -12,6 +12,7 @@ wired here — those tasks aren't built yet, and will call the same `notify()` o
 
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -101,10 +102,17 @@ def check_expiring_schedules(db: Session, *, now: datetime) -> None:
     decision 31) — the guard against a schedule's data collection quietly stopping unnoticed.
     Idempotent forever per schedule, not on a cooldown: a schedule only approaches its own end
     once in its life, so "already notified, ever, for this schedule" is the correct dedup.
+
+    `days_left` is computed against `now` converted into the schedule's *own* timezone (found in
+    code review, 2026-09-22), not the naive UTC calendar date — `ends_on` is a wall-clock date in
+    `schedule.timezone` (design decisions 7/28, same as `compute_next_run_at`), so comparing it
+    against a UTC date could fire this a day early or late for any schedule outside UTC, right
+    around local midnight.
     """
     active_schedules = db.scalars(select(RunSchedule).where(RunSchedule.is_active.is_(True))).all()
     for schedule in active_schedules:
-        days_left = (schedule.ends_on - now.date()).days if schedule.ends_on is not None else None
+        local_today = now.astimezone(ZoneInfo(schedule.timezone)).date()
+        days_left = (schedule.ends_on - local_today).days if schedule.ends_on is not None else None
         occurrences_left = (
             schedule.max_occurrences - schedule.occurrences_count if schedule.max_occurrences is not None else None
         )

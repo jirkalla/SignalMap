@@ -58,17 +58,21 @@ HEARTBEAT_FILE = Path("/tmp/worker-alive")
 _TICKER_INTERVAL = timedelta(minutes=1)
 _ITEM_POLL_INTERVAL_SECONDS = 5
 
-# 1 / 5 / 25 minutes (docs/TASKS_SCHEDULER.md T3) — shared by two different reasons an item goes
-# back to the queue: a collision with a still-running Run for the same prompt+model (design
-# decision 17, never terminal, capped at the last step forever) and a retryable transport/429
-# provider failure (terminal once `attempts` reaches len(this list), i.e. 3 tries).
+# 1 / 5 / 25 minutes (docs/TASKS_SCHEDULER.md T3) — used for two different reasons an item goes
+# back to the queue, each counted by its OWN column (split in code review, 2026-09-22, see
+# RunQueueItem.attempts / .transport_attempts docstrings for why): a collision with a
+# still-running Run for the same prompt+model (design decision 17, `item.attempts`, never
+# terminal, capped at the last step forever) and a retryable transport/429 provider failure
+# (`item.transport_attempts`, terminal once it reaches len(this list), i.e. 3 tries).
 _BACKOFF_MINUTES = (1, 5, 25)
 _MAX_TRANSPORT_ATTEMPTS = len(_BACKOFF_MINUTES)
 
 
 def _backoff_minutes(attempts: int) -> int:
-    """1/5/25 minutes for attempts 1/2/3+ (`attempts` is 1-indexed — `claim_next` increments it
-    before this is ever consulted, so an item on its first attempt always has `attempts == 1`).
+    """1/5/25 minutes for attempts 1/2/3+ (`attempts` is 1-indexed — both `attempts` and
+
+    `transport_attempts` are incremented immediately before this is ever consulted for them, so
+    an item on its first attempt always passes in `1`, never `0`).
     """
     index = max(attempts - 1, 0)
     return _BACKOFF_MINUTES[min(index, len(_BACKOFF_MINUTES) - 1)]
@@ -207,9 +211,14 @@ def process_claimed_item(
             reraise_on_failure=True,
         )
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
-        if _is_retryable_error(exc) and item.attempts < _MAX_TRANSPORT_ATTEMPTS:
+        # transport_attempts is its own counter, separate from the claim counter `item.attempts`
+        # (found in code review, 2026-09-22) — a collision deferral never touches this one, so an
+        # item that bounced a few times before ever reaching the provider still gets its full 3
+        # genuine transport tries.
+        item.transport_attempts += 1
+        if _is_retryable_error(exc) and item.transport_attempts < _MAX_TRANSPORT_ATTEMPTS:
             item.status = "queued"
-            item.scheduled_for = now + timedelta(minutes=_backoff_minutes(item.attempts))
+            item.scheduled_for = now + timedelta(minutes=_backoff_minutes(item.transport_attempts))
             db.commit()
         else:
             item.status = "error"

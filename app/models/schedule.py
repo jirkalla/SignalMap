@@ -193,6 +193,25 @@ class RunQueueItem(Base):
     status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default="queued")
     skip_reason: Mapped[str | None] = mapped_column(String(40))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    """How many times `claim_next` has picked this item up — incremented on *every* claim,
+
+    including one that immediately defers for an unrelated same-prompt-and-model collision
+    (design decision 17). Drives `_backoff_minutes` spacing for collision retries only, which
+    are never terminal. Deliberately NOT the same counter as `transport_attempts` below (split in
+    code review, 2026-09-22) — see that field's own docstring for why conflating the two was a
+    real bug.
+    """
+    transport_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    """How many times this item was actually handed to a provider adapter and failed — incremented
+
+    only inside `app/worker.py`'s `process_claimed_item` transport-failure branch, never by
+    `claim_next` or by a collision deferral. Split out from `attempts` (found in code review,
+    2026-09-22): before this column existed, a transient 429/503 checked `attempts <
+    _MAX_TRANSPORT_ATTEMPTS` — the *same* counter collisions also bump — so an item that collided
+    with an unrelated pending Run a few times before ever reaching the provider could have its
+    very first genuine transport failure treated as already exhausted, skipping the 1/5/25-minute
+    retry it was supposed to get and going straight to a terminal `error` + notification.
+    """
     last_error: Mapped[str | None] = mapped_column(Text)
     leased_by: Mapped[str | None] = mapped_column(String(64))
     leased_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

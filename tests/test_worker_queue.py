@@ -352,11 +352,16 @@ def test_successful_execution_marks_item_done_and_writes_run_id_before_no_longer
 
 def test_retryable_error_requeues_with_backoff_and_keeps_the_run_as_error(db_session, seed, sample_prompt, prompt_client):
     FakeAdapter.error_to_raise = _RetryableError(503)
-    item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
+    # attempts=1 simulates claim_next already having claimed this once (it's never consulted for
+    # transport backoff any more); transport_attempts=0 is this item's first real provider try.
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=0
+    )
 
     process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "queued"
+    assert item.transport_attempts == 1
     assert item.scheduled_for == NOW + timedelta(minutes=1)
     run = db_session.get(Run, item.run_id)
     assert run.status == "error"  # execute_run always records the Run's own outcome regardless
@@ -383,7 +388,9 @@ def test_retryable_error_does_not_notify(db_session, seed, sample_prompt, prompt
     fire schedule.run_failed yet.
     """
     FakeAdapter.error_to_raise = _RetryableError(503)
-    item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=0)
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], transport_attempts=0
+    )
 
     process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
@@ -391,13 +398,34 @@ def test_retryable_error_does_not_notify(db_session, seed, sample_prompt, prompt
     assert db_session.scalars(select(NotificationOutbox)).all() == []
 
 
-def test_retryable_error_becomes_terminal_after_max_attempts(db_session, seed, sample_prompt, prompt_client):
+def test_retryable_error_becomes_terminal_after_max_transport_attempts(db_session, seed, sample_prompt, prompt_client):
     FakeAdapter.error_to_raise = _RetryableError(503)
-    item = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=3)
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], transport_attempts=2
+    )
 
     process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "error"
+    assert item.transport_attempts == 3
+
+
+def test_transport_attempts_survive_an_unrelated_collision_deferral(db_session, seed, sample_prompt, prompt_client):
+    """The bug this split fixes (found in code review, 2026-09-22): an item that collided with an
+
+    unrelated pending Run a few times (bumping `attempts`, never `transport_attempts`) must still
+    get its full 3 genuine transport tries once it actually reaches the provider — `attempts`
+    being high must not prematurely exhaust `transport_attempts`.
+    """
+    FakeAdapter.error_to_raise = _RetryableError(503)
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=5, transport_attempts=0
+    )
+
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
+
+    assert item.status == "queued"
+    assert item.transport_attempts == 1
 
 
 # ---------------------------------------------------------------------------

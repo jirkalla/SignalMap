@@ -557,6 +557,8 @@
   "errors.schedule_day_of_month_required": "Pick a day of the month.",
   "errors.schedule_models_required": "Select at least one model.",
   "errors.schedule_personas_required": "Select at least one persona.",
+  "errors.invalid_schedule_priority": "Priority must be a whole number between 0 and 999.",
+  "errors.schedule_invalid_field": "One of the schedule fields has an invalid value — check the day, date, time, and market fields and try again.",
   "errors.schedule_already_completed": "This schedule already ran its course and can't be resumed as-is.",
   "errors.queue_item_not_found": "That queue item doesn't exist.",
   "errors.queue_item_not_retryable": "This item can't be retried — only an error, skipped, or cancelled item can be.",
