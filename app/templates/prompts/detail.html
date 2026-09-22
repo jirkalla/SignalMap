@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import select_field, status_badge, delete_button, cost_badge, export_button_group, local_time %}
+{% from "partials/macros.html" import select_field, status_badge, delete_button, cost_badge, export_button_group, local_time, icon_edit, icon_trash, icon_play, icon_calendar, icon_history, icon_warning %}
 {% block title %}{{ t('prompt.detail_title') }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -10,9 +10,9 @@
 <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
   <h1 class="text-xl font-semibold break-words">{{ t('prompt.detail_title') }}</h1>
   {% if can_edit(current_user) %}
-  <div class="flex items-center gap-3 text-sm shrink-0">
-    <a href="/prompts/{{ prompt.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
-    {{ delete_button('/prompts/' ~ prompt.id ~ '/delete', t('prompt.delete_confirm'), t('prompt.delete_button')) }}
+  <div class="flex items-center gap-2 text-sm shrink-0">
+    <a href="/prompts/{{ prompt.id }}/edit" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-stone-300 text-stone-700 hover:bg-stone-50 transition">{{ icon_edit() }}{{ t('common.edit') }}</a>
+    {{ delete_button('/prompts/' ~ prompt.id ~ '/delete', t('prompt.delete_confirm'), icon_trash() ~ t('prompt.delete_button'), extra_classes='px-3 py-1.5 rounded-md border border-stone-300 hover:bg-red-50 transition') }}
   </div>
   {% endif %}
 </div>
@@ -49,7 +49,13 @@
 {% if not prompt.is_active %}
 <div class="bg-stone-100 border border-stone-200 rounded-lg p-4 mb-8 text-sm text-stone-500">{{ t('prompt.inactive_run_blocked_hint') }}</div>
 {% else %}
-<form id="run-trigger-form" method="post" action="/prompts/{{ prompt.id }}/runs" class="bg-white border border-stone-200 rounded-lg p-4 mb-8 flex flex-wrap items-end gap-3"
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-8">
+  <div class="flex gap-1 mb-4" role="tablist">
+    <button type="button" id="run-tab-now" role="tab" aria-selected="true" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-stone-100 border border-stone-300 text-stone-800">{{ icon_play() }}{{ t('prompt.tab_run_now') }}</button>
+    <button type="button" id="run-tab-schedule" role="tab" aria-selected="false" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-stone-500 hover:bg-stone-50">{{ icon_calendar() }}{{ t('prompt.tab_schedule') }}</button>
+  </div>
+  <div id="run-panel-now">
+<form id="run-trigger-form" method="post" action="/prompts/{{ prompt.id }}/runs" class="flex flex-wrap items-end gap-3"
       data-pending-label="{{ t('prompt.trigger_run_pending') }}">
   <div class="flex-[2] min-w-[280px] mb-0">
     <div class="flex items-center justify-between mb-1">
@@ -92,14 +98,45 @@
   <button type="submit" id="run-trigger-submit" disabled
           data-default-label="{{ t('prompt.trigger_run') }}" data-count-label="{{ t('prompt.trigger_runs_count') }}"
           class="inline-flex items-center px-4 py-2 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition disabled:opacity-40 disabled:cursor-not-allowed">{{ t('prompt.trigger_run') }}</button>
+  <div id="run-trigger-error" class="w-full flex items-start gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mt-3 mb-3" style="display: none;">
+    {{ icon_warning('w-4 h-4 text-red-800 mt-0.5 shrink-0') }}
+    <p class="text-sm text-red-800"></p>
+  </div>
 </form>
-<div class="-mt-6 mb-8 space-y-1">
+<div class="mt-2 space-y-1">
   <p class="text-xs text-stone-400">{{ t('prompt.market_override_hint') }}</p>
   <p class="text-xs text-stone-400">{{ t('prompt.persona_override_hint') }}</p>
   {% if not model_groups %}
   <p class="text-sm text-stone-500">{{ t('prompt.no_models_available') }}</p>
   {% endif %}
 </div>
+  </div>
+  <div id="run-panel-schedule" hidden>
+    <p class="text-sm text-stone-600 mb-3">{{ t('prompt.schedule_tab_hint') }}</p>
+    <a href="/schedules/new?prompt_id={{ prompt.id }}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition">{{ icon_calendar() }}{{ t('schedules.new_button') }}</a>
+  </div>
+</div>
+<script>
+  (function () {
+    var tabNow = document.getElementById('run-tab-now');
+    var tabSchedule = document.getElementById('run-tab-schedule');
+    var panelNow = document.getElementById('run-panel-now');
+    var panelSchedule = document.getElementById('run-panel-schedule');
+    if (!tabNow || !tabSchedule) return;
+
+    function activate(tab) {
+      var showNow = tab === 'now';
+      panelNow.hidden = !showNow;
+      panelSchedule.hidden = showNow;
+      tabNow.setAttribute('aria-selected', String(showNow));
+      tabSchedule.setAttribute('aria-selected', String(!showNow));
+      tabNow.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium ' + (showNow ? 'bg-stone-100 border border-stone-300 text-stone-800' : 'text-stone-500 hover:bg-stone-50');
+      tabSchedule.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium ' + (!showNow ? 'bg-stone-100 border border-stone-300 text-stone-800' : 'text-stone-500 hover:bg-stone-50');
+    }
+    tabNow.addEventListener('click', function () { activate('now'); });
+    tabSchedule.addEventListener('click', function () { activate('schedule'); });
+  })();
+</script>
 {% endif %}
 {% endif %}
 
@@ -169,6 +206,8 @@
     if (!form) return;
     var submitButton = document.getElementById('run-trigger-submit');
     var errorBox = document.getElementById('model-selection-error');
+    var triggerErrorBox = document.getElementById('run-trigger-error');
+    var triggerErrorText = triggerErrorBox ? triggerErrorBox.querySelector('p') : null;
 
     form.addEventListener('submit', function (event) {
       event.preventDefault();
@@ -180,12 +219,21 @@
         return;
       }
       if (errorBox) errorBox.hidden = true;
+      // .hidden (the IDL property for the `hidden` attribute) loses to Tailwind's own `.flex`
+      // utility class here — both resolve to the same CSS specificity, and the CDN build's
+      // stylesheet loads after the browser's built-in `[hidden]` rule, so `.flex` wins and the
+      // box stayed visible (empty) from first page load, found live 2026-09-21. An inline
+      // style always wins regardless of load order, so visibility is driven by style.display
+      // instead, on both this element and the one below.
+      if (triggerErrorBox) { triggerErrorBox.style.display = 'none'; }
+      if (triggerErrorText) { triggerErrorText.textContent = ''; }
 
       submitButton.disabled = true;
       submitButton.textContent = form.getAttribute('data-pending-label');
 
       var marketId = form.querySelector('[name="market_id"]').value;
       var personaId = form.querySelector('[name="persona_id"]').value;
+      var anySucceeded = false;
 
       var requests = checked.map(function (checkbox) {
         var statusEl = form.querySelector('[data-model-status="' + checkbox.value + '"]');
@@ -194,9 +242,23 @@
         body.append('model_id', checkbox.value);
         body.append('market_id', marketId);
         body.append('persona_id', personaId);
-        return fetch(form.action, { method: 'POST', body: body })
+        // Accept: application/json (app/errors.py) — this is a fetch() call that needs the
+        // structured {message} body to show the person why their run didn't start, not a full
+        // HTML error page a plain form navigation would otherwise get.
+        return fetch(form.action, { method: 'POST', body: body, headers: { Accept: 'application/json' } })
           .then(function (response) {
-            if (statusEl) statusEl.textContent = response.ok ? '✅' : '❌';
+            if (response.ok) {
+              anySucceeded = true;
+              if (statusEl) statusEl.textContent = '✅';
+              return;
+            }
+            if (statusEl) statusEl.textContent = '❌';
+            return response.json().then(function (data) {
+              if (triggerErrorBox && triggerErrorBox.style.display !== 'flex') {
+                if (triggerErrorText) triggerErrorText.textContent = data.message || form.getAttribute('data-pending-label');
+                triggerErrorBox.style.display = 'flex';
+              }
+            }).catch(function () {});
           })
           .catch(function () {
             if (statusEl) statusEl.textContent = '❌';
@@ -204,14 +266,21 @@
       });
 
       Promise.all(requests).then(function () {
-        window.location.reload();
+        if (anySucceeded) {
+          window.location.reload();
+          return;
+        }
+        submitButton.disabled = false;
+        submitButton.textContent = submitButton.getAttribute('data-count-label').replace('{count}', checked.length);
       });
     });
   })();
 </script>
 
+{% include "schedules/_list.html" %}
+
 <div class="flex items-center justify-between flex-wrap gap-3 mb-3">
-  <h2 class="text-lg font-semibold">{{ t('prompt.runs_title') }}</h2>
+  <h2 class="text-lg font-semibold flex items-center gap-2 text-stone-800">{{ icon_history('w-5 h-5 text-stone-400') }}{{ t('prompt.runs_title') }}</h2>
   {% if can_edit(current_user) %}
   <div class="flex items-center gap-3 flex-wrap">
     {% if versions %}

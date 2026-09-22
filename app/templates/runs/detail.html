@@ -48,9 +48,16 @@
       <dt class="text-stone-500">{{ t('run.latency_label') }}</dt>
       <dd>{{ (run.latency_ms|string ~ ' ms') if run.latency_ms is not none else t('common.none') }}</dd>
     </div>
-    <div class="flex justify-between sm:block">
+    <div class="sm:col-span-2">
       <dt class="text-stone-500">{{ t('run.triggered_by_label') }}</dt>
-      <dd>{{ run.triggered_by.name if run.triggered_by else t('common.none') }}</dd>
+      <dd>
+        {% if schedule_attribution %}
+        {{ t('run.triggered_by_scheduler') }} · {{ t('run.schedule_created_by').format(name=schedule_attribution.created_by_name) }} ·
+        <a href="/schedules/{{ schedule_attribution.schedule_id }}/edit" class="hover:underline">{{ t('run.view_schedule_link') }}</a>
+        {% else %}
+        {{ run.triggered_by.name if run.triggered_by else t('common.none') }}
+        {% endif %}
+      </dd>
     </div>
   </dl>
 </div>

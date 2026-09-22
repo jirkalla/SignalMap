@@ -34,8 +34,10 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 - FR-8: Only Google Gemini is supported as a provider in phase 1, with
   Google Search grounding enabled. The system must not hardcode a single
   model — model selection is a user choice among the seeded models.
-- FR-9: Scheduled/automatic runs are out of scope for phase 1 — manual
-  trigger only.
+- FR-9: Scheduled/recurring runs — a client's prompts can run automatically
+  on a fixed daily/weekly/monthly recurrence, independent of manual
+  triggering (FR-7). See `docs/TASKS_SCHEDULER.md` for the full design
+  (recurrence rules, queue, worker, per-client quotas).
 
 ### 2.4 Storing and viewing results
 - FR-10: Every run stores the complete, unmodified raw provider response.
@@ -178,6 +180,51 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   its original form. Subdomains are a deliberate exception — `blog.acme.com`
   is never unified with `acme.com`, since it is a different source, not a
   formatting variant of the same one.
+The scheduler (FR-9) is the first part of the app that can spend money
+without a person clicking a button. NFR-14 through NFR-17 are its
+safeguard story, told as four independent mechanisms rather than one —
+each protects against a different way unattended spend could go wrong,
+and losing any single one reopens exactly that one gap, not the whole
+story.
+- NFR-14 (Scheduled spend is capped by two independent mechanisms, not
+  one): a hard per-client daily run limit (`clients.daily_run_limit`,
+  falling back to a configured default) blocks — enforced in
+  `app/services/run_execution.py` so a manual trigger and a scheduled run
+  are guaranteed the exact same cap, never just the worker's own path — and
+  a soft monthly budget (`clients.monthly_budget_usd`) only warns, computed
+  from the actual incurred cost of completed runs (NFR-12), never from an
+  estimate, since a run's real cost is unknown until it finishes. A fresh
+  deployment additionally starts with `SCHEDULER_DRY_RUN=true`: the
+  scheduler plans and enqueues for real but never calls a provider adapter
+  until an operator deliberately turns it off, so nothing spends money
+  unattended before the caps above are configured (docs/TASKS_SCHEDULER.md
+  T10).
+- NFR-15 (Scheduled runs have two independent idempotence guarantees, not
+  one guarantee restated twice): an enqueue-time unique constraint on
+  `run_queue` (schedule, window, prompt, model, persona) stops the ticker
+  from double-inserting the same occurrence if it crashes or races itself
+  mid-pass; separately, an execution-time guarantee writes the `Run` row
+  and its id onto the queue item *before* the provider adapter is ever
+  called, so a worker killed mid-call leaves a trace to reconcile instead
+  of silently retrying and paying twice. Losing either one reintroduces a
+  distinct way to pay for the same occurrence more than once
+  (docs/TASKS_SCHEDULER.md design decisions 12/32 and 13).
+- NFR-16 (`/schedules` access boundary): the scheduler's monitoring page
+  and every route that creates, edits, or otherwise mutates a schedule or
+  queue item are reachable by the `admin`/`editor` roles only, never
+  `viewer` — enforced with `require_role` on each route itself
+  (docs/TASKS_SCHEDULER.md design decision 22), not just hidden from the
+  `viewer` role in the navigation, the same discipline NFR-10 already
+  requires for `/ops`.
+- NFR-17 (A schedule pauses with its owner, and never resumes on its own):
+  deactivating a user account pauses every schedule they own
+  (`inactive_reason='owner_deactivated'`) and fires one notification —
+  reactivating that same account is deliberately **not** enough to resume
+  them (docs/TASKS_SCHEDULER.md design decision 23). Silently continuing
+  paid runs on behalf of someone no longer with the company is worse than
+  the pause itself going unnoticed a while longer; resuming is a separate,
+  conscious admin action on `/schedules`, never a side effect of an
+  unrelated account change.
 
 ## 3a. Phase 1 amendments (2026-09-08)
 
@@ -215,7 +262,6 @@ phase-1 prototype, recorded here rather than left as conversation history:
 - Authentication and user accounts (single shared local access for now).
 - Multi-tenancy / row-level access control (client sees only their data).
 - StrategyConfig (guiding principles, reputation attributes).
-- Scheduled/recurring runs.
 - Source/signal map, intervention hypotheses.
 - Tailwind visual styling / "evidence dossier" design polish.
 - Filled-in German translation content (mechanism only, not content).
@@ -242,6 +288,10 @@ visibility" and `docs/TASKS_PHASE5.md`. Not previously named anywhere in
 this list, in either direction — phase 1 predates the concept, so this
 doesn't remove anything from §4 above; recorded here for the same
 discoverability reason phases 2–4 each got an entry.
+
+**Amendment (2026-09-21):** "Scheduled/recurring runs" removed from this
+list — the scheduler (recurrence rules, `run_queue`, the worker process,
+per-client quotas) shipped, see `docs/TASKS_SCHEDULER.md`.
 
 ## 5. Data Model Reference
 

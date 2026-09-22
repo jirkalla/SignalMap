@@ -3,6 +3,14 @@
 -- one AI provider (Google Gemini), store + view raw response and citations.
 -- Deliberately excludes: StrategyConfig, AnalysisSkill/AnalysisResult, auth/multi-tenancy,
 -- scheduling. These come in later phases — see signalmap-conventions skill, "Build sequencing".
+--
+-- HISTORICAL SNAPSHOT, NOT THE CURRENT SCHEMA (AI_INSTRUCTIONS.md v1.2, design decision 38
+-- in docs/TASKS_SCHEDULER.md): this file was never updated past the original phase-1 slice
+-- above. ~16 tables added since across later phases (users, personas, analysis_skills,
+-- ai_model_price_components, the scheduler's run_schedules/run_queue/..., etc.) exist only in
+-- Alembic migrations, not here. Migration 0001 still executes this file verbatim to bootstrap
+-- a fresh database, so don't delete or restructure it — but the Alembic migration history
+-- (`alembic/versions/`), not this file, is the authoritative description of the current schema.
 
 -- ============================================================
 -- CLIENT (identification only in phase 1)

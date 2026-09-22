@@ -1,9 +1,10 @@
 """Client — the organization SignalMap is tracking AI perception for."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, String, Text, func
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -54,6 +55,22 @@ class Client(Base):
 
     Only an admin can change it, through `POST /clients/{id}/toggle-test` — never through the
     client form, whose unchecked checkbox would silently reset it (design decision 14).
+    """
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
+    """Scheduler priority weight (docs/TASKS_SCHEDULER.md design decision 20). A queue item's
+    priority is fixed at enqueue time as `client.priority * 1000 + schedule.priority` — later
+    changes to this column only affect items enqueued afterwards, never ones already queued.
+    """
+    daily_run_limit: Mapped[int | None] = mapped_column(Integer)
+    """Hard cap on runs per rolling 24h for this client, enforced in
+    app/services/run_execution.py so it applies to scheduled and manual triggers alike (design
+    decision 26). NULL = fall back to the configured default, not "unlimited".
+    """
+    monthly_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    """Soft monthly spend threshold in USD (design decision 33) — crossing it only raises
+    `budget.threshold_exceeded`, it never blocks a run. Computed from actual, already-incurred
+    run costs (app/services/cost.py), not an estimate, since the real cost of a run is only known
+    after it completes. NULL = no threshold configured.
     """
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

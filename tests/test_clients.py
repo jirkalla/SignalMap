@@ -1,5 +1,6 @@
 """Client CRUD (docs/REQUIREMENTS.md FR-1..FR-3) and its delete policy (HD-T4)."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -78,6 +79,136 @@ def test_delete_succeeds_for_a_client_with_no_runs(authed_client: TestClient):
     assert response.status_code == 303
     assert response.headers["location"] == "/clients"
     assert authed_client.get(f"/clients/{client_id}").status_code == 404
+
+
+# --- T10: scheduler settings on the client edit form (priority/daily_run_limit/monthly_budget_usd) ---
+
+
+def test_editing_a_client_updates_scheduler_settings(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "200", "daily_run_limit": "10", "monthly_budget_usd": "250.50"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    client = db_session.get(Client, client_id)
+    assert client.priority == 200
+    assert client.daily_run_limit == 10
+    assert float(client.monthly_budget_usd) == 250.50
+
+
+def test_editing_a_client_clears_scheduler_limits_when_fields_are_left_empty(authed_client: TestClient, db_session: Session):
+    """Empty means "no override" (T10 point 4) — daily_run_limit falls back to the app-wide
+
+    default and monthly_budget_usd goes back to no threshold, not zero.
+    """
+    client_id = _create_client(authed_client)
+    authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "10", "monthly_budget_usd": "250"},
+        follow_redirects=False,
+    )
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "", "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    client = db_session.get(Client, client_id)
+    assert client.daily_run_limit is None
+    assert client.monthly_budget_usd is None
+
+
+def test_editing_a_client_rejects_a_non_numeric_daily_run_limit(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "not-a-number", "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).daily_run_limit is None
+
+
+def test_editing_a_client_rejects_a_non_numeric_monthly_budget(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "", "monthly_budget_usd": "lots"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).monthly_budget_usd is None
+
+
+@pytest.mark.parametrize("bad_budget", ["Infinity", "-Infinity", "NaN", "-5", "100000", "150000", "999999999999.00"])
+def test_editing_a_client_rejects_a_non_finite_or_negative_monthly_budget(
+    authed_client: TestClient, db_session: Session, bad_budget: str
+):
+    """`Decimal` parses "Infinity"/"NaN" without raising (found in code review, 2026-09-22) —
+
+    "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" comparison
+    forever (never warns again); "NaN" makes that same comparison False every time, firing on
+    every check instead of once a month. Neither is a number a real budget can be. The ceiling
+    itself is a business one, not the column's `Numeric(10, 2)` capacity (revised 2026-09-22) —
+    realistic per-client spend is tens to low hundreds of dollars a month, so $100,000 is already
+    a huge margin; "999999999999.00" is kept in the list since a value that large used to 500
+    instead of rejecting cleanly (found live testing the original, column-sized ceiling).
+    """
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": "", "monthly_budget_usd": bad_budget},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).monthly_budget_usd is None
+
+
+@pytest.mark.parametrize("bad_priority", [0, -1, 10001])
+def test_editing_a_client_rejects_an_out_of_range_priority(authed_client: TestClient, db_session: Session, bad_priority: int):
+    """Found in code review, 2026-09-22 — `priority` feeds `client.priority * 1000 +
+
+    schedule.priority` (app/services/queue.py) on every enqueue, stored into run_queue's own
+    `integer` column. An unbounded value here could overflow that column and crash the next
+    enqueue pass with a 500 instead of a friendly validation error at the one place it was
+    actually typed in.
+    """
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": str(bad_priority), "daily_run_limit": "", "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).priority == 100
+
+
+@pytest.mark.parametrize("bad_limit", [-1, 100001])
+def test_editing_a_client_rejects_an_out_of_range_daily_run_limit(authed_client: TestClient, db_session: Session, bad_limit: int):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit",
+        data={"name": "Acme Corporation", "priority": "100", "daily_run_limit": str(bad_limit), "monthly_budget_usd": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert db_session.get(Client, client_id).daily_run_limit is None
 
 
 # --- PRE-1: the is_test flag, admin-only and never written by the client form --------------------

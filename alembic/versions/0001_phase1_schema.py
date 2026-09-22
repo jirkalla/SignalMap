@@ -1,7 +1,12 @@
 """Phase 1 schema: clients, markets, prompts, providers, runs, evidence tables.
 
-Executes schema_phase1.sql verbatim (the authoritative schema, see repo
-root) so the migration and the reference SQL file can never drift apart.
+Executes schema_phase1.sql verbatim (repo root) so this migration and that
+reference file can never drift apart for the slice it covers. schema_phase1.sql
+is a historical snapshot of the phase-1 vertical slice only (AI_INSTRUCTIONS.md
+v1.2, design decision 38 in docs/TASKS_SCHEDULER.md) — every table added since
+across later phases lives only in its own later migration, never backfilled
+into that file. This migration's own history (`alembic/versions/`) is the
+authoritative description of the current schema, not the SQL file it executes.
 Seed data (markets, the Google provider, the two Gemini models) ships in
 this same migration rather than a separate script, so `alembic upgrade
 head` remains the only setup step after `docker compose up` — see the

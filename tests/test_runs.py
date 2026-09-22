@@ -50,6 +50,29 @@ def test_trigger_run_rejected_for_inactive_model(
     assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
 
 
+def test_trigger_run_rejected_when_client_daily_quota_exceeded(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_SCHEDULER.md T10, design decision 26 — the manual trigger enforces the exact
+
+    same daily cap the scheduler does (app/services/run_execution.py's check_daily_quota), so a
+    client can't be capped for the worker but still spend unattended through the manual path. No
+    Run row is created for the rejected attempt.
+    """
+    client = sample_prompt.prompt_set.client
+    client.daily_run_limit = 0
+    db_session.commit()
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert db_session.scalar(select(Run).where(Run.prompt_id == sample_prompt.id)) is None
+
+
 def test_trigger_run_reports_unrelated_integrity_errors_distinctly(
     monkeypatch, authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):
@@ -688,7 +711,7 @@ def test_analysis_engine_failure_never_fails_the_run(
     def _boom(skill_key: str):
         raise RuntimeError("simulated analysis failure")
 
-    monkeypatch.setattr("app.routers.runs.get_runner", _boom)
+    monkeypatch.setattr("app.services.run_execution.get_runner", _boom)
 
     FakeAdapter.payload_to_return = RawResponsePayload(
         raw_payload={"answer": "Test Client is known for reliability."},

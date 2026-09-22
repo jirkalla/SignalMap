@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import Float, case, cast, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import AIModel, AIModelPriceComponent
+from app.models import AIModel, AIModelPriceComponent, Prompt, PromptSet, RawResponse, Run
 from app.models.provider import COMPONENT_TYPES
+from app.utils import prompt_lineage_ids
 
 
 @dataclass(frozen=True)
@@ -459,3 +460,68 @@ def current_prices(db: Session, model_ids: list[int]) -> dict[int, dict[str, Dec
     components_by_model = load_price_components(db, model_ids)
     now = datetime.now(timezone.utc)
     return {model_id: prices_at(components_by_model.get(model_id, []), now) for model_id in model_ids}
+
+
+def average_historical_cost(db: Session, *, root_prompt_id: int, model_id: int) -> float | None:
+    """Average cost of this prompt lineage's own past successful runs against `model_id`, for
+    the schedule form's cost preview (docs/TASKS_SCHEDULER.md design decision 29).
+
+    Spans the whole lineage (every version under `root_prompt_id`), not just the current
+    version's own runs — otherwise editing a prompt (which creates a new current version with
+    no runs of its own yet) would reset a schedule's cost preview to "unknown" for no reason a
+    user setting up a schedule would understand.
+
+    `None` — never a guessed number — when this exact (lineage, model) pair has no successful,
+    priced run yet. A schedule targeting a never-before-run combination genuinely has no basis
+    for an estimate; showing one anyway would be exactly the kind of fabricated number
+    `estimate_run_cost`'s own "no price means unknown, never free" discipline (design decision
+    14) exists to avoid.
+    """
+    prompt_ids = prompt_lineage_ids(db, root_prompt_id)
+    model = db.get(AIModel, model_id)
+    if not prompt_ids or model is None:
+        return None
+
+    # Eager-loaded (found in code review, 2026-09-22) — the loop below reads `run.raw_response`
+    # for every row, and this function is called once per (prompt, model) combination from the
+    # schedule form's live cost preview; a set-level schedule's prompt set can run to ~225
+    # prompts (design decision 32), so an unguarded lazy-load here turns one keystroke into a
+    # large multiple of N+1 queries.
+    runs = db.scalars(
+        select(Run)
+        .where(Run.prompt_id.in_(prompt_ids), Run.model_id == model_id, Run.status == "success")
+        .options(joinedload(Run.raw_response))
+    ).all()
+    components = load_price_components(db, [model_id]).get(model_id, [])
+
+    costs: list[float] = []
+    for run in runs:
+        if run.raw_response is None:
+            continue
+        cost = estimate_run_cost(run.raw_response.token_usage, model, prices_at(components, run.started_at))
+        if cost is not None:
+            costs.append(cost)
+
+    return sum(costs) / len(costs) if costs else None
+
+
+def client_month_to_date_spend(db: Session, *, client_id: int, month_start: datetime) -> float | None:
+    """Total cost of `client_id`'s runs from `month_start` onward (docs/TASKS_SCHEDULER.md T8,
+
+    design decision 33's monthly budget warning) — SQL-side `SUM()`, not a Python loop over `Run`
+    rows, since a month of a client's runs can be large (same discipline as
+    app/services/ops_dashboard.py's own cost aggregations). `None` when the client has no runs
+    with a computable cost this month yet — never a silent 0, so "no spend" and "unknown spend"
+    stay distinguishable, same as every other cost total in this app.
+    """
+    cost_expr = run_cost_sql_expr(RawResponse.token_usage, Run.model_id, Run.started_at, AIModel.is_free)
+    total = db.scalar(
+        select(func.sum(cost_expr))
+        .select_from(Run)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .outerjoin(RawResponse, RawResponse.run_id == Run.id)
+        .where(PromptSet.client_id == client_id, Run.started_at >= month_start, Run.status != "pending")
+    )
+    return float(total) if total is not None else None

@@ -12,7 +12,8 @@ see [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) and
 Requires a running Docker Engine and Docker Compose **2.23.1 or newer**
 (Docker Desktop includes both). Run every command from this repository.
 There is one Compose file for local use and Hetzner: Postgres, the app,
-and Caddy. No external database, image registry, or frontend build needed.
+the scheduler worker, and Caddy. No external database, image registry, or
+frontend build needed.
 
 1. Create your private settings:
 
@@ -36,9 +37,11 @@ and Caddy. No external database, image registry, or frontend build needed.
    ```
 
    Postgres becomes healthy first; the app then applies all Alembic
-   migrations and starts one Uvicorn process; Caddy starts after the app
-   is healthy. Failed migrations block app startup. There is no reload
-   watcher or source bind mount, so code changes require a rebuild.
+   migrations and starts one Uvicorn process; the scheduler worker and
+   Caddy both start once the app is healthy, so the worker never races the
+   app over the migration lock. Failed migrations block app startup. There
+   is no reload watcher or source bind mount, so code changes require a
+   rebuild.
 
 3. Create the first admin (once per database):
 
@@ -202,7 +205,7 @@ are not configured; scheduled backups are, see **Automated backups** below.
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 -f app caddy
+docker compose logs --tail=100 -f app worker caddy
 docker compose up -d --build --wait    # apply source or configuration changes
 docker compose stop                  # stop; keep containers and data
 docker compose up -d --wait           # start again
@@ -219,6 +222,27 @@ Take a database backup before applying upgrades: migrations run on every
 app startup. This is a single-server deployment with brief downtime on
 updates, not a rolling or high-availability setup. Avoid restarting while
 provider runs are in progress.
+
+### Scheduler worker
+
+`worker` runs `app/worker.py` from the exact same image as `app` (no
+separate build), never `alembic upgrade head` — only `app`'s own startup
+command applies migrations, so the two containers never race for the
+migration lock. It has no HTTP port: `docker compose ps` reports its
+health from a liveness file it rewrites on every loop iteration, not a
+web request. `docker compose stop worker` should return well under its
+120s grace period — it finishes whatever queue item it's mid-processing
+(a provider call can take up to ~30s) before exiting; a stop that hits the
+full grace period and gets SIGKILLed means a stuck iteration, worth
+checking `docker compose logs worker` for.
+
+`SCHEDULER_DRY_RUN=true` (the default — see `.env.example`) plans and
+queues runs for real but never calls a provider or spends money; stays on
+until the scheduler UI and quota enforcement (docs/TASKS_SCHEDULER.md) are
+both done. `SCHEDULER_ENABLED=false` stops the ticker from planning new
+work while leaving the worker draining whatever is already queued — set
+it on every instance but one if the app ever runs in more than one place
+against the same database.
 
 ## Backup, restore, or transfer local data
 
@@ -308,4 +332,5 @@ tables in `signalmap_test`; never use real evidence data in that database.
 ## Stack
 
 FastAPI + SQLAlchemy + PostgreSQL, Jinja2 + HTMX, Tailwind via CDN,
-Alembic migrations, and Caddy, all managed by one Docker Compose file.
+Alembic migrations, a scheduler worker process, and Caddy, all managed by
+one Docker Compose file.

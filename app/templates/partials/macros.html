@@ -1,10 +1,11 @@
 {# Reusable form-field and UI macros shared across all CRUD screens (NFR-3). #}
 
-{% macro text_field(name, label, value='', type='text', required=False, placeholder='') %}
+{% macro text_field(name, label, value='', type='text', required=False, placeholder='', step=none) %}
 <div class="mb-4">
   <label for="{{ name }}" class="block text-sm font-medium text-stone-700 mb-1">{{ label }}{% if required %} *{% endif %}</label>
   <input type="{{ type }}" id="{{ name }}" name="{{ name }}" value="{{ value or '' }}" placeholder="{{ placeholder }}"
          {% if required %}required{% endif %}
+         {% if step is not none %}step="{{ step }}"{% endif %}
          class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
 </div>
 {% endmacro %}
@@ -63,7 +64,7 @@
 
 {% macro delete_button(action, confirm_text, label, extra_classes='') %}
 <form method="post" action="{{ action }}" class="inline" data-confirm="{{ confirm_text }}">
-  <button type="submit" class="text-red-700 hover:underline{{ ' ' ~ extra_classes if extra_classes }}">{{ label }}</button>
+  <button type="submit" class="inline-flex items-center gap-1 text-red-700 hover:underline{{ ' ' ~ extra_classes if extra_classes }}">{{ label }}</button>
 </form>
 {% endmacro %}
 
@@ -120,7 +121,7 @@
    same kind of thing across screens. #}
 {% macro toggle_button(action, active, active_label, inactive_label, tone='positive') %}
 <form method="post" action="{{ action }}" class="inline">
-  <button type="submit" class="px-2 py-0.5 rounded-full text-xs font-medium {{ ('bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-emerald-100 text-emerald-800') if active else 'bg-stone-100 text-stone-500' }}">
+  <button type="submit" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium {{ ('bg-amber-100 text-amber-800' if tone == 'warning' else 'bg-emerald-100 text-emerald-800') if active else 'bg-stone-100 text-stone-500' }}">
     {{ active_label if active else inactive_label }}
   </button>
 </form>
@@ -164,6 +165,93 @@
 {%- if dt -%}
 <time datetime="{{ dt.isoformat() }}" data-local-time>{{ dt.strftime('%Y-%m-%d %H:%M:%S' if seconds else '%Y-%m-%d %H:%M') }} {{ utc_label }}</time>
 {%- endif -%}
+{% endmacro %}
+
+{# Small inline SVG icons — stroke="currentColor" so they inherit the surrounding text color,
+   sized via the `class` a caller passes (e.g. "w-4 h-4"). No icon font/library: consistent with
+   base.html's own one hand-rolled inline SVG (the nav dropdown chevron) rather than adding a
+   new frontend dependency for a handful of glyphs. #}
+{% macro icon_play(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4l11 6-11 6V4z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_calendar(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="1.5"/><path d="M3 8h14M7 2.5v3M13 2.5v3"/></svg>
+{% endmacro %}
+
+{% macro icon_history(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7v3.5l2.5 1.5" stroke-linecap="round"/><path d="M4 4v3h3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_edit(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13.5 3.5l3 3L6 17l-3.5 1L3.5 14.5 13.5 3.5z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_pause(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4v12M14 4v12" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{% macro icon_trash(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_filter(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4h14l-5.5 6.5V16l-3 1.5v-7L3 4z" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_download(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3v9m0 0l-3.5-3.5M10 12l3.5-3.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15.5h12" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{% macro icon_warning(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l8 14H2l8-14z" stroke-linejoin="round"/><path d="M10 8.5v3.5" stroke-linecap="round"/><circle cx="10" cy="14.5" r="0.9" fill="currentColor" stroke="none"/></svg>
+{% endmacro %}
+
+{% macro icon_check(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M6.5 10.2l2.3 2.3 4.7-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{% macro icon_bell(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 2.5c-2.2 0-4 1.8-4 4v2.3c0 .5-.2 1-.5 1.4L4 12h12l-1.5-1.8c-.3-.4-.5-.9-.5-1.4V6.5c0-2.2-1.8-4-4-4z" stroke-linejoin="round" stroke-linecap="round"/><path d="M8.2 15a1.8 1.8 0 003.6 0" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{# Target-type markers for the schedule lists that mix schedules on a single prompt with
+   schedules on a whole prompt set in the same table — the client-level list
+   (app/templates/schedules/_list.html) and the global monitoring page
+   (app/templates/schedules/index.html, T6). Everywhere else (a prompt's or a prompt set's own
+   detail page) every row already shares the same target, so this distinction isn't needed there. #}
+{% macro icon_document(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 2.5h5l3 3v11a1 1 0 01-1 1H6a1 1 0 01-1-1v-13a1 1 0 011-1z" stroke-linejoin="round"/><path d="M11 2.5v3h3" stroke-linejoin="round"/><path d="M7 10.5h6M7 13.5h6" stroke-linecap="round"/></svg>
+{% endmacro %}
+
+{% macro icon_stack(cls='w-4 h-4') %}
+<svg class="{{ cls }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3l7 4-7 4-7-4 7-4z" stroke-linejoin="round"/><path d="M3 11l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 14.5l7 4 7-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{% endmacro %}
+
+{# The icon + name + type-subtitle block itself, shared by both tables above instead of each
+   duplicating the same markup — `subtitle` is pre-translated by the caller (this app's macros
+   never call t() themselves, see local_time/pill_badge for the same convention). #}
+{% macro schedule_target_cell(schedule, target_label, target_url, subtitle) %}
+<div class="flex items-start gap-2">
+  {% if schedule.target_type == 'prompt_set' %}
+  <span class="mt-0.5 flex items-center justify-center w-6 h-6 rounded-md bg-sky-50 text-sky-600 shrink-0">{{ icon_stack('w-3.5 h-3.5') }}</span>
+  {% else %}
+  <span class="mt-0.5 text-stone-400 shrink-0">{{ icon_document('w-4 h-4') }}</span>
+  {% endif %}
+  <div>
+    <a href="{{ target_url }}" class="font-medium text-stone-700 hover:underline">{{ target_label[:60] }}{% if target_label|length > 60 %}…{% endif %}</a>
+    <div class="text-xs text-stone-500 mt-0.5">{{ subtitle }}</div>
+  </div>
+</div>
+{% endmacro %}
+
+{# Compact "who" indicator — initials circle with the full name as a native tooltip, same
+   short-label-plus-title convention base.html already uses for the header's own account label
+   (display_label + title=name), just drawn as a circle instead of plain text. Used wherever a
+   row needs to show a user without spending a whole line of text on their name (e.g. schedule
+   ownership on /schedules, design decision post-T9). #}
+{% macro avatar_badge(user, size='22px') %}
+<span title="{{ user.name }}" class="inline-flex items-center justify-center rounded-full bg-sky-50 text-sky-700 text-[10px] font-medium shrink-0" style="width: {{ size }}; height: {{ size }};">{{ user.initials }}</span>
 {% endmacro %}
 
 {% macro export_button_group(base_url, label_csv, label_xlsx, label_json, id_prefix=none) %}

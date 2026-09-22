@@ -4,6 +4,8 @@ Strategy/reputation fields are explicitly out of scope for phase 1 — see
 the skill's "Build sequencing" section.
 """
 
+from decimal import Decimal, InvalidOperation
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
@@ -11,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
+from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
 from app.models import Client, ClientAlias, Prompt, PromptSet, Run, TrackedEntity, TrackedEntityAlias
@@ -164,14 +167,33 @@ def create_client(
 @router.get("/{client_id}")
 def client_detail(request: Request, client_id: int, db: Session = Depends(get_db)):
     """Show one client's details, its aliases, and its prompt sets."""
+    # Deferred: app/routers/schedules.py imports from app/routers/prompts.py, so a top-level
+    # import here (clients -> schedules -> prompts) risks the same cycle app/errors.py's
+    # deferred `app.templating` import already documents a precedent for.
+    from app.routers.schedules import schedule_summary_text, schedule_target_display, schedules_for_client
+
     client = _get_client_or_404(db, request, client_id)
     prompt_sets = _prompt_sets_for_client(db, client_id)
-    return render(request, "clients/detail.html", {"client": client, "prompt_sets": prompt_sets})
+    t = get_t(request)
+    schedules = schedules_for_client(db, client_id)
+    return render(
+        request,
+        "clients/detail.html",
+        {
+            "client": client,
+            "prompt_sets": prompt_sets,
+            "schedules": schedules,
+            "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
+            "schedule_targets": {s.id: schedule_target_display(db, s) for s in schedules},
+            "show_prompt_column": True,
+            "new_schedule_url": None,
+        },
+    )
 
 
 @router.get("/{client_id}/edit", dependencies=_editor_or_admin)
 def edit_client_form(request: Request, client_id: int, db: Session = Depends(get_db)):
-    """Render the client edit form, pre-filled with current values (FR-3)."""
+    """Render the client edit form, pre-filled with current values (FR-3, T10)."""
     client = _get_client_or_404(db, request, client_id)
     t = get_t(request)
     return render(
@@ -182,6 +204,7 @@ def edit_client_form(request: Request, client_id: int, db: Session = Depends(get
             "action": f"/clients/{client_id}/edit",
             "cancel_url": f"/clients/{client_id}",
             "client": client,
+            "default_daily_run_limit": get_settings().scheduler_default_daily_run_limit,
         },
     )
 
@@ -198,14 +221,63 @@ def update_client(
         description="Client's own primary domain, e.g. 'acme.com' — used to detect when the client's "
         "own site is among a run's cited sources.",
     ),
+    priority: int = Form(100, description="Scheduler priority weight — higher runs first when the queue is contested."),
+    daily_run_limit: str = Form(
+        "", description="Hard cap on runs per rolling 24h for this client. Empty uses the app-wide default."
+    ),
+    monthly_budget_usd: str = Form(
+        "", description="Soft monthly spend threshold in USD — crossing it only sends a notification. Empty means no threshold."
+    ),
     db: Session = Depends(get_db),
 ):
-    """Update an existing client's name, industry, notes, and domain (FR-3). The slug is immutable."""
+    """Update an existing client's name, industry, notes, domain, and scheduler settings (FR-3,
+
+    docs/TASKS_SCHEDULER.md T10). The slug is immutable.
+    """
+    t = get_t(request)
     client = _get_client_or_404(db, request, client_id)
     client.name = name.strip()
     client.industry = industry.strip() or None
     client.notes = notes.strip() or None
     client.domain = domain.strip().lower() or None
+    # Bounds found in code review, 2026-09-22: `priority` feeds `client.priority * 1000 +
+    # schedule.priority` (app/services/queue.py) on every enqueue, stored into run_queue's own
+    # `integer` column — an unbounded value here could overflow that column and crash the next
+    # enqueue pass with a 500 instead of a friendly validation error at the one place it was
+    # actually typed in. 10000 leaves ample room for that multiplication to never approach the
+    # ~2.1 billion `integer` ceiling even with a large schedule-level priority on top.
+    if not (1 <= priority <= 10000):
+        raise AppError("invalid_priority", t("errors.invalid_priority"), status_code=400)
+    client.priority = priority
+    if daily_run_limit.strip():
+        try:
+            parsed_daily_run_limit = int(daily_run_limit.strip())
+        except ValueError:
+            raise AppError("invalid_daily_run_limit", t("errors.invalid_daily_run_limit"), status_code=400) from None
+        if not (0 <= parsed_daily_run_limit <= 100000):
+            raise AppError("invalid_daily_run_limit", t("errors.invalid_daily_run_limit"), status_code=400)
+        client.daily_run_limit = parsed_daily_run_limit
+    else:
+        client.daily_run_limit = None
+    if monthly_budget_usd.strip():
+        try:
+            parsed_monthly_budget = Decimal(monthly_budget_usd.strip())
+        except InvalidOperation:
+            raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400) from None
+        # `Decimal` parses "Infinity"/"NaN" without raising (found in code review, 2026-09-22) —
+        # "Infinity" would silently defeat check_budget_thresholds's own "spend < budget" test
+        # forever (never warns again), and "NaN" makes that same comparison False every time,
+        # firing on every check instead of once a month. Neither is a number a real budget can be.
+        # The upper bound is a business ceiling, not the column's Numeric(10, 2) capacity (revised
+        # 2026-09-22) — realistic per-client spend is tens to low hundreds of dollars a month, so
+        # $100,000 is already a 1000x+ margin above anything legitimate while still catching an
+        # obvious typo (an extra digit, cents entered as dollars) far sooner than the column's own
+        # ~$100M ceiling would.
+        if not parsed_monthly_budget.is_finite() or not (0 <= parsed_monthly_budget < 100_000):
+            raise AppError("invalid_monthly_budget", t("errors.invalid_monthly_budget"), status_code=400)
+        client.monthly_budget_usd = parsed_monthly_budget
+    else:
+        client.monthly_budget_usd = None
     db.commit()
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 

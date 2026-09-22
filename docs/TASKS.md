@@ -412,6 +412,25 @@ no test for any provider, including a named regression test for the original
 Full task breakdown, measured figures and design decisions:
 `docs/TASKS_GEMINI_CITATIONS.md` and `docs/PROMPTS_GEMINI_CITATIONS.md`.
 
+## Scheduler
+
+Branch `feature/signalmap-scheduler` (**merged \<date> — PR #\<fill in>**),
+roadmap item #5. Adds recurring, unattended runs (FR-9) on top of the
+manual-trigger loop everything before this branch was built around: a
+recurrence rule (`run_schedules`), a persistent queue with its own history
+(`run_queue`), a worker process (`app/worker.py`) that plans and executes
+independently of the web app, and the safeguards that make unattended spend
+survive contact with reality — a hard per-client daily run cap, a soft
+monthly budget warning, a queue-depth ceiling, two independent idempotence
+guarantees, a `SCHEDULER_DRY_RUN` kill switch defaulting on, and a schedule
+pausing (never silently resuming) when its owning user is deactivated. Also
+ships an in-app notification outbox, a `/schedules` monitoring page
+(schedules/queue/history), dead-letter retry, and admin UI for the new
+per-client scheduler settings.
+
+Thirty design decisions and fourteen code prompts (SCH-0 through SCH-11);
+full breakdown in `docs/TASKS_SCHEDULER.md` and `docs/PROMPTS_SCHEDULER.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

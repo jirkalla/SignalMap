@@ -119,6 +119,11 @@ def prompt_detail(
     db: Session = Depends(get_db),
 ):
     """Show one prompt: its text/market/topic, a run-trigger form, past runs, and version history (FR-7, FR-15)."""
+    # Deferred import: app/routers/schedules.py imports helpers from this module (same reason
+    # app/errors.py defers its `app.templating` import), so a top-level import here would be
+    # circular.
+    from app.routers.schedules import schedule_summary_text, schedules_for_prompt
+
     prompt = _get_prompt_or_404(db, request, prompt_id)
     model_groups = _runnable_model_groups(db)
     versions = _version_history(db, prompt)
@@ -126,6 +131,8 @@ def prompt_detail(
     runs = db.scalars(
         select(Run).where(Run.prompt_id.in_(run_prompt_ids)).order_by(Run.started_at.desc())
     ).all()
+    t = get_t(request)
+    schedules = schedules_for_prompt(db, prompt.root_prompt_id or prompt.id)
     return render(
         request,
         "prompts/detail.html",
@@ -137,6 +144,10 @@ def prompt_detail(
             "default_persona_id": default_persona_id(db),
             "runs": runs,
             "versions": versions if len(versions) > 1 else [],
+            "schedules": schedules,
+            "schedule_summaries": {s.id: schedule_summary_text(t, s) for s in schedules},
+            "show_prompt_column": False,
+            "new_schedule_url": f"/schedules/new?prompt_id={prompt.id}",
         },
     )
 

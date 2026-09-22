@@ -32,6 +32,7 @@ from app.routers import (
     prompts,
     providers,
     runs,
+    schedules,
     settings,
     users,
 )
@@ -134,6 +135,7 @@ app.include_router(prompts.router, dependencies=_login_required)
 app.include_router(runs.router, dependencies=_login_required)
 app.include_router(markets.router, dependencies=_login_required)
 app.include_router(personas.router, dependencies=_login_required)
+app.include_router(schedules.router, dependencies=_login_required)
 app.include_router(dashboard.router, dependencies=_login_required)
 app.include_router(locale.router)
 

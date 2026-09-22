@@ -11,7 +11,6 @@ or a recorded error) is always visible in the UI, never silently missing
 
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -22,29 +21,25 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.adapters import get_adapter, has_adapter
-from app.analysis import get_runner, has_runner
+from app.adapters import has_adapter
 from app.auth import current_active_user, require_role
+from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
 from app.models import (
     AIModel,
     AnalysisResult,
-    AnalysisSkill,
     Citation,
-    Client,
     Market,
     Persona,
-    Provider,
     RawResponse,
     Run,
     SearchQuery,
-    SystemInstructionTemplate,
     User,
 )
+from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
-from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
 from app.services.export import (
     ExportContent,
     build_csv_zip,
@@ -55,6 +50,7 @@ from app.services.export import (
     runs_for_prompt,
     runs_for_run,
 )
+from app.services.run_execution import QuotaExceededError, check_daily_quota, execute_run
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -108,46 +104,6 @@ def _export_response(runs: list[Run], scope: str, identifier: str, format: Expor
     )
 
 
-def _build_system_instruction(db: Session, provider: Provider, market: Market, persona: Persona) -> str | None:
-    """Build a locale-framing, persona-framing hint from a run's market and persona, using
-
-    `provider`'s editable template (see /settings and app/models/settings.py). No saved row yet
-    -> the built-in DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE (app.routers.settings). A row with an
-    empty template -> None, meaning no system_instruction is sent for this provider at all.
-
-    This is a text-only hint for the answer's *language* — every provider
-    gets it, since none expose a real "respond in language X" API
-    parameter. It is not a substitute for real geographic *search* bias
-    where a provider's API offers one: Gemini's grounding tool has no
-    location parameter at all, so its template stays the fuller default
-    (language + location-simulation); Anthropic's web_search tool takes a
-    real `user_location` (app/adapters/anthropic.py, via this function's
-    caller passing `market_country` separately), so its saved template
-    should be trimmed to language-only — see docs/TASKS_PHASE2.md P2-T4
-    follow-up for why keeping both wouldn't be wrong, just redundant.
-
-    `persona.label` (e.g. "person", "manager", "politician" — app/models/persona.py) is passed
-    as the `{persona}` placeholder — a saved template that doesn't reference it (like Anthropic's
-    trimmed one above) simply ignores this kwarg, since `str.format()` never errors on an unused
-    one.
-    """
-    row = db.scalar(select(SystemInstructionTemplate).where(SystemInstructionTemplate.provider_id == provider.id))
-    if row is None:
-        template = DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
-    elif not row.template.strip():
-        return None
-    else:
-        template = row.template
-
-    return template.format(
-        market_code=market.code,
-        market_language=market.language,
-        market_country=market.country or "",
-        market_locale_name=market.locale_name or market.code,
-        persona=persona.label,
-    )
-
-
 def _get_run_or_404(db: Session, request: Request, run_id: int) -> Run:
     run = db.get(Run, run_id)
     if run is None:
@@ -171,40 +127,6 @@ def _highlight_matches(text: str, spans: list[list[int]]) -> Markup:
         cursor = end
     parts.append(escape(text[cursor:]))
     return Markup("").join(parts)
-
-
-def _run_active_analysis_skills(
-    db: Session, raw_response_id: int, rendered_text: str | None, citations: list[Citation], client: Client
-) -> None:
-    """Compute and store every active rule_based analysis skill's result for one raw response.
-
-    Takes `rendered_text`/`citations` directly rather than a `RawResponse` to
-    read them off of — the caller's own `db.commit()` (default
-    `expire_on_commit=True`) expires whatever it just built, so reading them
-    back off the ORM object here would force two avoidable reload queries for
-    data the caller already had in memory a moment earlier.
-
-    llm_prompt skills are skipped here — none exist yet (docs/TASKS_PHASE3.md
-    design decision 1 prepares the column, phase 3 only ships mention_visibility).
-    The caller wraps this in try/except: a failure here must never affect the
-    Run's own status or roll back the evidence already committed (design
-    decision 7) — this is a best-effort derived layer, not part of what "the
-    run succeeded" means.
-    """
-    skills = db.scalars(select(AnalysisSkill).where(AnalysisSkill.is_active.is_(True))).all()
-    for skill in skills:
-        if skill.execution_type != "rule_based" or not has_runner(skill.key):
-            continue
-        output = get_runner(skill.key).run(rendered_text, citations, client)
-        db.add(
-            AnalysisResult(
-                raw_response_id=raw_response_id,
-                analysis_skill_id=skill.id,
-                skill_version=skill.version,
-                output=output,
-            )
-        )
-    db.commit()
 
 
 @router.post("/prompts/{prompt_id}/runs", dependencies=_editor_or_admin)
@@ -267,6 +189,16 @@ def trigger_run(
     if not prompt.is_active:
         raise AppError("prompt_inactive", t("errors.prompt_inactive"), status_code=409)
 
+    try:
+        check_daily_quota(
+            db,
+            client_id=prompt.prompt_set.client_id,
+            now=datetime.now(timezone.utc),
+            default_limit=get_settings().scheduler_default_daily_run_limit,
+        )
+    except QuotaExceededError:
+        raise AppError("client_quota_exceeded", t("errors.client_quota_exceeded"), status_code=409) from None
+
     pending_run = db.scalar(
         select(Run.id)
         .where(Run.prompt_id == prompt_id, Run.model_id == model_id, Run.status == "pending")
@@ -291,28 +223,16 @@ def trigger_run(
     if persona is None:
         raise AppError("persona_not_found", t("errors.persona_not_found"), status_code=400)
 
-    system_instruction = _build_system_instruction(db, model.provider, market, persona)
-    request_payload = {
-        "model": model.model_name,
-        "prompt_text": prompt.text,
-        "system_instruction": system_instruction,
-        "market_country": market.country,
-        "persona": persona.label,
-    }
-
-    run = Run(
-        prompt_id=prompt.id,
-        model_id=model.id,
-        market_id=market.id,
-        persona_id=persona.id,
-        trigger_type="manual",
-        status="pending",
-        request_payload=request_payload,
-        triggered_by_user_id=user.id,
-    )
-    db.add(run)
     try:
-        db.commit()
+        run = execute_run(
+            db,
+            prompt=prompt,
+            model=model,
+            market=market,
+            persona=persona,
+            trigger_type="manual",
+            triggered_by_user_id=user.id,
+        )
     except IntegrityError as exc:
         # Backstop for the race the plain pending_run SELECT above can't fully close (BIM
         # code-review finding, migration 0024's idx_runs_one_pending_per_prompt_model): a
@@ -330,113 +250,6 @@ def trigger_run(
             raise AppError("run_already_pending", t("errors.run_already_pending"), status_code=409) from exc
         logger.exception("Unexpected integrity error creating run for prompt_id=%s, model_id=%s", prompt_id, model_id)
         raise AppError("run_creation_failed", t("errors.run_creation_failed"), status_code=409) from exc
-    db.refresh(run)
-
-    logger.info(
-        "Triggering run %s (prompt_id=%s, model=%s, market=%s)",
-        run.id,
-        prompt.id,
-        model.model_name,
-        market.code,
-        extra={
-            "extra_data": {
-                "run_id": run.id,
-                "prompt_id": prompt.id,
-                "model": model.model_name,
-                "market": market.code,
-            }
-        },
-    )
-
-    started = time.perf_counter()
-    try:
-        adapter = get_adapter(model.provider.code)
-        payload = adapter.run(
-            prompt_text=prompt.text,
-            model_name=model.model_name,
-            system_instruction=system_instruction,
-            market_country=market.country,
-        )
-    except Exception as exc:  # provider/transport failure — record it, don't raise (FR-16)
-        run.status = "error"
-        run.error_message = str(exc)
-        run.finished_at = datetime.now(timezone.utc)
-        run.latency_ms = int((time.perf_counter() - started) * 1000)
-        db.commit()
-        logger.error(
-            "Run %s failed after %sms: %s",
-            run.id,
-            run.latency_ms,
-            exc,
-            exc_info=True,
-            extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
-        )
-    else:
-        run.status = "success"
-        run.finished_at = datetime.now(timezone.utc)
-        run.latency_ms = int((time.perf_counter() - started) * 1000)
-        raw_response = RawResponse(
-            run_id=run.id,
-            raw_payload=payload.raw_payload,
-            rendered_text=payload.rendered_text,
-            token_usage=payload.token_usage,
-            has_citations=payload.has_citations,
-        )
-        db.add(raw_response)
-        db.flush()  # need raw_response.id before creating citations
-        raw_response_id = raw_response.id
-        citations: list[Citation] = []
-        for c in payload.citations:
-            citation = Citation(
-                raw_response_id=raw_response_id,
-                source_url=c.source_url,
-                source_title=c.source_title,
-                source_domain=c.source_domain,
-                citation_position=c.citation_position,
-                cited_answer_span=c.cited_answer_span,
-                answer_span_start=c.answer_span_start,
-                answer_span_end=c.answer_span_end,
-                source_passage=c.source_passage,
-            )
-            db.add(citation)
-            citations.append(citation)
-        for position, query_text in enumerate(payload.search_queries):
-            db.add(
-                SearchQuery(
-                    raw_response_id=raw_response_id,
-                    query_text=query_text,
-                    query_position=position,
-                )
-            )
-        # _run_active_analysis_skills needs this data right after the commit
-        # below. Default expire_on_commit=True would otherwise force a fresh
-        # reload query for every one of these on next access — for
-        # analysis_client/rendered_text that's avoided by resolving them into
-        # locals now, but the `citations` list above holds ORM objects whose
-        # *attributes* (not just their existence) would still be wiped by an
-        # expiring commit; disabling it for the rest of this request's
-        # session is what keeps those already-in-memory values intact too.
-        analysis_client = prompt.prompt_set.client
-        rendered_text = payload.rendered_text
-        db.expire_on_commit = False
-        db.commit()
-        logger.info(
-            "Run %s succeeded in %sms",
-            run.id,
-            run.latency_ms,
-            extra={"extra_data": {"run_id": run.id, "latency_ms": run.latency_ms}},
-        )
-
-        try:
-            _run_active_analysis_skills(db, raw_response_id, rendered_text, citations, analysis_client)
-        except Exception as exc:  # analysis is a best-effort derived layer — never fail the run over it
-            logger.error(
-                "Analysis skills failed for run %s: %s",
-                run.id,
-                exc,
-                exc_info=True,
-                extra={"extra_data": {"run_id": run.id}},
-            )
 
     target_url = f"/runs/{run.id}"
     if request.headers.get("HX-Request") == "true":
@@ -496,6 +309,22 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
     )
+    # `triggered_by_user_id IS NULL` on a scheduled run isn't "nobody" (design decision 21) — it's
+    # the scheduler pseudo-user, and `run.triggered_by` alone has no path back to which schedule or
+    # who set it up. Only looked up for scheduled runs: a manual run's RunQueueItem, if any, never
+    # carries a schedule anyway (design decision 5).
+    schedule_attribution = None
+    if run.trigger_type == "scheduled":
+        queue_item = db.scalars(
+            select(RunQueueItem)
+            .options(joinedload(RunQueueItem.schedule).joinedload(RunSchedule.created_by))
+            .where(RunQueueItem.run_id == run.id)
+        ).first()
+        if queue_item is not None and queue_item.schedule is not None:
+            schedule_attribution = {
+                "schedule_id": queue_item.schedule.id,
+                "created_by_name": queue_item.schedule.created_by.name,
+            }
     return render(
         request,
         "runs/detail.html",
@@ -510,6 +339,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "tracked_entities_configured": tracked_entities_configured,
             "raw_payload_json": raw_payload_json,
             "request_payload_json": request_payload_json,
+            "schedule_attribution": schedule_attribution,
         },
     )
 

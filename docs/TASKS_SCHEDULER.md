@@ -292,6 +292,67 @@ vypnutém stroji vypadá stejně jako prázdná fronta, aktivně lže.
     existujícího constraintu je vědomý a hlášený podle
     `AI_INSTRUCTIONS.md` §4.
 
+### Doplněno 2026-09-21 (po dokončení T5b, v konverzaci)
+
+36. **Dva různé rozvrhy mířící na tentýž prompt+model+personu se
+    navzájem nekontrolují — jen se na to upozorní při ukládání, nikdy se
+    to nezablokuje.** Objevilo se jako reálný scénář: rozvrh na jeden
+    prompt a rozvrh na celý set, který ten prompt obsahuje, se stejným
+    modelem/personou ale jiným časem — obě proběhnou nezávisle a bez
+    dry-runu by se to zaplatilo dvakrát. Pětisloupcová unikátnost
+    (decision 12) i kolizní odklad (decision 17) tohle nezachytí, protože
+    obojí je navázané na `schedule_id`, resp. na skutečnou souběžnost —
+    dva rozvrhy 15 minut od sebe se nikdy nepotkají jako `pending` run.
+    Srovnání s podobnými nástroji (Airflow, k8s CronJob, GitHub Actions):
+    žádný z nich nedetekuje sémantický překryv mezi nezávislými
+    plánovanými jednotkami automaticky — buď to řeší explicitní
+    deklarací (GitHub Actions `concurrency: group:`), nebo to neřeší
+    vůbec a nechávají to na provozovateli. Automatické **zablokování**
+    by navíc bylo špatně — překryv může být záměrný (např. porovnání
+    dvou různých cadencí). Proto: **upozornit, nikdy neblokovat** — stejná
+    filozofie jako odhad ceny (decision 29). Realizuje T5c (kontrola při
+    uložení) a rozšiřuje T6 (trvalé zobrazení na monitorovací stránce).
+
+### Doplněno 2026-09-21 (po prvním nasazení T6, v konverzaci)
+
+37. **Historie na `/schedules` dostává "health strip" — řádek barevných
+    dlaždic (poslední ~10 oken) na rozvrh, seskupený podle klienta,
+    zdraví klienti defaultně sbalení.** Vzniklo z konkrétní zpětné vazby,
+    že textový součet ("0 done · 0 error · 2 skipped") se čte pomalu a
+    nedává rychlou odpověď na "stíhám to pro všechny klienty?". Vzor je
+    zavedený u monitorovacích nástrojů (healthchecks.io, UptimeRobot,
+    GitHub Actions' workflow health) — barevná dlaždice na okno
+    (zelená/červená/šedá) se čte bez čtení textu. Klasifikace jednoho
+    okna je all-or-nothing jako u CI buildu: `error_count > 0` →
+    `error`, jinak `done_count > 0` → `done`, jinak `skipped_count > 0`
+    → `skipped`, jinak `cancelled`. Klient s alespoň jedním `error`
+    dlaždicí v posledních ~10 oknech je defaultně rozbalený; jinak
+    sbalený na "✓ Klient · vše v pořádku, N rozvrhů". Strip je *triage*
+    vrstva nad existující timeline (T6/SCH-6b), ne její náhrada — klik
+    do rozbaleného klienta pořád vede k plnému seznamu dávek pod ním.
+    Jedna nová SQL agregace s window funkcí (`ROW_NUMBER() OVER
+    (PARTITION BY schedule_id ORDER BY scheduled_for DESC)`), žádná
+    smyčka v Pythonu — stejná disciplína jako zbytek T6.
+
+38. **`schema_phase1.sql` se prohlašuje za historický snapshot fáze 1, ne
+    za živý popis schématu — `AI_INSTRUCTIONS.md` se podle toho mění
+    (v1.2, 2026-09-22).** Zjištěno při zavírání téhle branch: soubor
+    neobsahuje ani scheduler tabulky, ani 12 dalších tabulek přidaných
+    napříč staršími fázemi (`users`, `personas`,
+    `ai_model_price_components`, `analysis_skills`, ...) — nikdy nebyl po
+    fázi 1 aktualizován, přestože si na to `AI_INSTRUCTIONS.md` §3 dosud
+    dělal nárok. Zvažovaly se tři varianty: nechat být (prohlubuje rozpor
+    psaného pravidla s realitou), dohnat soubor na aktuální stav všech ~21
+    tabulek (netriviální, bez testového pokrytí správnosti, bez
+    vynucovacího mechanismu by byl za pár měsíců zase pozadu), nebo
+    přiznat, že autoritativním zdrojem je od teď historie Alembic migrací
+    a `schema_phase1.sql` nechat jako pojmenovaný snapshot prvního
+    vertical slice. Zvoleno poslední — nejmenší riziko/náklad, sladí
+    pravidlo se skutečnou praxí posledních 12 tabulek, a je to i běžný
+    vzor v SQLAlchemy/Alembic projektech. Soubor samotný a migrace `0001`
+    (která ho pořád spouští doslovně pro čerstvou DB) zůstávají
+    nezměněné — mění se jen jejich popisky a `AI_INSTRUCTIONS.md`.
+
 ---
 
 ## Nové schéma (migrace 0029)
@@ -392,19 +453,20 @@ runs                          -- existující tabulka, jen úprava indexu
 
 | ID | Name | Status |
 |----|------|--------|
-| T0 | Migrace 0029 — čtyři tabulky, sloupce na `clients`, indexy, rozšíření indexu z 0024 | ⏳ |
-| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy + konec rozvrhu | ⏳ |
-| T2 | `app/services/run_execution.py` — vytažení exekuce, beze změny chování | ⏳ |
-| T3 | `app/worker.py` — ticker, executor, lease, heartbeat, rekonciliace, dry-run | ⏳ |
-| T4 | `worker` služba v Compose + env + healthcheck | ⏳ |
-| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s povinným koncem a náhledem termínů i ceny | ⏳ |
-| T5b | Set-level rozvrh (`target_type='prompt_set'`) + rozstřel přes `batch_id` | ⏳ |
-| T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru | ⏳ |
-| T7 | Dead letter: opakování chyb, hromadné akce | ⏳ |
-| T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ⏳ |
-| T9 | Pozastavení rozvrhů při deaktivaci uživatele | ⏳ |
-| T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ⏳ |
-| T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ⏳ |
+| T0 | Migrace 0029 — čtyři tabulky, sloupce na `clients`, indexy, rozšíření indexu z 0024 | ✅ |
+| T1 | `compute_next_run_at()` jako čistá funkce + tabulkové DST testy + konec rozvrhu | ✅ |
+| T2 | `app/services/run_execution.py` — vytažení exekuce, beze změny chování | ✅ |
+| T3 | `app/worker.py` — ticker, executor, lease, heartbeat, rekonciliace, dry-run | ✅ |
+| T4 | `worker` služba v Compose + env + healthcheck | ✅ |
+| T5 | `can_schedule()` + CRUD rozvrhů (prompt-level) s povinným koncem a náhledem termínů i ceny | ✅ |
+| T5b | Set-level rozvrh (`target_type='prompt_set'`) + rozstřel přes `batch_id` | ✅ |
+| T5c | Upozornění na překryv rozvrhů (stejný prompt+model+persona, jiný rozvrh) při uložení | ✅ |
+| T6 | `/schedules` — rozvrhy / fronta / historie + stav workeru + trvalé upozornění na překryv | ✅ |
+| T7 | Dead letter: opakování chyb, hromadné akce | ✅ |
+| T8 | `notification_outbox` + `notify()` + in-app oznámení (vč. vypršení rozvrhu a rozpočtu) | ✅ |
+| T9 | Pozastavení rozvrhů při deaktivaci uživatele | ✅ |
+| T10 | Stropy: denní limit na klienta, měsíční rozpočet, hloubka fronty, souběh na providera | ✅ |
+| T11 | Závěrečný průchod: i18n kompletnost, responsive, testy, docs | ✅ |
 
 Pořadí je vynucené: T1 a T2 jsou nezávislé stavební kameny, které T3
 potřebuje oba; T4 bez T3 nemá co spouštět; T5 zakládá data, která T6
@@ -700,17 +762,62 @@ v dry-runu vznikne správný počet položek s jedním `batch_id`.
 
 ---
 
+## T5c — Upozornění na překryv rozvrhů
+
+Realizuje decision 36. Malý task, staví na `_resolve_target` z T5/T5b —
+žádná nová tabulka ani sloupec.
+
+**Target:** rozšíření `app/routers/schedules.py`
+(`find_overlapping_schedules`, zapojení do `preview_occurrences`), nové
+skryté pole `schedule_id` ve `app/templates/schedules/form.html`, nová
+sekce v `app/templates/schedules/_occurrence_preview.html`, i18n
+
+1. `find_overlapping_schedules(db, *, client_id, exclude_schedule_id,
+   prompt_ids, model_ids, persona_ids)` — najde jiné **aktivní** rozvrhy
+   stejného klienta, jejichž rozbalený cíl (`_resolve_target`) sdílí
+   **současně** alespoň jeden prompt, jeden model a jednu personu s nově
+   ukládaným rozvrhem. Shoda jen v jednom rozměru (např. stejný model,
+   jiný prompt) není překryv. Rozsah je **jeden klient** — napříč klienty
+   překryv nedává smysl.
+2. `GET /schedules/preview` (T5) o tenhle výsledek rozšířit — potřebuje
+   navíc `schedule_id` (prázdné při zakládání, vyplněné při editaci, aby
+   se rozvrh při editaci nesrovnával sám se sebou) a `client_id`.
+3. Zobrazení v `_occurrence_preview.html`: jantarový box, oddělený od
+   odhadu ceny, s odkazem na overlapující rozvrh a tím, co konkrétně sdílí
+   (počet promptů, který model, která persona). **Nic neblokuje** — jen
+   informuje, dřív než uživatel klikne Save (decision 36).
+4. Testy: dva aktivní rozvrhy se shodným promptem+modelem+personou →
+   detekováno; shoda jen v modelu (jiný prompt) → nedetekováno; editace
+   rozvrhu sama se sebou → nedetekováno; pozastavený (`is_active=False`)
+   překrývající se rozvrh → nedetekováno (neběží, není co hlásit).
+
+**Done when:** založení rozvrhu na prompt, který je zároveň v aktivně
+naplánovaném prompt setu se stejným modelem/personou, zobrazí varování
+před uložením; uložení samotné není ničím blokované.
+
+**Expected commit:** `feat(scheduler): warn about overlapping schedules at save time`
+
+---
+
 ## T6 — `/schedules` monitoring
 
 **Target:** nová `app/templates/schedules/index.html`, rozšíření
 `app/routers/schedules.py`, nová `app/services/schedule_monitor.py`,
 odkaz v `app/templates/base.html`, i18n
 
+**Doplněno po prvním nasazení:** search + filtr chipy na Rozvrhách a
+Historii, seskupení Rozvrh podle klienta, živé auto-refreshování Fronty
+přes HTMX, a **health strip na Historii** (decision 37) — barevné
+dlaždice posledních ~10 oken na rozvrh, seskupené podle klienta,
+problémoví klienti rozbalení, zdraví sbalení.
+
 1. Stránka se třemi pohledy (stejný trojlístek jako GitHub Actions a
    Airflow): **Rozvrhy** (všechna pravidla, příští běh, poslední výsledek,
-   pauza), **Fronta** (co čeká a běží, v pořadí podle priority — tady je
-   priorita konečně vidět), **Historie** (posledních N oken: kdy, co,
-   výsledek, latence, cena, odkaz na `Run`; filtr "jen chyby").
+   pauza, **odznak "překrývá se s N dalšími" přes `find_overlapping_schedules`
+   z T5c, spočítaný jednou pro všechny rozvrhy stránky najednou, ne
+   N+1 dotazů**), **Fronta** (co čeká a běží, v pořadí podle priority —
+   tady je priorita konečně vidět), **Historie** (posledních N oken: kdy,
+   co, výsledek, latence, cena, odkaz na `Run`; filtr "jen chyby").
 2. **Stavový pruh workeru** nahoře z `worker_heartbeats` (decision 19):
    `Plánovač běží · poslední signál před 8 s` / `Plánovač neodpovídá 3 h`.
    V dry-runu výrazný odlišný pruh, aby nikdo omylem nečekal reálné runy.

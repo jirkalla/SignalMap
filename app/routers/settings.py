@@ -30,7 +30,7 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 # Sensible zero-config default for a provider with no saved row yet (e.g.
 # right after its seed migration, before anyone visits this page) — covers
 # both language and location-simulation, for a provider with no real
-# geographic API targeting of its own. See app/routers/runs.py's
+# geographic API targeting of its own. See app/services/run_execution.py's
 # _build_system_instruction for where this is actually applied, and
 # _rows() below for why it's shown here rather than hidden behind a blank
 # textarea (the UI must always show what's really being sent).

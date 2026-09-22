@@ -45,16 +45,20 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse | HTMLResponse:
-        """JSON for the dashboard's own /api/* endpoints (a fetch() call needs the structured
-        body to branch on); a small HTML page for every other route, since those are full-page
-        browser navigations where a raw JSON blob is not a real UI (docs/ROADMAP.md §1
-        follow-up — this used to be JSON everywhere, including e.g. a 404 on a nonexistent
-        client, not just the newer 403s from require_role()). Imported here, not at module
-        level — app.templating imports app.auth, which imports AppError from this very module,
-        so a top-level import would be circular; by the time a request actually reaches this
-        handler, that's moot.
+        """JSON for the dashboard's own /api/* endpoints and for any other route's own fetch()
+
+        call that explicitly asks for it via `Accept: application/json` (found in code review,
+        2026-09-21 — the prompt-detail run-trigger form POSTs via fetch() to a non-/api/ route,
+        so it got the HTML branch below and had no structured message to show; it silently
+        showed a bare ❌ instead of the friendly 409 text T10's quota check was written to
+        surface); a small HTML page for every plain full-page browser navigation, where a raw
+        JSON blob is not a real UI (docs/ROADMAP.md §1 follow-up — this used to be JSON
+        everywhere, including e.g. a 404 on a nonexistent client, not just the newer 403s from
+        require_role()). Imported here, not at module level — app.templating imports app.auth,
+        which imports AppError from this very module, so a top-level import would be circular;
+        by the time a request actually reaches this handler, that's moot.
         """
-        if "/api/" in request.url.path:
+        if "/api/" in request.url.path or "application/json" in request.headers.get("accept", ""):
             return JSONResponse(
                 status_code=exc.status_code,
                 content=ErrorResponse(error_code=exc.error_code, message=exc.message, detail=exc.detail).model_dump(),

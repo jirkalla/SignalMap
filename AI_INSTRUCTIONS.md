@@ -1,5 +1,5 @@
 # AI Instructions — SignalMap
-## v1.1 | 2026-09-09
+## v1.2 | 2026-09-22
 
 This file governs how an AI coding agent (Claude Code, or any equivalent)
 must behave when working on the SignalMap repository.
@@ -22,7 +22,9 @@ Stack:
   Backend    FastAPI + SQLAlchemy + PostgreSQL
   Frontend   Jinja2 + HTMX (CRUD screens) + Vue3 islands (later, dashboard)
   Styling    Tailwind CSS (CDN, no build step)
-  Migrations Alembic, driven by `schema_phase1.sql` as the authoritative schema
+  Migrations Alembic — the migration history is the authoritative schema
+             (`schema_phase1.sql` is a historical snapshot of the original
+             phase-1 slice only, not kept in sync since; see §3)
   Deploy     Docker Compose, identical on dev PC and VPS
 
 Build sequencing (see the skill for full detail — do not reorder this):
@@ -67,9 +69,16 @@ ARCHITECTURE:
   via `app.errors.AppError` — never a raw `HTTPException(detail="...")`.
 
 DATABASE:
-- `schema_phase1.sql` (repo root) is authoritative. Never add a table or
-  column that isn't in it, or in a later phase's equivalent schema file,
-  without flagging it first.
+- The Alembic migration history (`alembic/versions/`) is the authoritative
+  description of the current schema — not `schema_phase1.sql`. That file is
+  a historical snapshot of the original phase-1 vertical slice (see its own
+  header comment and design decision 38 in `docs/TASKS_SCHEDULER.md`);
+  migration `0001` still executes it verbatim for a fresh database, but it
+  has not been kept in sync with the ~16 tables added since across later
+  phases, and updating it is not expected going forward.
+- Never add a table or column without a corresponding Alembic migration.
+  Flag it first if what you're about to add doesn't match what
+  `docs/REQUIREMENTS.md` / the active phase in `docs/TASKS.md` describes.
 - Never overwrite historical/evidence rows (`raw_responses`, `citations`,
   prompt versions) — new data is always a new row. A `Run`'s own lifecycle
   status (`pending` → `success`/`error`) is the one exception: that's a
@@ -107,8 +116,9 @@ NEVER:
   fold operational notes into the existing `docs/*.md` files instead.
 - Implement anything from a phase later than the one currently active in
   `docs/TASKS.md` — flag it instead of building it silently.
-- Invent a table, column, or provider list beyond `schema_phase1.sql`
-  without flagging it first.
+- Invent a table, column, or provider list beyond what
+  `docs/REQUIREMENTS.md` / the active phase describes, or add one without a
+  corresponding Alembic migration, without flagging it first.
 - Commit `.env`, API keys, or any other secret. `.env.example` documents
   the required keys; real values live only in the gitignored `.env`.
 - Run `git push` or merge to `main`/`master` without explicit instruction.

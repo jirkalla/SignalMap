@@ -230,10 +230,15 @@ jiná věc (klientské účtování, ne interní viditelnost).
   (design odsouhlasený na mockup artefaktu) — T0–T4 hotové a otestované na
   branch `feature/signalmap-ops-dashboard` (2026-09-15), čeká na merge.
 
-## 5. Scheduler
+## 5. Scheduler ✅ Hotovo
 
 Automatické, opakované spouštění runů (`FR-9` bylo ve fázi 1 explicitně mimo
 scope — teď dává smysl to odemknout).
+
+**Implementováno:** `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md`
+(30 design decisions, SCH-T0–T11) — branch `feature/signalmap-scheduler`,
+**merged \<date> (PR #\<fill in>)**. Viz `docs/TASKS.md` "Scheduler" pro
+shrnutí co dodalo.
 
 - Rozšíření `Run.trigger_type` o `'scheduled'` (dnes jen `'manual'`).
 - `triggered_by_user_id` (#1) rozliší, kdo/co run spustil.
@@ -628,13 +633,19 @@ novou funkcionalitu:
   market) najednou. Největší architektonická změna z celé diskuze — vlastní
   budoucí fáze, ne součást žádného kroku výše.
 
-  ⏳ **Pořád čeká na Scheduler infrastrukturu** (viz #5 výše) — appka dnes nemá žádný task
+  ⏳ **Pořád čeká na svůj vlastní task** — appka dnes nemá žádný task
   queue/`BackgroundTasks` mechanismus. Branch výše (2026-09-15) implementovala jen **stavební
   kámen** směrem k tomuhle konceptu, ne "Study" samotný: umí spustit víc modelů paralelně pro
   **jeden** prompt (checkboxy na run-trigger formuláři, `POST /prompts/{id}/runs` volané N-krát
   z klienta) — ne dávku přes víc promptů najednou. Vědomě rozhodnuto v konverzaci 2026-09-14
   nestavět "Study" dřív, než existuje Scheduler, aby se stejná infrastruktura nemusela stavět
   dvakrát nezávisle.
+
+  ✅ **Scheduler (#5) je od té doby hotový** — `run_queue.batch_id` a `source='batch'` (design
+  decision 32, `docs/TASKS_SCHEDULER.md`) jsou přesně ten druhý stavební kámen, který tu chyběl:
+  set-level rozvrh už dnes rozstřelí jedno okno na N položek se sdíleným `batch_id`. "Study" jako
+  ruční, okamžitá varianta téhož rozstřelu (bez čekání na rozvrh) je teď odemčená jako další
+  kandidát — pořád samostatný budoucí task, ne automaticky součást této branch.
 
 Z konverzace o client-scoped access (2026-09-13, viz #10 výše) vyplynula
 ještě jedna myšlenka, porovnaná a **vědomě odložená celá**, ne jen
@@ -697,7 +708,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 2 | Deploy hardening | ✅ Hotovo 2026-09-18 ([PR #9](https://github.com/jirkalla/SignalMap/pull/9)) — Caddy + HTTPS, porty jen přes proxy, noční zálohy s ověřenou obnovou. Firewall nastavoval Khalid, z naší strany neověřeno |
 | 3 | Jít online | ✅ Hotovo 2026-09-18 — `https://expressyourself.ai` běží, auth ověřená, runbook v `docs/DEPLOYMENT.md` |
 | 4 | Ops dashboard (interní) | ✅ Hotovo, smergnuto ([PR #13](https://github.com/jirkalla/SignalMap/pull/13)) a od 2026-09-18 nasazeno na produkci |
-| 5 | Scheduler | **Další na řadě.** Plán rozepsaný v `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md` (2026-09-17), 30 design decisions, SCH-T0…T11. Prerekvizity #1 a #4 splněné |
+| 5 | Scheduler | ✅ Hotovo, **smergnuto \<date> (PR #\<fill in>)** — `docs/TASKS_SCHEDULER.md` + `docs/PROMPTS_SCHEDULER.md`, 30 design decisions, SCH-T0…T11. Před ostrým provozem: týden pozorování v dry-runu, pak `SCHEDULER_DRY_RUN` vypnout a první den ostrého provozu zkontrolovat `/ops` (řádek "Scheduler" na ose Uživatel proti počtu oken na `/schedules`) |
 | 6 | Brand-attribute tagging | Neimplementováno, čeká za #11/#12 |
 | 7 | Sentiment | Odemčeno, čeká za #11/#12 |
 | 8 | Gap/opportunity score | Čeká na 7 |
@@ -706,7 +717,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo, smergnuto ([PR #15](https://github.com/jirkalla/SignalMap/pull/15)) a nasazeno 2026-09-18 — lokálně 551 → 1 354 vazeb, na produkci 565 → 820; historie přepočítaná migrací `0028` |
 | 12 | LLM quote-verification skill | Navrženo 2026-09-15; #11 hotové, takže odblokované — vstupní předpoklady ale změněné, viz #12 |
 | 13 | Project/Brand entita | Navrženo 2026-09-15 |
-| 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15; #2, #3 a #4 splněné, zbývá čekat na 5 a 10 |
+| 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15; #2, #3, #4 a #5 splněné, zbývá čekat na 10 |
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |

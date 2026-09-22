@@ -10,10 +10,12 @@ from app.models.client import Client
 from app.models.client_alias import ClientAlias
 from app.models.domain_classification import DomainClassification
 from app.models.market import Market
+from app.models.notification import NotificationOutbox, WorkerHeartbeat
 from app.models.persona import Persona
 from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, AIModelPriceComponent, Provider
 from app.models.run import Citation, RawResponse, Run, SearchQuery
+from app.models.schedule import RunQueueItem, RunSchedule
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
 from app.models.user import User
@@ -34,6 +36,10 @@ __all__ = [
     "RawResponse",
     "Citation",
     "SearchQuery",
+    "RunSchedule",
+    "RunQueueItem",
+    "WorkerHeartbeat",
+    "NotificationOutbox",
     "SystemInstructionTemplate",
     "AnalysisSkill",
     "AnalysisResult",

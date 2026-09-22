@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import select_field, button %}
+{% block title %}{{ title }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/clients/{{ client.id }}" class="hover:underline">{{ client.name }}</a>
+  <span class="mx-1">/</span>
+  <a href="{{ cancel_url }}" class="hover:underline">{{ t('schedules.prompt_set_link') if target_type == 'prompt_set' else t('schedules.prompt_link') }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-2">{{ title }}</h1>
+{% if target_type == 'prompt_set' %}
+<p class="text-sm text-stone-600 bg-white border border-stone-200 rounded-lg p-3 mb-6">
+  {{ t('schedules.target_prompt_set').format(name=target_label, count=prompt_count) }}
+</p>
+{% else %}
+<p class="text-sm text-stone-600 bg-white border border-stone-200 rounded-lg p-3 mb-6">{{ target_label }}</p>
+{% endif %}
+
+<form
+  id="schedule-form"
+  method="post"
+  action="{{ action }}"
+  hx-get="/schedules/preview"
+  hx-trigger="load, change"
+  hx-target="#occurrence-preview"
+  hx-swap="innerHTML"
+  class="bg-white border border-stone-200 rounded-lg p-6 max-w-3xl space-y-6"
+>
+  <input type="hidden" name="target_type" value="{{ target_type }}">
+  <input type="hidden" name="target_id" value="{{ target_id }}">
+  <input type="hidden" name="starts_on" value="{{ schedule.starts_on.isoformat() if schedule else '' }}">
+  <input type="hidden" name="occurrences_count" value="{{ schedule.occurrences_count if schedule else 0 }}">
+  <input type="hidden" name="schedule_id" value="{{ schedule.id if schedule else '' }}">
+
+  <fieldset>
+    <legend class="block text-sm font-medium text-stone-700 mb-2">{{ t('schedules.frequency_label') }} *</legend>
+    <div class="flex flex-wrap gap-4">
+      {% for value, label_key in [('daily', 'schedules.frequency_daily'), ('weekly', 'schedules.frequency_weekly'), ('monthly', 'schedules.frequency_monthly')] %}
+      <label class="flex items-center gap-1.5 text-sm text-stone-700">
+        <input type="radio" name="frequency" value="{{ value }}" data-frequency-radio
+               {% if (schedule.frequency if schedule else 'daily') == value %}checked{% endif %}
+               class="border-stone-300 text-stone-700 focus:ring-stone-500">
+        {{ t(label_key) }}
+      </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <div id="weekly-fields" hidden>
+    <span class="block text-sm font-medium text-stone-700 mb-2">{{ t('schedules.days_of_week_label') }} *</span>
+    <div class="flex flex-wrap gap-3">
+      {% for value, label in weekdays %}
+      <label class="flex items-center gap-1.5 text-sm text-stone-700">
+        <input type="checkbox" name="days_of_week" value="{{ value }}" {% if value in selected_days_of_week %}checked{% endif %}
+               class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div id="monthly-fields" hidden class="max-w-[200px]">
+    <label for="day_of_month" class="block text-sm font-medium text-stone-700 mb-1">{{ t('schedules.day_of_month_label') }} *</label>
+    <input type="number" id="day_of_month" name="day_of_month" min="1" max="31"
+           value="{{ schedule.day_of_month if schedule and schedule.day_of_month else '' }}"
+           class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+    <p class="text-xs text-stone-400 mt-1">{{ t('schedules.day_of_month_hint') }}</p>
+  </div>
+
+  <div class="max-w-[160px]">
+    <label for="time_of_day" class="block text-sm font-medium text-stone-700 mb-1">{{ t('schedules.time_of_day_label') }} *</label>
+    <input type="time" id="time_of_day" name="time_of_day" value="{{ time_of_day_value }}" required
+           class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+    <p class="text-xs text-stone-400 mt-1">{{ t('schedules.timezone_hint') }}</p>
+  </div>
+
+  <div>
+    <div class="flex items-center justify-between mb-1">
+      <span class="block text-sm font-medium text-stone-700">{{ t('schedules.models_label') }} *</span>
+    </div>
+    <div class="w-full rounded-md border border-stone-300 px-3 py-2 max-h-56 overflow-y-auto">
+      {% for group_label, models in model_groups %}
+      <div class="{% if not loop.first %}mt-2{% endif %}">
+        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-1">{{ group_label }}</p>
+        {% for model, prices in models %}
+        <label class="flex items-center gap-2 py-0.5 text-sm text-stone-700">
+          <input type="checkbox" name="model_ids" value="{{ model.id }}" {% if model.id in selected_model_ids %}checked{% endif %}
+                 class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+          {{ model.display_name or model.model_name }}
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <span class="block text-sm font-medium text-stone-700 mb-2">{{ t('schedules.personas_label') }} *</span>
+    <div class="flex flex-wrap gap-3">
+      {% for value, label in personas %}
+      <label class="flex items-center gap-1.5 text-sm text-stone-700">
+        <input type="checkbox" name="persona_ids" value="{{ value }}" {% if value in selected_persona_ids %}checked{% endif %}
+               class="rounded border-stone-300 text-stone-700 focus:ring-stone-500">
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="flex flex-wrap gap-4">
+    <div class="flex-1 min-w-[200px]">
+      {{ select_field('market_id', t('schedules.market_label'), markets, selected=(schedule.market_id|string if schedule and schedule.market_id else '')) }}
+    </div>
+    <div class="w-32">
+      <label for="priority" class="block text-sm font-medium text-stone-700 mb-1">{{ t('schedules.priority_label') }}</label>
+      <input type="number" id="priority" name="priority" value="{{ schedule.priority if schedule else 100 }}" min="0" max="999"
+             class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+    </div>
+  </div>
+
+  <fieldset class="border-t border-stone-200 pt-4">
+    <legend class="block text-sm font-medium text-stone-700 mb-1">{{ t('schedules.end_label') }} *</legend>
+    <p class="text-xs text-stone-500 mb-3">{{ t('schedules.end_hint') }}</p>
+    <div class="flex flex-wrap gap-6">
+      <div>
+        <label class="flex items-center gap-1.5 text-sm text-stone-700 mb-2">
+          <input type="radio" name="end_type" value="date" data-end-type-radio
+                 {% if end_type == 'date' %}checked{% endif %}
+                 class="border-stone-300 text-stone-700 focus:ring-stone-500">
+          {{ t('schedules.end_by_date') }}
+        </label>
+        <div id="ends-on-wrap" hidden>
+          <input type="date" id="ends_on" name="ends_on"
+                 value="{{ schedule.ends_on.isoformat() if schedule and schedule.ends_on else '' }}"
+                 class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+        </div>
+      </div>
+      <div>
+        <label class="flex items-center gap-1.5 text-sm text-stone-700 mb-2">
+          <input type="radio" name="end_type" value="occurrences" data-end-type-radio
+                 {% if end_type == 'occurrences' %}checked{% endif %}
+                 class="border-stone-300 text-stone-700 focus:ring-stone-500">
+          {{ t('schedules.end_by_occurrences') }}
+        </label>
+        <div id="max-occurrences-wrap" hidden>
+          <input type="number" id="max_occurrences" name="max_occurrences" min="1"
+                 value="{{ schedule.max_occurrences if schedule and schedule.max_occurrences else '' }}"
+                 class="w-32 rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <div id="occurrence-preview" class="bg-stone-50 border border-stone-200 rounded-lg p-4 text-sm">
+    {# Populated by the hx-get "load" trigger on the form above, right after this page loads —
+       never rendered with real data server-side here, since the initial full-page render has
+       no query string to compute a preview from (the fields it needs live on this very form). #}
+    <p class="text-stone-500">{{ t('schedules.preview_incomplete') }}</p>
+  </div>
+
+  <div class="flex items-center gap-3">
+    {{ button(t('common.save')) }}
+    <a href="{{ cancel_url }}" class="text-sm text-stone-500 hover:underline">{{ t('common.cancel') }}</a>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var maxEndDates = {{ max_end_dates | tojson }};
+    var form = document.getElementById('schedule-form');
+    var weeklyFields = document.getElementById('weekly-fields');
+    var monthlyFields = document.getElementById('monthly-fields');
+    var endsOnInput = document.getElementById('ends_on');
+    var endsOnWrap = document.getElementById('ends-on-wrap');
+    var maxOccWrap = document.getElementById('max-occurrences-wrap');
+
+    function currentFrequency() {
+      var checked = form.querySelector('[name="frequency"]:checked');
+      return checked ? checked.value : 'daily';
+    }
+
+    function updateFrequencyUI() {
+      var freq = currentFrequency();
+      weeklyFields.hidden = freq !== 'weekly';
+      monthlyFields.hidden = freq !== 'monthly';
+      if (endsOnInput && maxEndDates[freq]) {
+        endsOnInput.max = maxEndDates[freq];
+      }
+    }
+
+    function updateEndTypeUI() {
+      var checked = form.querySelector('[name="end_type"]:checked');
+      var endType = checked ? checked.value : 'date';
+      endsOnWrap.hidden = endType !== 'date';
+      maxOccWrap.hidden = endType !== 'occurrences';
+    }
+
+    Array.prototype.forEach.call(form.querySelectorAll('[data-frequency-radio]'), function (el) {
+      el.addEventListener('change', updateFrequencyUI);
+    });
+    Array.prototype.forEach.call(form.querySelectorAll('[data-end-type-radio]'), function (el) {
+      el.addEventListener('change', updateEndTypeUI);
+    });
+
+    updateFrequencyUI();
+    updateEndTypeUI();
+  })();
+</script>
+{% endblock %}

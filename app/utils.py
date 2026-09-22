@@ -2,7 +2,7 @@
 
 import re
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Market, Persona, Prompt
@@ -16,6 +16,35 @@ def market_options(db: Session) -> list[tuple[int, str]]:
     """
     markets = db.scalars(select(Market).order_by(Market.code)).all()
     return [(m.id, f"{m.code} — {m.locale_name}" if m.locale_name else m.code) for m in markets]
+
+
+def current_prompt_version(db: Session, root_prompt_id: int) -> Prompt:
+    """The current version of a prompt lineage rooted at `root_prompt_id`.
+
+    Shared by app/services/queue.py's ticker (`enqueue_due_schedules`) and
+    app/routers/schedules.py (the schedule form and its cost/occurrence preview) — both need
+    the same "resolve a schedule's stored lineage root to the concrete Prompt version that would
+    actually run today" step (docs/TASKS_SCHEDULER.md design decision 6), which is exactly what
+    editing a prompt is designed to keep separate from a schedule ever pointing at stale text.
+    """
+    return db.scalar(
+        select(Prompt).where(
+            or_(Prompt.id == root_prompt_id, Prompt.root_prompt_id == root_prompt_id),
+            Prompt.is_current_version.is_(True),
+        )
+    )
+
+
+def prompt_lineage_ids(db: Session, root_prompt_id: int) -> list[int]:
+    """Every Prompt id in a lineage rooted at `root_prompt_id` — same `WHERE id = root_id OR
+    root_prompt_id = root_id` shape as app/services/export.py, reused wherever a query needs to
+    span every version's runs, not just the current one (e.g. a schedule's historical cost
+    estimate in app/services/cost.py, which would otherwise see zero history right after a
+    prompt edit creates a new current version with no runs of its own yet).
+    """
+    return db.scalars(
+        select(Prompt.id).where(or_(Prompt.id == root_prompt_id, Prompt.root_prompt_id == root_prompt_id))
+    ).all()
 
 
 def most_recent_prompt_market_id(db: Session, prompt_set_id: int) -> int | None:

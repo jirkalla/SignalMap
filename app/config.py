@@ -1,5 +1,6 @@
 """Application configuration, loaded from environment variables / .env."""
 
+import socket
 from functools import lru_cache
 from typing import Literal
 
@@ -35,6 +36,49 @@ class Settings(BaseSettings):
     dev_admin_email: str = ""
     dev_admin_name: str = ""
     dev_admin_password: str = ""
+
+    # Scheduler (docs/TASKS_SCHEDULER.md T3). Kill switch for the ticker loop only — the executor
+    # keeps draining whatever is already queued even when this is false (design decision 16),
+    # since two app instances sharing one database must never both plan on their own schedule.
+    scheduler_enabled: bool = True
+    # Shadow mode: the ticker still plans and enqueues normally, but the executor marks every
+    # claimed item skipped/dry_run and never calls a provider adapter (design decision 15) — the
+    # first part of the app that can spend money unattended stays inert until this is explicitly
+    # turned off, once quota enforcement (T10) exists.
+    scheduler_dry_run: bool = True
+    # How late a missed window may run before it's given up on instead of caught up (design
+    # decision 11) — checked both when enqueuing (worker was down) and when claiming (worker
+    # fell behind). 360 = 6 hours.
+    scheduler_grace_period_minutes: int = 360
+    # How long a claimed queue item may stay 'leased' before another worker is allowed to
+    # reclaim it (design decision 14) — protects against a killed worker leaving items stuck.
+    scheduler_lease_minutes: int = 15
+    # Identifies this process's row in worker_heartbeats and its lease ownership on run_queue.
+    # Defaults to the container's own hostname (Docker assigns one unique per container) rather
+    # than a fixed string, so `docker compose up --scale worker=N` (docs/TASKS_SCHEDULER.md T10)
+    # gives every replica a distinct identity for free — no per-replica WORKER_NAME needed. Still
+    # overridable via the environment for a deployment that wants a more readable name.
+    worker_name: str = socket.gethostname()
+    # Runs per rolling 24h a client may have before `run_execution.py`'s check_daily_quota starts
+    # rejecting/skipping new ones (T10, design decision 26) — the fallback when a client's own
+    # `daily_run_limit` column is NULL. A hard cap, unlike the monthly budget below, which only
+    # warns: an unbounded schedule must not be able to spend money forever unnoticed.
+    scheduler_default_daily_run_limit: int = 50
+    # Waiting ('queued') run_queue rows a single client may have at once (T10 point 2) — protects
+    # against a runaway set-level schedule (T5b) filling the queue faster than the worker can
+    # drain it. Deliberately a single config value, not a per-client column like daily_run_limit:
+    # the schema TASKS_SCHEDULER.md documents for this branch has no such column, and one global
+    # ceiling is enough to catch "the queue is growing unbounded" regardless of which client caused
+    # it.
+    scheduler_max_queue_depth_per_client: int = 500
+    # Reserved for a future worker that processes several queue items in parallel per provider —
+    # today's worker is strictly sequential (one item per loop iteration, no threads/asyncio), so
+    # this is not read anywhere yet. Left at 1 (matching that real behavior) rather than removed,
+    # so the setting exists and is documented before anything depends on it (T10 point 3: the
+    # realistic run volume for this app doesn't need concurrency yet — see docs/TASKS_SCHEDULER.md
+    # T10 for the capacity math; horizontal scaling via `worker_name` above is the intended growth
+    # path, not in-process concurrency).
+    scheduler_provider_concurrency: int = 1
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

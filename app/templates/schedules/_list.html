@@ -1,0 +1,96 @@
+{% from "partials/macros.html" import local_time, delete_button, toggle_button, pill_badge, icon_calendar, icon_edit, icon_pause, icon_play, icon_trash, schedule_target_cell %}
+<div class="flex items-center justify-between flex-wrap gap-3 mb-3">
+  <h2 class="text-lg font-semibold flex items-center gap-2 text-stone-800">{{ icon_calendar('w-5 h-5 text-stone-400') }}{{ t('schedules.list_title') }}</h2>
+  {% if can_schedule(current_user) and new_schedule_url %}
+  <a href="{{ new_schedule_url }}" class="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium bg-stone-800 text-white hover:bg-stone-700 transition">{{ t('schedules.new_button') }}</a>
+  {% endif %}
+</div>
+{% if schedules %}
+<div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg mb-8">
+  <table class="w-full text-sm text-left">
+    <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+      <tr>
+        {% if show_prompt_column %}<th class="py-3 px-4 font-medium">{{ t('schedules.prompt_column') }}</th>{% endif %}
+        <th class="py-3 px-4 font-medium">{{ t('schedules.frequency_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('schedules.next_run_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('schedules.end_label') }}</th>
+        <th class="py-3 px-4 font-medium">{{ t('common.status') }}</th>
+        {% if can_schedule(current_user) %}<th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for schedule in schedules %}
+      <tr class="border-t border-stone-100 hover:bg-stone-50">
+        {% if show_prompt_column %}
+        <td class="py-3 px-4">
+          {% set target_label, target_url, target_detail = schedule_targets.get(schedule.id, ('', '#', '')) %}
+          {% set subtitle = t('schedules.target_subtitle_set').format(count=target_detail) if schedule.target_type == 'prompt_set' else t('schedules.target_subtitle_prompt').format(set_name=target_detail) %}
+          {{ schedule_target_cell(schedule, target_label, target_url, subtitle) }}
+        </td>
+        {% endif %}
+        <td class="py-3 px-4 text-stone-600">{{ schedule_summaries[schedule.id] }}</td>
+        <td class="py-3 px-4 text-stone-500">
+          {% if schedule.next_run_at %}{{ local_time(schedule.next_run_at, t('common.utc_suffix'), seconds=False) }}{% else %}&mdash;{% endif %}
+        </td>
+        <td class="py-3 px-4 text-stone-500">
+          {% if schedule.ends_on %}{{ schedule.ends_on.isoformat() }}{% else %}{{ t('schedules.end_occurrences_summary').format(count=schedule.max_occurrences - schedule.occurrences_count) }}{% endif %}
+        </td>
+        <td class="py-3 px-4">
+          {% if schedule.inactive_reason == 'completed' %}
+          {{ pill_badge(False, '', t('schedules.status_completed')) }}
+          {% else %}
+          {{ pill_badge(schedule.is_active, t('schedules.status_active'), t('schedules.status_paused')) }}
+          {% endif %}
+        </td>
+        {% if can_schedule(current_user) %}
+        <td class="py-3 px-4">
+          <div class="flex items-center justify-end gap-4">
+            <a href="/schedules/{{ schedule.id }}/edit" class="inline-flex items-center gap-1 text-stone-600 hover:underline">{{ icon_edit() }}{{ t('common.edit') }}</a>
+            {% if schedule.inactive_reason != 'completed' %}
+            {{ toggle_button('/schedules/' ~ schedule.id ~ '/toggle', schedule.is_active, icon_pause() ~ t('schedules.pause_button'), icon_play() ~ t('schedules.resume_button')) }}
+            {% endif %}
+            {{ delete_button('/schedules/' ~ schedule.id ~ '/delete', t('schedules.delete_confirm'), icon_trash() ~ t('schedules.delete_button')) }}
+          </div>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="md:hidden space-y-3 mb-8">
+  {% for schedule in schedules %}
+  <div class="border border-stone-200 rounded-lg p-4 bg-white">
+    <div class="flex items-center justify-between">
+      <span class="font-medium">{{ schedule_summaries[schedule.id] }}</span>
+      {% if schedule.inactive_reason == 'completed' %}
+      {{ pill_badge(False, '', t('schedules.status_completed')) }}
+      {% else %}
+      {{ pill_badge(schedule.is_active, t('schedules.status_active'), t('schedules.status_paused')) }}
+      {% endif %}
+    </div>
+    {% if show_prompt_column %}
+    {% set target_label, target_url, target_detail = schedule_targets.get(schedule.id, ('', '#', '')) %}
+    {% set subtitle = t('schedules.target_subtitle_set').format(count=target_detail) if schedule.target_type == 'prompt_set' else t('schedules.target_subtitle_prompt').format(set_name=target_detail) %}
+    <div class="mt-1">
+      {{ schedule_target_cell(schedule, target_label, target_url, subtitle) }}
+    </div>
+    {% endif %}
+    <div class="text-xs text-stone-400 mt-2">
+      {% if schedule.next_run_at %}{{ t('schedules.next_run_label') }}: {{ local_time(schedule.next_run_at, t('common.utc_suffix'), seconds=False) }}{% endif %}
+    </div>
+    {% if can_schedule(current_user) %}
+    <div class="flex items-center gap-4 mt-3 text-sm">
+      <a href="/schedules/{{ schedule.id }}/edit" class="inline-flex items-center gap-1 text-stone-600 hover:underline">{{ icon_edit() }}{{ t('common.edit') }}</a>
+      {% if schedule.inactive_reason != 'completed' %}
+      {{ toggle_button('/schedules/' ~ schedule.id ~ '/toggle', schedule.is_active, icon_pause() ~ t('schedules.pause_button'), icon_play() ~ t('schedules.resume_button')) }}
+      {% endif %}
+      {{ delete_button('/schedules/' ~ schedule.id ~ '/delete', t('schedules.delete_confirm'), icon_trash() ~ t('schedules.delete_button')) }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-stone-500 mb-8">{{ t('schedules.list_empty') }}</p>
+{% endif %}
