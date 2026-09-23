@@ -185,9 +185,23 @@ agent má rozhodnout sám.
      data" správně), ale stojí za poznámku v budoucím `perplexity.py`
      docstringu, ať se to nikdo nesnaží "opravit".
 
+     **Korekce (2026-09-23), po `docs/TASKS_NEW_PROVIDERS.md` NP-T1:**
+     zjištění výš platilo pro **Sonar Chat Completions**, ne pro
+     Perplexity jako celek. Sonar Chat Completions končí 27. 9. 2026 a
+     Perplexity adapter (`app/adapters/perplexity.py`) byl nakonec
+     postaven proti nástupci, **Agent API** — a ten se chová jinak:
+     `output[]` obsahuje položku `type: "search_results"` s vlastním
+     polem `queries` (list textů, ne jen počet), analogicky k Anthropic/
+     OpenAI vzoru výš. `search_queries` u Perplexity tedy **není trvale
+     prázdné** — ověřeno reálným voláním, ne jen dokumentací. Řádek
+     „permanentní výjimka" v závěru níž se týkal Sonaru; pro Agent API
+     neplatí. Detail: `docs/TASKS_NEW_PROVIDERS.md` design decision 5 a
+     sekce „Ověřené tvary odpovědí (NP-T1)" → Perplexity.
+
    Závěr: návrh tabulky (design decision 1) pokrývá i budoucí OpenAI
-   adapter beze změny. Perplexity je permanentní výjimka na úrovni
-   adapteru, ne na úrovni schématu.
+   adapter beze změny. Perplexity (Sonar) byla permanentní výjimka na
+   úrovni adapteru, ne na úrovni schématu — viz korekce výš pro Agent
+   API, na které byl skutečný adapter nakonec postaven.
 
 ---
 

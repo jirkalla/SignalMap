@@ -11,6 +11,21 @@ not a public API.
 
 ## [Unreleased]
 
+### Added
+
+- Perplexity provider (Agent API), with citations and search queries from
+  its `search_results` output item.
+- DeepSeek provider for ungrounded baseline answers — never returns
+  citations, by design (no web search surface exists in its API).
+- xAI Grok provider, with `web_search` citations and real geographic
+  targeting.
+
+### Changed
+
+- The AI models admin list (`/ai-models`) is now grouped by provider
+  instead of one flat table, for readability now that six providers are
+  seeded.
+
 ## [1.0.0] - 2026-09-22
 
 The first tagged release. SignalMap has been live on Hetzner and in use

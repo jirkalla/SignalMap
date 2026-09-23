@@ -1,6 +1,6 @@
 # SignalMap — Tasks: Tři noví AI provideři (Perplexity, DeepSeek, Grok)
 
-## Status: ✅ NP-T1 done (all three providers probed and verified) — NP-T2 next
+## Status: ⏳ Tasks complete (NP-T1 through NP-T5), user-confirmed 2026-09-23 — not yet merged
 
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-new-providers
@@ -174,10 +174,10 @@ provider kód objeví v kódu. Vše ostatní (dropdowny, `/providers`,
 | ID | Name | Status |
 |----|------|--------|
 | NP-T1 | Prerekvizity: klíče, config, compose + ověření tvaru odpovědí | ✅ config/compose hotové; všichni tři provideři ověřeni reálným voláním |
-| NP-T2 | Perplexity (Agent API): adapter, migrace, ceny, testy | ⏳ |
-| NP-T3 (podmíněný) | DeepSeek: adapter + zacházení s runem bez citací | ⏳ |
-| NP-T4 | Grok (xAI): adapter, migrace, ceny, testy | ⏳ |
-| NP-T5 | Docs: REQUIREMENTS amendment, TASKS.md, oprava SQ design decision 9 | ⏳ |
+| NP-T2 | Perplexity (Agent API): adapter, migrace, ceny, testy | ✅ ověřeno reálným runem, uživatel potvrdil |
+| NP-T3 (podmíněný) | DeepSeek: adapter + zacházení s runem bez citací | ✅ potvrzeno uživatelem před startem i po dokončení |
+| NP-T4 | Grok (xAI): adapter, migrace, ceny, testy | ✅ ověřeno reálným runem, uživatel potvrdil |
+| NP-T5 | Docs: REQUIREMENTS amendment, TASKS.md, oprava SQ design decision 9 | ✅ |
 
 Pořadí podle design decision 2. NP-T2, NP-T3 i NP-T4 potřebují klíče a
 ověřené tvary z NP-T1 — to je jediná tvrdá závislost.
