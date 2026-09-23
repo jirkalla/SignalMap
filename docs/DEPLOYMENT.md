@@ -24,6 +24,7 @@ níže**, nikdy rozepsaný na samostatné řádky (viz varování u kroku 3.3).
 ## Rychlý přehled
 
 ```
+0. VERZE              bump podle MAJOR/MINOR/PATCH, tag, na masteru
 1. PŘÍPRAVA          den předem, bez dopadu na provoz
 2. TĚSNĚ PŘED         odstávka, záloha, výchozí čísla
 3. NASAZENÍ           kód, skripty, migrace, restart
@@ -34,6 +35,36 @@ níže**, nikdy rozepsaný na samostatné řádky (viz varování u kroku 3.3).
 
 Odhad: příprava 15 minut den předem, samotné okno 15–20 minut, z toho
 výpadek 2–5 minut.
+
+---
+
+## 0. Rozhodnout verzi
+
+Release = merge do `master` + jeden deploy. Před bumpem rozhodni podle
+tabulky, ne podle pocitu — SignalMap nemá veřejné API, takže „breaking"
+se definuje proti tomu, kdo nasazuje, a proti uloženým datům, ne proti
+klasickému SemVer významu:
+
+| Díl | Kdy | Konkrétně |
+|---|---|---|
+| **MAJOR** | nasazení není „jen deploy", nebo se mění význam uložených dat | nová **povinná** env proměnná bez defaultu (případ `SECRET_KEY`), destruktivní/nevratná migrace (ta, pro kterou má tenhle dokument §6.2 vlastní rollback větev), multi-tenancy, zrušení nebo přejmenování existující URL |
+| **MINOR** | nová funkce, nasazení je obyčejný deploy | nový provider, nový pohled na dashboardu, export, scheduler, bulk import — typicky commity `feat(...)` |
+| **PATCH** | nic nového není vidět, jen se něco spravilo | `fix`, `refactor`, `chore`, `test`, úpravy textů, výkon |
+
+Heuristika, v tomhle pořadí:
+1. Musí ten, kdo nasazuje, udělat něco navíc než deploy? → **MAJOR**
+2. Uvidí uživatel v appce něco nového? → **MINOR**
+3. Jinak → **PATCH**
+
+Za samotné `docs(...)` commity se verze nezvedá — dokumentace není release.
+
+Postup (na `master`, po mergnutí PR, dělá ho člověk — ne AI agent, viz
+`AI_INSTRUCTIONS.md` §4):
+1. `app/__init__.py::__version__` na nové číslo.
+2. V `CHANGELOG.md` přesunout obsah `## [Unreleased]` pod nový nadpis
+   `## [vX.Y.Z] - YYYY-MM-DD`, `[Unreleased]` nechat prázdné nahoře.
+3. `git tag -a vX.Y.Z -m "..."` a `git push origin vX.Y.Z`.
+4. Pokračuj kapitolou 1 tohoto runbooku.
 
 ---
 
@@ -165,7 +196,7 @@ dopravuje jako archiv z tvého počítače.
 ### 3.1 Vyrobit archiv z commitu
 
 ```bash
-STAMP=$(date +%Y%m%d-%H%M%S) && SHA=$(git rev-parse HEAD) && ARCHIVE="/tmp/signalmap-$STAMP.tar.gz" && git archive --format=tar.gz -o "$ARCHIVE" HEAD && ls -lh "$ARCHIVE" && echo "commit: $SHA"
+STAMP=$(date +%Y%m%d-%H%M%S) && SHA=$(git rev-parse HEAD) && BUILD_TIME=$(date -u +%FT%TZ) && ARCHIVE="/tmp/signalmap-$STAMP.tar.gz" && git archive --format=tar.gz -o "$ARCHIVE" HEAD && ls -lh "$ARCHIVE" && echo "commit: $SHA"
 ```
 `git archive` exportuje z gitu, ne z pracovního adresáře — necommitnuté
 změny, netrackované soubory a CRLF konce řádků se na server nedostanou.
@@ -184,7 +215,7 @@ fakt dorazil (`ls -lh /tmp/signalmap-$STAMP.tar.gz`) — než půjdeš dál.
 ### 3.3 Rozbalit, promítnout, přestavět
 
 ```bash
-ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.tar.gz -C /tmp/signalmap-$STAMP && rsync -a --delete --exclude='.env' --exclude='*.dump' --exclude='DEPLOYED_COMMIT' /tmp/signalmap-$STAMP/ /opt/signalmap/ && cd /opt/signalmap && ./tools/server/install.sh && docker compose up -d --build --wait"
+ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.tar.gz -C /tmp/signalmap-$STAMP && rsync -a --delete --exclude='.env' --exclude='*.dump' --exclude='DEPLOYED_COMMIT' /tmp/signalmap-$STAMP/ /opt/signalmap/ && cd /opt/signalmap && ./tools/server/install.sh && GIT_SHA=$SHA BUILD_TIME=$BUILD_TIME docker compose up -d --build --wait"
 ```
 
 | | |
@@ -192,6 +223,7 @@ ssh signalmap "mkdir -p /tmp/signalmap-$STAMP && tar -xzf /tmp/signalmap-$STAMP.
 | `rsync --delete` | smaže na serveru soubory, které v nové verzi nejsou |
 | `--exclude='.env'` | produkční tajemství zůstávají nedotčená |
 | `./tools/server/install.sh` | bez něj se hostitelské skripty rozejdou s repem |
+| `GIT_SHA=$SHA BUILD_TIME=$BUILD_TIME` | zapeče se do image jako `ENV` (dockerfile) — bez toho appka po nasazení neví, jaký commit/build je |
 | `docker compose up -d --build --wait` | staví, zatímco starý kontejner obsluhuje — appku předem nezastavuj |
 | migrace | běží automaticky ze `CMD`; když selžou, appka nenaběhne |
 
@@ -215,6 +247,9 @@ Bez tohohle kroku se nedá zjistit, co je nasazené — archiv žádnou stopu po
 commitu nenese.
 
 **Čekaný výstup:** `$SHA` vypsaný zpátky z `DEPLOYED_COMMIT`.
+
+`DEPLOYED_COMMIT` zůstává zdrojem pravdy pro rollback (kapitola 6) —
+nasazenou verzi ale nově vidí i přihlášený uživatel přímo v patičce appky.
 
 ---
 
@@ -245,6 +280,10 @@ Jakýkoliv nečekaný pokles = zastavit a jít na rollback (kapitola 6).
 ssh signalmap 'cd /opt/signalmap && docker compose logs --tail=100 app | grep -iE "error|traceback|exception" || echo "zadne chyby"'
 ```
 **Čekaný výstup:** `zadne chyby`.
+
+Patička appky (po dočasném přihlášení admin účtem) ukazuje očekávanou
+`vX.Y.Z · <SHA>` shodnou s `$SHA` z 3.1 — nejrychlejší důkaz, že se
+nasadil ten správný build.
 
 **Odstávková stránka** — otestuj přímo na serveru, dokud appka ještě není
 venku:
