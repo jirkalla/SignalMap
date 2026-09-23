@@ -11,7 +11,7 @@
 
 {% if rows %}
 <div class="space-y-6 max-w-2xl">
-  {% for provider, template, is_saved in rows %}
+  {% for provider, template, is_saved, supports_geo_targeting in rows %}
   <form method="post" action="/settings/{{ provider.id }}" class="bg-white border border-stone-200 rounded-lg p-4">
     <div class="flex items-center gap-2 mb-3">
       <h2 class="font-medium text-stone-900">{{ provider.name }}</h2>
@@ -23,6 +23,7 @@
     <textarea id="template-{{ provider.id }}" name="template" rows="4"
               class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500">{{ template }}</textarea>
     <p class="text-xs text-stone-400 mt-2">{{ t('settings.placeholders_hint') }}</p>
+    <p class="text-xs text-stone-400 mt-1">{{ t('settings.geo_targeting_hint') if supports_geo_targeting else t('settings.no_geo_targeting_hint') }}</p>
     <p class="text-xs text-stone-400 mb-3">{{ t('settings.empty_hint') }}</p>
     {{ button(t('common.save')) }}
   </form>

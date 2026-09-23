@@ -8,7 +8,7 @@ would be pointless. Do not "simplify" this back to a `chat.completions.create()`
 Sonar; the Agent API is the one with a future.
 
 Verified against a real `responses.create()` call, 2026-09-23 (docs/TASKS_NEW_PROVIDERS.md NP-T1,
-"Ověřené tvary odpovědí" → Perplexity), not against Perplexity's own documentation — the docs
+"Verified response shapes" section → Perplexity), not against Perplexity's own documentation — the docs
 turned out to be wrong on the request path:
 
 - **`base_url` must be `"https://api.perplexity.ai/v1"`**, not `"https://api.perplexity.ai"`. The
@@ -93,6 +93,10 @@ def _map_search_queries(payload: dict) -> list[str]:
 
 class PerplexityAdapter:
     """Adapter for the Perplexity Agent API (openai SDK, non-default `base_url`)."""
+
+    # See ProviderAdapter.supports_geo_targeting (app/adapters/base.py) — `market_country` is
+    # accepted and ignored here (module docstring: no verified filters shape to send it through).
+    supports_geo_targeting = False
 
     def __init__(self) -> None:
         self._client = openai.OpenAI(base_url=_BASE_URL, api_key=get_settings().perplexity_api_key)

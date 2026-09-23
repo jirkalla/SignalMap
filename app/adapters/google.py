@@ -186,6 +186,10 @@ def _map_search_queries(payload: dict) -> list[str]:
 class GoogleGeminiAdapter:
     """Adapter for the Google Gemini API (google-genai SDK)."""
 
+    # See ProviderAdapter.supports_geo_targeting (app/adapters/base.py) — Google Search grounding
+    # has no location parameter at all, so `market_country` is accepted and ignored (module docstring).
+    supports_geo_targeting = False
+
     def __init__(self) -> None:
         self._client = genai.Client(api_key=get_settings().google_api_key)
 

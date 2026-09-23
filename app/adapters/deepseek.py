@@ -21,7 +21,7 @@ instead of the generic "no citations" text whenever `run.model.supports_web_sear
 be cited, regardless of how favorably the client was actually discussed).
 
 Verified against a real `chat.completions.create()` call, 2026-09-23 (docs/TASKS_NEW_PROVIDERS.md
-NP-T1, "Ověřené tvary odpovědí" → DeepSeek): confirmed real model ids `deepseek-flash` and
+NP-T1, "Verified response shapes" section → DeepSeek): confirmed real model ids `deepseek-flash` and
 `deepseek-v4-pro` via `client.models.list()` (documentation's `deepseek-v4-flash` does not exist
 there — deprecated). `usage.reasoning_content` on the message and
 `usage.completion_tokens_details.reasoning_tokens` show DeepSeek reasons internally even without
@@ -52,6 +52,10 @@ def _map_search_queries(payload: dict) -> list[str]:
 
 class DeepSeekAdapter:
     """Adapter for DeepSeek's OpenAI-compatible Chat Completions API."""
+
+    # See ProviderAdapter.supports_geo_targeting (app/adapters/base.py) — there's no search at
+    # all here, so no location parameter of any kind exists to target with.
+    supports_geo_targeting = False
 
     def __init__(self) -> None:
         self._client = openai.OpenAI(base_url="https://api.deepseek.com", api_key=get_settings().deepseek_api_key)

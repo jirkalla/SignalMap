@@ -6,7 +6,7 @@ Sixth provider — same request shape as `app/adapters/openai.py` and `app/adapt
 client — same discipline as every other Responses-API-backed adapter here.
 
 Verified against a real `responses.create()` call, 2026-09-23 (docs/TASKS_NEW_PROVIDERS.md NP-T1,
-"Ověřené tvary odpovědí" → xAI Grok), not against xAI's documentation — the documentation-sourced
+"Verified response shapes" section → xAI Grok), not against xAI's documentation — the documentation-sourced
 assumption in this project's own planning doc (design decisions 1/4) turned out to be wrong on
 where citations live:
 
@@ -93,6 +93,10 @@ def _map_search_queries(payload: dict) -> list[str]:
 
 class GrokAdapter:
     """Adapter for the xAI Grok Responses API (openai SDK, non-default `base_url`)."""
+
+    # See ProviderAdapter.supports_geo_targeting (app/adapters/base.py) — confirmed working via a
+    # raw HTTP probe (module docstring): xAI echoes user_location back in the response's tools field.
+    supports_geo_targeting = True
 
     def __init__(self) -> None:
         self._client = openai.OpenAI(base_url="https://api.x.ai/v1", api_key=get_settings().xai_api_key)
