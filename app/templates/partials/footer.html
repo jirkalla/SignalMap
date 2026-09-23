@@ -1,9 +1,18 @@
-{# Informational only — no links, no (c), no year (docs/TASKS_VERSIONING.md decision 9). #}
+{# Informational only — no links, no (c), no year (docs/TASKS_VERSIONING.md decision 9).
+   SHA, build time and environment are for logged-in users only, including the title tooltip
+   (decision 10): an exact build on the public login page lets it be matched to a known vuln. #}
 <footer class="border-t border-stone-200 bg-white">
   <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-stone-500">
-    <span class="flex items-center gap-2">
+    <span class="flex flex-wrap items-center gap-2">
       <span>{{ t('app.title') }}</span>
+      {% if current_user and git_sha %}
+      <span class="font-mono text-stone-400" title="{{ git_sha }}{% if build_time %} · {{ build_time }}{% endif %}">v{{ app_version }} · {{ git_sha[:7] }}</span>
+      {% else %}
       <span class="font-mono text-stone-400">v{{ app_version }}</span>
+      {% endif %}
+      {% if current_user and app_environment != 'production' %}
+      <span class="font-mono rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">{{ app_environment }}</span>
+      {% endif %}
     </span>
     <span>{{ t('footer.built_by') }}</span>
   </div>

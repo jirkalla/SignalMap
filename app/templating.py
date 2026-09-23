@@ -14,6 +14,7 @@ from markupsafe import Markup
 
 from app import __version__
 from app.auth import current_user_from_cookie
+from app.config import get_settings
 from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
 
@@ -24,6 +25,11 @@ templates = Jinja2Templates(directory="app/templates")
 # A process-wide constant, so a global rather than a render() context key — render() only adds what
 # differs per request (docs/TASKS_VERSIONING.md VER-T1).
 templates.env.globals["app_version"] = __version__
+# Same reasoning — fixed for the life of the process. The footer shows these to logged-in users only
+# (docs/TASKS_VERSIONING.md decision 10); git_sha/build_time are empty on a build without build args.
+templates.env.globals["git_sha"] = get_settings().git_sha
+templates.env.globals["build_time"] = get_settings().build_time
+templates.env.globals["app_environment"] = get_settings().environment
 
 
 def can_edit(user: "User | None") -> bool:
