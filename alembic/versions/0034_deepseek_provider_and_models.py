@@ -60,39 +60,45 @@ _PRICING_SOURCE_NOTE = (
 def upgrade() -> None:
     op.execute("INSERT INTO providers (code, name) VALUES ('deepseek', 'DeepSeek')")
 
+    # bindparams, not an f-string — _PRICING_SOURCE_NOTE is plain text today, but interpolating
+    # it directly into a single-quoted SQL literal breaks the moment it ever contains an
+    # apostrophe (found in migration 0035, which fixed this same pattern for itself; backported
+    # here so 0034 doesn't carry the identical latent bug).
     op.execute(
-        f"""
-        INSERT INTO ai_models (
-            provider_id, model_name, display_name, capability_tier,
-            context_window_tokens, max_output_tokens,
-            supports_web_search, is_free, is_active, notes
-        )
-        VALUES
-            (
-                (SELECT id FROM providers WHERE code = 'deepseek'),
-                'deepseek-flash',
-                'DeepSeek Flash',
-                'economy',
-                1000000,
-                384000,
-                FALSE,
-                FALSE,
-                TRUE,
-                '{_PRICING_SOURCE_NOTE}'
-            ),
-            (
-                (SELECT id FROM providers WHERE code = 'deepseek'),
-                'deepseek-v4-pro',
-                'DeepSeek V4 Pro',
-                'standard',
-                1000000,
-                NULL,
-                FALSE,
-                FALSE,
-                TRUE,
-                '{_PRICING_SOURCE_NOTE}'
+        sa.text(
+            """
+            INSERT INTO ai_models (
+                provider_id, model_name, display_name, capability_tier,
+                context_window_tokens, max_output_tokens,
+                supports_web_search, is_free, is_active, notes
             )
-        """
+            VALUES
+                (
+                    (SELECT id FROM providers WHERE code = 'deepseek'),
+                    'deepseek-flash',
+                    'DeepSeek Flash',
+                    'economy',
+                    1000000,
+                    384000,
+                    FALSE,
+                    FALSE,
+                    TRUE,
+                    :notes
+                ),
+                (
+                    (SELECT id FROM providers WHERE code = 'deepseek'),
+                    'deepseek-v4-pro',
+                    'DeepSeek V4 Pro',
+                    'standard',
+                    1000000,
+                    NULL,
+                    FALSE,
+                    FALSE,
+                    TRUE,
+                    :notes
+                )
+            """
+        ).bindparams(notes=_PRICING_SOURCE_NOTE)
     )
 
     for model_name, input_price, output_price, cache_read_price in (

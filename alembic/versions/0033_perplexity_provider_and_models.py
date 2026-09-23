@@ -1,8 +1,8 @@
 """Add Perplexity provider + model row (fourth AI provider, docs/TASKS_NEW_PROVIDERS.md NP-T2).
 
 `model_name` is the full `{vendor}/{model}` string the Agent API's `model` field expects
-(`perplexity/sonar`), not a bare model name — see docs/TASKS_NEW_PROVIDERS.md's "Ověřené tvary
-odpovědí (NP-T1)" section for why: the Agent API is a router across several vendors' models
+(`perplexity/sonar`), not a bare model name — see docs/TASKS_NEW_PROVIDERS.md's "Verified response
+shapes (NP-T1)" section for why: the Agent API is a router across several vendors' models
 (`client.models.list()` also returned e.g. `xai/grok-4.7`, `anthropic/claude-opus-5-5`), and only
 one entry in that catalog is actually Perplexity's own grounded answer model — the rest are
 third-party open models Perplexity happens to host. Only that one (`perplexity/sonar`) is seeded
@@ -64,27 +64,33 @@ _PRICING_SOURCE_NOTE = "Pricing verified against docs.perplexity.ai/getting-star
 def upgrade() -> None:
     op.execute("INSERT INTO providers (code, name) VALUES ('perplexity', 'Perplexity')")
 
+    # bindparams, not an f-string — _PRICING_SOURCE_NOTE is plain text today, but interpolating
+    # it directly into a single-quoted SQL literal breaks the moment it ever contains an
+    # apostrophe (found in migration 0035, which fixed this same pattern for itself; backported
+    # here so 0033 doesn't carry the identical latent bug).
     op.execute(
-        f"""
-        INSERT INTO ai_models (
-            provider_id, model_name, display_name, capability_tier,
-            context_window_tokens, max_output_tokens,
-            supports_web_search, is_free, is_active, notes
-        )
-        VALUES
-            (
-                (SELECT id FROM providers WHERE code = 'perplexity'),
-                'perplexity/sonar',
-                'Perplexity Sonar',
-                'standard',
-                128000,
-                NULL,
-                TRUE,
-                FALSE,
-                TRUE,
-                '{_PRICING_SOURCE_NOTE}'
+        sa.text(
+            """
+            INSERT INTO ai_models (
+                provider_id, model_name, display_name, capability_tier,
+                context_window_tokens, max_output_tokens,
+                supports_web_search, is_free, is_active, notes
             )
-        """
+            VALUES
+                (
+                    (SELECT id FROM providers WHERE code = 'perplexity'),
+                    'perplexity/sonar',
+                    'Perplexity Sonar',
+                    'standard',
+                    128000,
+                    NULL,
+                    TRUE,
+                    FALSE,
+                    TRUE,
+                    :notes
+                )
+            """
+        ).bindparams(notes=_PRICING_SOURCE_NOTE)
     )
 
     op.execute(

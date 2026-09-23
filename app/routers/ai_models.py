@@ -560,7 +560,7 @@ def delete_ai_model(request: Request, model_id: int, db: Session = Depends(get_d
         return render(
             request,
             "ai_models/list.html",
-            {"rows": _model_rows(db), "error": t("errors.ai_model_in_use").format(count=run_count)},
+            {"grouped_rows": _grouped_model_rows(_model_rows(db)), "error": t("errors.ai_model_in_use").format(count=run_count)},
             status_code=409,
         )
     db.delete(model)

@@ -121,8 +121,8 @@ ANTHROPIC_SHAPE = TokenUsageShape(
     input_includes_cache_write=False,
 )
 
-# Verified against a real Perplexity Agent API call (docs/TASKS_NEW_PROVIDERS.md NP-T1, "Ověřené
-# tvary odpovědí" → Perplexity), not documentation. `usage.input_tokens_details` carries THREE
+# Verified against a real Perplexity Agent API call (docs/TASKS_NEW_PROVIDERS.md NP-T1,
+# "Verified response shapes" section → Perplexity), not documentation. `usage.input_tokens_details` carries THREE
 # nested fields: `cache_creation_input_tokens` (the write tier), `cache_read_input_tokens` and
 # `cached_tokens` (both 0 in the test, apparently the same "cache hit" count under two names — same
 # kind of duplication DeepSeek's own probe found between `prompt_cache_hit_tokens` and
@@ -152,7 +152,7 @@ PERPLEXITY_SHAPE = TokenUsageShape(
 )
 
 # Verified against a real DeepSeek chat.completions.create() call (docs/TASKS_NEW_PROVIDERS.md
-# NP-T1, "Ověřené tvary odpovědí" → DeepSeek), not documentation. DeepSeek's Chat Completions
+# NP-T1, "Verified response shapes" section → DeepSeek), not documentation. DeepSeek's Chat Completions
 # usage object uses `prompt_tokens`/`completion_tokens` (the OpenAI Chat Completions convention),
 # NOT `input_tokens`/`output_tokens` (the Responses API convention `app/adapters/openai.py` and
 # `app/adapters/perplexity.py` use) — no key-name collision with any other shape here, so no
