@@ -18,18 +18,59 @@ from app.config import get_settings
 from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
 
-__all__ = ["can_edit", "can_flag_test_client", "can_schedule", "get_t", "render", "templates"]
+__all__ = [
+    "can_edit",
+    "can_flag_test_client",
+    "can_schedule",
+    "can_view_build_info",
+    "get_t",
+    "render",
+    "templates",
+]
 
 templates = Jinja2Templates(directory="app/templates")
 
 # A process-wide constant, so a global rather than a render() context key — render() only adds what
-# differs per request (docs/TASKS_VERSIONING.md VER-T1).
+# differs per request (docs/TASKS_VERSIONING.md VER-T1). Unlike build_info() below, this isn't read
+# from Settings, so there's no cache to keep in sync with.
 templates.env.globals["app_version"] = __version__
-# Same reasoning — fixed for the life of the process. The footer shows these to logged-in users only
-# (docs/TASKS_VERSIONING.md decision 10); git_sha/build_time are empty on a build without build args.
-templates.env.globals["git_sha"] = get_settings().git_sha
-templates.env.globals["build_time"] = get_settings().build_time
-templates.env.globals["app_environment"] = get_settings().environment
+
+
+def build_info() -> dict[str, str]:
+    """git_sha/build_time/environment, read from `get_settings()` on every call rather than
+
+    snapshotted into `env.globals` at import time. `get_settings()` is itself `@lru_cache`d
+    (app/config.py), so this is already a process-wide constant the same way `app_version` above
+    is — copying its fields into a second store would just be a second place for them to be read
+    from, with no guarantee it stays in sync with `Settings` if the cache is ever cleared (found
+    in code review, 2026-09-23). Gating on `can_view_build_info()` happens in the template, not
+    here — this function always returns the real values; the caller decides whether to show them.
+    """
+    settings = get_settings()
+    return {
+        "git_sha": settings.git_sha,
+        "build_time": settings.build_time,
+        "environment": settings.environment,
+    }
+
+
+templates.env.globals["build_info"] = build_info
+
+
+def can_view_build_info(user: "User | None") -> bool:
+    """True for any logged-in user — whether the footer may show the exact git SHA, build time,
+
+    and non-production environment badge next to the version number. Decision 10
+    (docs/TASKS_VERSIONING.md): an anonymous visitor must never see an exact build identifier or
+    environment — it lets a known vulnerability be matched to a live deployment, the same reason
+    `app/main.py` disables unauthenticated `/docs` and `/openapi.json`. Kept as its own named
+    function rather than an inline `current_user and ...` repeated in the template (found in code
+    review, 2026-09-23), matching every other "what can this viewer see/do" check in this file.
+    """
+    return user is not None
+
+
+templates.env.globals["can_view_build_info"] = can_view_build_info
 
 
 def can_edit(user: "User | None") -> bool:

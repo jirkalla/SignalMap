@@ -22,7 +22,11 @@ _VERSION_HEADING_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})
 
 def _released_versions() -> list[tuple[str, str]]:
     """Every `[version] - date` heading in CHANGELOG.md, in file order (newest first)."""
-    text = CHANGELOG_PATH.read_text(encoding="utf-8")
+    # `$` in MULTILINE mode matches only right before `\n`, not `\r\n` — normalize first so a
+    # CRLF working-tree copy (Windows without .gitattributes' `eol=lf`, or any tool that
+    # rewrites line endings) can't make this silently find zero headings instead of comparing
+    # versions (found in code review, 2026-09-23).
+    text = CHANGELOG_PATH.read_text(encoding="utf-8").replace("\r\n", "\n")
     return _VERSION_HEADING_RE.findall(text)
 
 

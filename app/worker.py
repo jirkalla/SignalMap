@@ -51,9 +51,6 @@ from app.services.run_execution import QuotaExceededError, build_request_payload
 
 logger = logging.getLogger(__name__)
 
-# Written to worker_heartbeats.version — the same app.__version__ the web app reports.
-APP_VERSION = __version__
-
 HEARTBEAT_FILE = Path("/tmp/worker-alive")
 _TICKER_INTERVAL = timedelta(minutes=1)
 _ITEM_POLL_INTERVAL_SECONDS = 5
@@ -253,10 +250,10 @@ def write_heartbeat(db: Session, *, worker_name: str, dry_run: bool, now: dateti
     """Upsert this worker's liveness row and touch the healthcheck file (design decision 19)."""
     stmt = (
         pg_insert(WorkerHeartbeat)
-        .values(worker_name=worker_name, last_seen_at=now, version=APP_VERSION, dry_run=dry_run)
+        .values(worker_name=worker_name, last_seen_at=now, version=__version__, dry_run=dry_run)
         .on_conflict_do_update(
             index_elements=["worker_name"],
-            set_={"last_seen_at": now, "version": APP_VERSION, "dry_run": dry_run},
+            set_={"last_seen_at": now, "version": __version__, "dry_run": dry_run},
         )
     )
     db.execute(stmt)
