@@ -232,18 +232,21 @@ def seed(db_session: Session) -> dict:
         provider_id=provider.id,
         model_name="gemini-test-model",
         capability_tier="standard",
+        supports_web_search=True,
         is_active=True,
     )
     anthropic_model = AIModel(
         provider_id=anthropic_provider.id,
         model_name="claude-test-model",
         capability_tier="economy",
+        supports_web_search=True,
         is_active=True,
     )
     openai_model = AIModel(
         provider_id=openai_provider.id,
         model_name="gpt-test-model",
         capability_tier="standard",
+        supports_web_search=True,
         is_active=True,
     )
     db_session.add_all([model, anthropic_model, openai_model])

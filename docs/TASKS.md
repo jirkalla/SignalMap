@@ -434,6 +434,37 @@ per-client scheduler settings.
 Thirty design decisions and fourteen code prompts (SCH-0 through SCH-11);
 full breakdown in `docs/TASKS_SCHEDULER.md` and `docs/PROMPTS_SCHEDULER.md`.
 
+## New providers — Perplexity, DeepSeek, xAI Grok
+
+Branch `feature/signalmap-new-providers` (not yet merged). Adds three more providers on top of
+the established pattern (new adapter + `providers`/`ai_models` rows, no code-level provider
+list) — motivated by a comparative benchmark against peec.ai for client Knauf, not one of the
+five roadmap phases.
+
+- **Perplexity (Agent API)** — built against the Agent API, not the retiring Sonar Chat
+  Completions surface. A real probe call (NP-T1) corrected two documentation-sourced
+  assumptions before any adapter code was written: the real endpoint is `POST
+  {base_url}/responses` with `base_url` including `/v1` (not the documented `/v1/agent`), and the
+  `model` field takes a `{vendor}/{model}` router string (`perplexity/sonar`), not a "preset".
+  Citations arrive as a dedicated `search_results` output item, not `url_citation` annotations.
+- **DeepSeek** — OpenAI-compatible Chat Completions, deliberately confirmed with the user before
+  building (design decision 3): DeepSeek has no web search/grounding surface at all, so its runs
+  never carry citations, permanently, by construction — not a temporary gap. Threaded through
+  generically via `AIModel.supports_web_search` (never a hardcoded provider check): a dedicated
+  DE/EN explanation on the run detail page, and exclusion from `own_domain_rate`'s denominator
+  (`app/services/dashboard.py`), which would otherwise be silently deflated by a provider that
+  can never be cited.
+- **xAI Grok** — a NP-T1 probe corrected this project's own planning doc: citations are not in a
+  flat `response.citations` array (that field doesn't exist) — Grok uses the same
+  `url_citation`-annotation shape as OpenAI, reusing `OPENAI_SHAPE` in `app/services/cost.py`
+  rather than a redundant new constant, once the real payload turned out to match it exactly.
+
+All three verified against real API calls before any adapter code was written (`docs/
+TASKS_NEW_PROVIDERS.md` NP-T1's "Ověřené tvary odpovědí"), not against provider documentation —
+which in Perplexity's and Grok's cases turned out to disagree with the real API in ways that
+would have shipped wrong code otherwise. Full task breakdown, all corrected design decisions,
+and the verified response shapes: `docs/TASKS_NEW_PROVIDERS.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

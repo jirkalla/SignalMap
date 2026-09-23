@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.adapters import ADAPTERS, has_adapter
 from app.auth import require_role
 from app.database import get_db
 from app.errors import AppError
@@ -66,7 +67,7 @@ def _validate_template(template: str) -> str | None:
     return None
 
 
-def _rows(db: Session) -> list[tuple[Provider, str, bool]]:
+def _rows(db: Session) -> list[tuple[Provider, str, bool, bool]]:
     """Every provider with the template text actually in effect for it right now, and
 
     whether that text is a saved row or just the shown-but-unsaved default.
@@ -82,10 +83,26 @@ def _rows(db: Session) -> list[tuple[Provider, str, bool]]:
     as "not yet saved" — otherwise an admin who submits the form untouched,
     believing they're just looking at an already-configured value, silently
     creates a real row pinned to today's default wording.
+
+    The fourth element (`supports_geo_targeting`) drives which of the two hint sentences
+    settings.html shows under a provider's template — read from the adapter registry
+    (`ADAPTERS[provider.code].supports_geo_targeting`, see app/adapters/base.py's
+    `ProviderAdapter`), the one place this fact lives, rather than a second hardcoded
+    provider-code list here. `False` for a provider with no adapter yet (no ADAPTERS entry to
+    read from) — the safe default, same "no adapter = no capability" convention
+    `has_adapter`/`_runnable_model_groups` already use elsewhere.
     """
     providers = db.scalars(select(Provider).order_by(Provider.name)).all()
     templates = {row.provider_id: row.template for row in db.scalars(select(SystemInstructionTemplate)).all()}
-    return [(p, templates.get(p.id, DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE), p.id in templates) for p in providers]
+    return [
+        (
+            p,
+            templates.get(p.id, DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE),
+            p.id in templates,
+            ADAPTERS[p.code].supports_geo_targeting if has_adapter(p.code) else False,
+        )
+        for p in providers
+    ]
 
 
 @router.get("")
@@ -117,8 +134,13 @@ def update_template(
     error = _validate_template(template)
     if error:
         rows = [
-            (p, template if p.id == provider_id else existing, True if p.id == provider_id else was_saved)
-            for p, existing, was_saved in _rows(db)
+            (
+                p,
+                template if p.id == provider_id else existing,
+                True if p.id == provider_id else was_saved,
+                supports_geo_targeting,
+            )
+            for p, existing, was_saved, supports_geo_targeting in _rows(db)
         ]
         return render(
             request, "settings.html", {"rows": rows, "error": f"{provider.name}: {error}"}, status_code=400

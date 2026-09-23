@@ -6,13 +6,19 @@ entry here — routers never import a specific adapter class directly.
 
 from app.adapters.anthropic import AnthropicAdapter
 from app.adapters.base import ProviderAdapter
+from app.adapters.deepseek import DeepSeekAdapter
 from app.adapters.google import GoogleGeminiAdapter
+from app.adapters.grok import GrokAdapter
 from app.adapters.openai import OpenAIAdapter
+from app.adapters.perplexity import PerplexityAdapter
 
 ADAPTERS: dict[str, type[ProviderAdapter]] = {
     "google_gemini": GoogleGeminiAdapter,
     "anthropic": AnthropicAdapter,
     "openai": OpenAIAdapter,
+    "perplexity": PerplexityAdapter,
+    "deepseek": DeepSeekAdapter,
+    "xai": GrokAdapter,
 }
 
 

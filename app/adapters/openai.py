@@ -99,6 +99,10 @@ def _map_search_queries(payload: dict) -> list[str]:
 class OpenAIAdapter:
     """Adapter for the OpenAI Responses API (openai SDK)."""
 
+    # See ProviderAdapter.supports_geo_targeting (app/adapters/base.py) — market_country reaches
+    # the API as a real user_location on the web_search tool, not just a text hint.
+    supports_geo_targeting = True
+
     def __init__(self) -> None:
         self._client = openai.OpenAI(api_key=get_settings().openai_api_key)
 

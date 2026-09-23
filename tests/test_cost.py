@@ -192,3 +192,94 @@ def test_estimate_run_cost_prices_normally_when_unpriced_cache_component_is_zero
     cost = estimate_run_cost(token_usage, model, {"input": Decimal("2.0"), "output": Decimal("10.0")})
 
     assert cost == round(1000 / 1e6 * 2.0 + 200 / 1e6 * 10.0, 6)
+
+
+def test_estimate_run_cost_does_not_double_count_perplexity_cache_creation_tokens():
+    # NP-T2: Perplexity's input_tokens_details ALSO exists (like OpenAI's), but with different
+    # nested field names (cache_creation_input_tokens, not cache_write_tokens) — must be detected
+    # as PERPLEXITY_SHAPE, not misidentified as OPENAI_SHAPE, or these paths would read as None
+    # and the cache tokens would double-bill exactly like the OpenAI regression test above guards.
+    model = _model()
+    prices = {"input": Decimal("0.25"), "output": Decimal("2.50"), "cache_read": Decimal("0.0625"), "cache_write": Decimal("0.10")}
+    token_usage = {
+        "input_tokens": 10_000,
+        "output_tokens": 1_000,
+        "input_tokens_details": {
+            "cache_creation_input_tokens": 4_000,
+            "cache_read_input_tokens": 1_000,
+            "cached_tokens": 1_000,
+        },
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 10000 - 1000 (read) - 4000 (write) = 5000
+    expected = 5_000 / 1e6 * 0.25 + 1_000 / 1e6 * 2.50 + 1_000 / 1e6 * 0.0625 + 4_000 / 1e6 * 0.10
+    assert cost == round(expected, 6)
+
+
+def test_estimate_run_cost_handles_deepseek_shaped_usage():
+    # NP-T3: DeepSeek uses prompt_tokens/completion_tokens (Chat Completions naming), distinct
+    # from every other shape's key names — no collision, but must still be detected as its own
+    # shape rather than falling through to None ("unrecognized").
+    model = _model()
+    prices = {"input": Decimal("0.30"), "output": Decimal("1.20")}
+    token_usage = {"prompt_tokens": 95, "completion_tokens": 21, "total_tokens": 116, "prompt_cache_hit_tokens": 0}
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    assert cost == round(95 / 1e6 * 0.30 + 21 / 1e6 * 1.20, 6)
+
+
+def test_estimate_run_cost_does_not_double_count_deepseek_cache_hit_tokens():
+    # prompt_tokens is the SUM of hit+miss (verified in NP-T1), same double-count trap as
+    # OpenAI/Perplexity above.
+    model = _model()
+    prices = {"input": Decimal("1.32"), "output": Decimal("3.96"), "cache_read": Decimal("0.044")}
+    token_usage = {
+        "prompt_tokens": 10_000,
+        "completion_tokens": 500,
+        "prompt_cache_hit_tokens": 4_000,
+        "prompt_cache_miss_tokens": 6_000,
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 10000 - 4000 (hit) = 6000
+    expected = 6_000 / 1e6 * 1.32 + 500 / 1e6 * 3.96 + 4_000 / 1e6 * 0.044
+    assert cost == round(expected, 6)
+
+
+def test_estimate_run_cost_handles_grok_shaped_usage_via_openai_shape():
+    # NP-T4: Grok's real payload uses the identical field names as OpenAI's own shape
+    # (input_tokens/output_tokens/input_tokens_details.cached_tokens) — verified real usage, not
+    # a separate GROK_SHAPE constant (see cost.py's comment above OPENAI_SHAPE).
+    model = _model()
+    prices = {"input": Decimal("2.00"), "output": Decimal("6.00"), "cache_read": Decimal("0.50")}
+    token_usage = {
+        "input_tokens": 12_001,
+        "output_tokens": 774,
+        "total_tokens": 12_775,
+        "input_tokens_details": {"cached_tokens": 2_304},
+        "output_tokens_details": {"reasoning_tokens": 666},
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 12001 - 2304 (cached, already folded into input_tokens) = 9697
+    expected = 9_697 / 1e6 * 2.00 + 774 / 1e6 * 6.00 + 2_304 / 1e6 * 0.50
+    assert cost == round(expected, 6)
+
+
+def test_estimate_run_cost_is_none_for_perplexity_nonzero_cache_creation_with_no_price():
+    # design decision 14, Perplexity-specific: NP-T1's probe found no published cache-write price
+    # for Perplexity, so migration 0033 seeds no cache_write component for it — a run that
+    # actually reports nonzero cache_creation_input_tokens must come back "unknown", never free.
+    model = _model()
+    token_usage = {
+        "input_tokens": 5_272,
+        "output_tokens": 97,
+        "input_tokens_details": {"cache_creation_input_tokens": 4_725, "cache_read_input_tokens": 0, "cached_tokens": 0},
+    }
+
+    assert estimate_run_cost(token_usage, model, {"input": Decimal("0.25"), "output": Decimal("2.50")}) is None

@@ -149,12 +149,28 @@ def _mention_visibility_base_query(run_ids_query: Select) -> Select:
     """AnalysisResult rows for the mention_visibility skill, scoped to `run_ids_query` — the
     join+filter shared by `own_domain_rate` and `weekly_values`'s own_rate metric, so the two can
     never independently drift on what "own-domain cited" means for the same run set.
+
+    Excludes runs whose model has `AIModel.supports_web_search = False` (docs/
+    TASKS_NEW_PROVIDERS.md NP-T3 design decision 3, e.g. DeepSeek) — such a run's `cited` is
+    permanently False by construction, since its provider has no citations to give at all. Left
+    in scope, they would silently deflate `own_domain_rate` for any client that ever runs a
+    non-search-capable provider: not a genuine "0% cited" data point, a "this metric doesn't apply
+    to this run" one. Kept generic (`supports_web_search`, not a provider-code check) per design
+    decision 8 — no hardcoded provider list in this layer either. Already joins Run here (not just
+    in `weekly_values`'s own callers) so both `own_domain_rate` and the `own_rate` branch below
+    share one join, not two independently-written ones that could drift.
     """
     return (
         select(AnalysisResult)
         .join(RawResponse, AnalysisResult.raw_response_id == RawResponse.id)
         .join(AnalysisSkill, AnalysisResult.analysis_skill_id == AnalysisSkill.id)
-        .where(AnalysisSkill.key == "mention_visibility", RawResponse.run_id.in_(run_ids_query))
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .where(
+            AnalysisSkill.key == "mention_visibility",
+            RawResponse.run_id.in_(run_ids_query),
+            AIModel.supports_web_search.is_(True),
+        )
     )
 
 
@@ -233,7 +249,10 @@ def weekly_values(db: Session, run_ids_query: Select, metric: DashboardMetric) -
         return {row[0].date(): float(row[1]) for row in rows}
 
     if metric == "own_rate":
-        base = _mention_visibility_base_query(run_ids_query).join(Run, RawResponse.run_id == Run.id)
+        # No extra .join(Run, ...) here (unlike the share_of_voice/position branch below) —
+        # _mention_visibility_base_query already joins Run itself now (see its own docstring for
+        # why), so re-joining it would duplicate the JOIN clause.
+        base = _mention_visibility_base_query(run_ids_query)
         rows = db.execute(
             base.with_only_columns(
                 week_col,

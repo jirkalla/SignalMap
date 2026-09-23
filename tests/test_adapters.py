@@ -22,7 +22,13 @@ from app.adapters.anthropic import _map_citations as anthropic_map_citations
 from app.adapters.anthropic import _map_search_queries as anthropic_map_search_queries
 from app.adapters.google import _map_citations as google_map_citations
 from app.adapters.google import _map_search_queries as google_map_search_queries
+from app.adapters.deepseek import _map_citations as deepseek_map_citations
+from app.adapters.deepseek import _map_search_queries as deepseek_map_search_queries
+from app.adapters.grok import _map_citations as grok_map_citations
+from app.adapters.grok import _map_search_queries as grok_map_search_queries
 from app.adapters.openai import _map_citations as openai_map_citations
+from app.adapters.perplexity import _map_citations as perplexity_map_citations
+from app.adapters.perplexity import _map_search_queries as perplexity_map_search_queries
 
 
 def test_google_returns_web_search_queries_in_order():
@@ -403,3 +409,203 @@ def test_openai_skips_non_url_citation_annotations():
 def test_openai_without_annotations_reports_no_citations():
     assert openai_map_citations(_openai_payload("A claim.", [])) == ([], False)
     assert openai_map_citations({}) == ([], False)
+
+
+# --- Perplexity citations and search queries (NP-T2) -------------------------
+
+
+def _perplexity_search_results_item(queries: list[str], results: list[dict]) -> dict:
+    return {"type": "search_results", "queries": queries, "results": results}
+
+
+def _perplexity_result(url: str, title: str, snippet: str = "...") -> dict:
+    return {"id": 1, "url": url, "title": title, "source": "web", "snippet": snippet, "date": None, "last_updated": "2026-09-23"}
+
+
+def test_perplexity_maps_citations_from_search_results_item():
+    """Citations are a dedicated `search_results` output item, not `url_citation` annotations —
+    shape verified in docs/TASKS_NEW_PROVIDERS.md NP-T1, unlike OpenAI/Grok.
+    """
+    payload = {
+        "output": [
+            _perplexity_search_results_item(
+                ["Knauf AG company products"],
+                [
+                    _perplexity_result("https://knauf.com/en", "Knauf | Building materials"),
+                    _perplexity_result("https://en.wikipedia.org/wiki/Knauf", "Knauf - Wikipedia"),
+                ],
+            ),
+            {"type": "message", "content": [{"type": "output_text", "text": "Knauf makes gypsum products.", "annotations": []}]},
+        ]
+    }
+
+    citations, has_citations = perplexity_map_citations(payload)
+
+    assert has_citations is True
+    assert [c.source_url for c in citations] == ["https://knauf.com/en", "https://en.wikipedia.org/wiki/Knauf"]
+    assert [c.citation_position for c in citations] == [0, 1]
+    assert citations[0].source_domain == "knauf.com"
+    # Permanently None: no offsets into the answer text exist for this provider (design decision 4).
+    assert citations[0].cited_answer_span is None
+    assert citations[0].answer_span_start is None
+    assert citations[0].source_passage is None
+
+
+def test_perplexity_position_runs_across_several_search_results_items():
+    payload = {
+        "output": [
+            _perplexity_search_results_item(["first query"], [_perplexity_result("https://a.de/x", "A")]),
+            _perplexity_search_results_item(
+                ["second query"], [_perplexity_result("https://b.de/y", "B"), _perplexity_result("https://c.de/z", "C")]
+            ),
+        ]
+    }
+
+    citations, _ = perplexity_map_citations(payload)
+
+    assert [c.citation_position for c in citations] == [0, 1, 2]
+    assert [c.source_url for c in citations] == ["https://a.de/x", "https://b.de/y", "https://c.de/z"]
+
+
+def test_perplexity_without_search_results_reports_no_citations():
+    assert perplexity_map_citations({"output": [{"type": "message", "content": []}]}) == ([], False)
+    assert perplexity_map_citations({}) == ([], False)
+
+
+def test_perplexity_returns_search_queries_from_search_results_items_in_order():
+    payload = {
+        "output": [
+            _perplexity_search_results_item(["first query"], []),
+            {"type": "message", "content": []},
+            _perplexity_search_results_item(["second query", "third query"], []),
+        ]
+    }
+
+    assert perplexity_map_search_queries(payload) == ["first query", "second query", "third query"]
+
+
+def test_perplexity_handles_missing_output():
+    assert perplexity_map_search_queries({}) == []
+    assert perplexity_map_search_queries({"output": []}) == []
+
+
+# --- DeepSeek: permanently empty citations/queries (NP-T3) -------------------
+
+
+def _deepseek_payload(content: str) -> dict:
+    return {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "index": 0,
+                "message": {"content": content, "role": "assistant", "annotations": None, "tool_calls": None},
+            }
+        ]
+    }
+
+
+def test_deepseek_never_returns_citations():
+    """No citation field exists in DeepSeek's payload at all — design decision 3, a structural
+    fact about the provider, not an unfinished mapper (see app/adapters/deepseek.py docstring).
+    """
+    assert deepseek_map_citations(_deepseek_payload("Some answer.")) == ([], False)
+    assert deepseek_map_citations({}) == ([], False)
+
+
+def test_deepseek_never_returns_search_queries():
+    assert deepseek_map_search_queries(_deepseek_payload("Some answer.")) == []
+    assert deepseek_map_search_queries({}) == []
+
+
+# --- Grok citations and search queries (NP-T4) --------------------------------
+
+
+def _grok_message(text: str, annotations: list[dict]) -> dict:
+    return {"type": "message", "content": [{"type": "output_text", "text": text, "annotations": annotations}]}
+
+
+def _grok_url_citation(url: str, title: str, start_index: int = 0, end_index: int = 0) -> dict:
+    """xAI's real payload always had start_index == end_index == 0 (NP-T1) — the default here
+    matches that, and the mapper must ignore them regardless (see test below).
+    """
+    return {"type": "url_citation", "url": url, "title": title, "start_index": start_index, "end_index": end_index}
+
+
+def _grok_web_search_call(query: str) -> dict:
+    return {"type": "web_search_call", "action": {"type": "search", "query": query, "sources": []}}
+
+
+def test_grok_maps_citations_from_url_citation_annotations():
+    """Same annotation shape as OpenAI (design decision correction, NP-T1) — NOT a flat
+    response.citations array, as originally assumed before the real call was made.
+    """
+    payload = {
+        "output": [
+            _grok_message(
+                "Knauf makes gypsum products.",
+                [
+                    _grok_url_citation("https://knauf.com/en/who-we-are", "https://knauf.com/en/who-we-are"),
+                    _grok_url_citation("https://en.wikipedia.org/wiki/Knauf", "https://en.wikipedia.org/wiki/Knauf"),
+                ],
+            )
+        ]
+    }
+
+    citations, has_citations = grok_map_citations(payload)
+
+    assert has_citations is True
+    assert [c.source_url for c in citations] == ["https://knauf.com/en/who-we-are", "https://en.wikipedia.org/wiki/Knauf"]
+    assert [c.citation_position for c in citations] == [0, 1]
+    assert citations[0].source_domain == "knauf.com"
+
+
+def test_grok_never_populates_the_span_even_when_offsets_are_present():
+    """start_index/end_index exist on the annotation but are always 0/0 in real data (NP-T1) —
+    the mapper must ignore them entirely, not slice a misleading empty-string span from them.
+    Uses NONZERO offsets here specifically to prove they're ignored, not just untested.
+    """
+    payload = {"output": [_grok_message("A claim.", [_grok_url_citation("https://a.de/x", "A", start_index=0, end_index=25)])]}
+
+    citations, _ = grok_map_citations(payload)
+
+    assert citations[0].cited_answer_span is None
+    assert citations[0].answer_span_start is None
+    assert citations[0].answer_span_end is None
+    assert citations[0].source_passage is None
+
+
+def test_grok_skips_non_url_citation_annotations():
+    payload = {
+        "output": [
+            _grok_message(
+                "A claim.",
+                [{"type": "file_citation", "file_id": "f-1"}, _grok_url_citation("https://a.de/x", "A")],
+            )
+        ]
+    }
+
+    citations, _ = grok_map_citations(payload)
+
+    assert [c.source_domain for c in citations] == ["a.de"]
+
+
+def test_grok_without_annotations_reports_no_citations():
+    assert grok_map_citations({"output": [_grok_message("A claim.", [])]}) == ([], False)
+    assert grok_map_citations({}) == ([], False)
+
+
+def test_grok_returns_search_queries_from_web_search_call_items_in_order():
+    payload = {
+        "output": [
+            _grok_web_search_call("first query"),
+            _grok_message("answer", []),
+            _grok_web_search_call("second query"),
+        ]
+    }
+
+    assert grok_map_search_queries(payload) == ["first query", "second query"]
+
+
+def test_grok_handles_missing_output():
+    assert grok_map_search_queries({}) == []
+    assert grok_map_search_queries({"output": []}) == []

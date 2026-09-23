@@ -97,6 +97,18 @@ OPENAI_SHAPE = TokenUsageShape(
     input_includes_cache_write=True,
 )
 
+# xAI Grok (docs/TASKS_NEW_PROVIDERS.md NP-T4) reuses OPENAI_SHAPE rather than getting its own
+# constant — verified against a real Responses API call, its `usage` object has the identical
+# field names (`input_tokens`/`output_tokens`/`input_tokens_details.cached_tokens`), and
+# `input_tokens` was confirmed to already include `cached_tokens` the same way OpenAI's does
+# (total_tokens == input_tokens + output_tokens exactly, cached_tokens folded inside input_tokens
+# — same double-count trap `input_includes_cache_read=True` guards against). No `cache_write_tokens`
+# field exists in Grok's payload, so OPENAI_SHAPE's `cache_write_paths` simply reads None/0 for
+# it — harmless, not a bug: Grok has no cache-write tier to lose. This is a genuine shape match,
+# not a shortcut: if a future Grok payload diverges (e.g. gains its own write tier under a
+# different key), split it into its own shape then, the same way PERPLEXITY_SHAPE was split out
+# once its payload turned out to differ.
+
 ANTHROPIC_SHAPE = TokenUsageShape(
     input_key="input_tokens",
     output_key="output_tokens",
@@ -106,6 +118,64 @@ ANTHROPIC_SHAPE = TokenUsageShape(
         "cache_write_1h": ("cache_creation", "ephemeral_1h_input_tokens"),
     },
     input_includes_cache_read=False,
+    input_includes_cache_write=False,
+)
+
+# Verified against a real Perplexity Agent API call (docs/TASKS_NEW_PROVIDERS.md NP-T1,
+# "Verified response shapes" section → Perplexity), not documentation. `usage.input_tokens_details` carries THREE
+# nested fields: `cache_creation_input_tokens` (the write tier), `cache_read_input_tokens` and
+# `cached_tokens` (both 0 in the test, apparently the same "cache hit" count under two names — same
+# kind of duplication DeepSeek's own probe found between `prompt_cache_hit_tokens` and
+# `prompt_tokens_details.cached_tokens`). `cache_read_input_tokens` is used here as the canonical
+# read-tier field; `cached_tokens` is redundant, not a second, distinct component.
+#
+# `input_includes_cache_write=True`: in the verified payload, `total_tokens` (5369) equalled
+# `input_tokens` (5272) + `output_tokens` (97) exactly, with `cache_creation_input_tokens` (4725)
+# already inside that 5272 and no separate addition for it — same pattern OpenAI's `input_tokens`
+# has for its own `cache_write_tokens` (see OPENAI_SHAPE above). `input_includes_cache_read=True`
+# is the same assumption by symmetry, though the test's `cache_read_input_tokens` was 0 so this
+# specific case wasn't directly observed on nonzero data — same caveat CC-4's Anthropic zero-cache
+# rows carried, flagged here rather than silently assumed solid.
+#
+# NOTE: this shape's `input_tokens_details` key name COLLIDES with OpenAI's — both providers use
+# it, with different nested field names. `_select_shape` below checks for Perplexity's
+# distinguishing `cache_creation_input_tokens` field BEFORE falling through to the generic OpenAI
+# check, so a Perplexity payload is never misidentified as OpenAI's shape (which would read the
+# wrong nested paths and silently treat all of it as non-cache input).
+PERPLEXITY_SHAPE = TokenUsageShape(
+    input_key="input_tokens",
+    output_key="output_tokens",
+    cache_read_path=("input_tokens_details", "cache_read_input_tokens"),
+    cache_write_paths={"cache_write": ("input_tokens_details", "cache_creation_input_tokens")},
+    input_includes_cache_read=True,
+    input_includes_cache_write=True,
+)
+
+# Verified against a real DeepSeek chat.completions.create() call (docs/TASKS_NEW_PROVIDERS.md
+# NP-T1, "Verified response shapes" section → DeepSeek), not documentation. DeepSeek's Chat Completions
+# usage object uses `prompt_tokens`/`completion_tokens` (the OpenAI Chat Completions convention),
+# NOT `input_tokens`/`output_tokens` (the Responses API convention `app/adapters/openai.py` and
+# `app/adapters/perplexity.py` use) — no key-name collision with any other shape here, so no
+# special-cased ordering is needed in `_select_shape` the way PERPLEXITY_SHAPE needed one.
+#
+# `cache_read_path` uses the top-level `prompt_cache_hit_tokens` field, not the nested
+# `prompt_tokens_details.cached_tokens` — the verified payload had BOTH, holding the identical
+# value (0 in the test) under two names; `prompt_cache_hit_tokens` is used here as the canonical
+# one, same "pick one, the other is redundant" call PERPLEXITY_SHAPE makes for its own duplicate
+# pair above. No `cache_write_paths`: DeepSeek's API has no search/tool-use surface, and the
+# verified payload had no write-tier field of any kind to map.
+#
+# `input_includes_cache_read=True`: in the verified payload, `prompt_tokens` (95) equalled
+# `prompt_cache_hit_tokens` (0) + `prompt_cache_miss_tokens` (95) exactly — `prompt_tokens` is the
+# SUM of both tiers, not the miss tier alone, so the cache-read count must be subtracted from it
+# before billing at full input price, same double-count trap OPENAI_SHAPE/PERPLEXITY_SHAPE guard
+# against above.
+DEEPSEEK_SHAPE = TokenUsageShape(
+    input_key="prompt_tokens",
+    output_key="completion_tokens",
+    cache_read_path=("prompt_cache_hit_tokens",),
+    cache_write_paths={},
+    input_includes_cache_read=True,
     input_includes_cache_write=False,
 )
 
@@ -127,7 +197,7 @@ PLAIN_SHAPE = TokenUsageShape(
 # Public (not a leading-underscore module private), same reason TOKEN_COUNT_KEY_PAIRS was public
 # before it: run_cost_sql_expr below builds its per-axis COALESCE chains from this exact tuple, so
 # the Python and SQL implementations can never independently drift on which keys/paths they know.
-TOKEN_USAGE_SHAPES = (GEMINI_SHAPE, OPENAI_SHAPE, ANTHROPIC_SHAPE, PLAIN_SHAPE)
+TOKEN_USAGE_SHAPES = (GEMINI_SHAPE, OPENAI_SHAPE, ANTHROPIC_SHAPE, PERPLEXITY_SHAPE, DEEPSEEK_SHAPE, PLAIN_SHAPE)
 
 
 def _select_shape(token_usage: dict) -> TokenUsageShape | None:
@@ -138,14 +208,21 @@ def _select_shape(token_usage: dict) -> TokenUsageShape | None:
 
     Order matters (docs/TASKS_COST_COMPONENTS.md CC-4 step 3): Anthropic and OpenAI both use
     input_tokens/output_tokens, so the two are told apart by which OTHER key is present, checked
-    before ever falling through to the shared plain shape.
+    before ever falling through to the shared plain shape. Perplexity (NP-T2) ALSO carries
+    `input_tokens_details` like OpenAI, so its own distinguishing nested field
+    (`cache_creation_input_tokens`) must be checked before the generic OpenAI branch, not after —
+    otherwise every Perplexity payload would be silently misdetected as OpenAI's shape.
     """
     if "prompt_token_count" in token_usage:
         return GEMINI_SHAPE
+    if "cache_creation_input_tokens" in (token_usage.get("input_tokens_details") or {}):
+        return PERPLEXITY_SHAPE
     if "input_tokens_details" in token_usage:
         return OPENAI_SHAPE
     if "cache_creation" in token_usage or "cache_read_input_tokens" in token_usage:
         return ANTHROPIC_SHAPE
+    if "prompt_tokens" in token_usage and "completion_tokens" in token_usage:
+        return DEEPSEEK_SHAPE
     if "input_tokens" in token_usage and "output_tokens" in token_usage:
         return PLAIN_SHAPE
     return None

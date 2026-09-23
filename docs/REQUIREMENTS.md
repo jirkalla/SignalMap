@@ -39,6 +39,26 @@ scheduling, auth) is deliberately deferred until this loop is proven.
   triggering (FR-7). See `docs/TASKS_SCHEDULER.md` for the full design
   (recurrence rules, queue, worker, per-client quotas).
 
+**Amendment (2026-09-23):** FR-8's "Only Google Gemini is supported... in
+phase 1" is phase-1-scoped history, not current fact — five more providers
+have shipped since, none of them previously consolidated in one place here:
+Anthropic Claude (phase 2, see the 2026-09-09 amendment in §4), OpenAI
+ChatGPT (`docs/TASKS_CHATGPT_PERSONA_PRICING.md` — shipped but never
+recorded in this document until now, an oversight this amendment fixes),
+and, on `docs/TASKS_NEW_PROVIDERS.md`'s branch, Perplexity (Agent API),
+xAI Grok, and DeepSeek. FR-8's other clause — "must not hardcode a single
+model, model selection is a user choice among the seeded models" — held
+throughout and needed no provider-list changes in code to stay true
+(`app/adapters/__init__.py`'s `ADAPTERS` registry plus DB rows only).
+
+DeepSeek is a structural exception worth naming explicitly, not folded
+into the list above: its API has no web search / grounding surface at
+all, so every run against it has `has_citations = FALSE` permanently —
+not a temporary gap like Gemini/OpenAI's missing `source_passage` (FR-12),
+a fact about the provider itself (`docs/TASKS_NEW_PROVIDERS.md` design
+decision 3). Expected behavior, not a bug, if a DeepSeek run is ever
+reported as "missing citations."
+
 ### 2.4 Storing and viewing results
 - FR-10: Every run stores the complete, unmodified raw provider response.
 - FR-11: Every run stores a human-readable rendered answer text, separate

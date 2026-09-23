@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AnalysisResult, Citation, Client, Market, Persona, Prompt, PromptSet, RawResponse, Run
+from app.models import AIModel, AnalysisResult, Citation, Client, Market, Persona, Prompt, PromptSet, RawResponse, Run
 
 # Two runs in this week, a third two weeks later — 2026-01-12 (the week between them) has no
 # runs at all, so it exercises the timeseries "gap weeks are 0, not missing" guarantee.
@@ -145,6 +145,48 @@ def test_own_domain_rate_is_none_without_a_client_domain(authed_client: TestClie
     body = resp.json()
     assert body["runs_count"] == 1  # real data either side of the None — proves it's not a blanket failure
     assert body["own_domain_rate"] is None
+
+
+def test_own_domain_rate_excludes_runs_from_a_model_with_no_web_search(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """NP-T3: a run against a model with `supports_web_search = False` (e.g. DeepSeek) can never
+    be cited by construction — it must not count in own_domain_rate's denominator, or it would
+    silently deflate the rate for a client that also runs such a model, even though the client
+    was genuinely never NOT discussed favorably by it (the metric just doesn't apply to it).
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    skill_id = seed["analysis_skill"].id
+    market_id = seed["market"].id
+
+    no_search_model = AIModel(
+        provider_id=seed["provider"].id, model_name="no-search-test-model", capability_tier="economy", supports_web_search=False
+    )
+    db_session.add(no_search_model)
+    db_session.commit()
+    db_session.refresh(no_search_model)
+
+    # One real citing run against the normal (web-search-capable) model...
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=market_id, started_at=WEEK_1,
+        citation_domains=("acme.com",), analysis_skill_id=skill_id, cited=True,
+    )
+    # ...and two runs against the non-search model, both necessarily uncited. Without the
+    # exclusion these would drag own_domain_rate from 100% down to 33%.
+    _make_run(
+        db_session, prompt, model_id=no_search_model.id, market_id=market_id, started_at=WEEK_1,
+        analysis_skill_id=skill_id, cited=False,
+    )
+    _make_run(
+        db_session, prompt, model_id=no_search_model.id, market_id=market_id, started_at=WEEK_3,
+        analysis_skill_id=skill_id, cited=False,
+    )
+
+    resp = authed_client.get(f"/dashboard/api/summary?client_id={acme.id}&range=all")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runs_count"] == 3  # all three runs still count as runs
+    assert body["own_domain_rate"] == 100.0  # only the web-search-capable run counts toward this
 
 
 def test_domain_league_table_ranking_and_own_domain_matching(authed_client: TestClient, db_session: Session, seed: dict):

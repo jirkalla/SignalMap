@@ -1,6 +1,6 @@
 # SignalMap — Tasks: Tři noví AI provideři (Perplexity, DeepSeek, Grok)
 
-## Status: ⏳ Not started — needs API keys and the §4 confirmation
+## Status: ⏳ Tasks complete (NP-T1 through NP-T5), user-confirmed 2026-09-23 — not yet merged
 
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-new-providers
@@ -51,9 +51,16 @@ dokumentace se v jednom bodě mýlila.
 
 | Provider | Web search | Citace v odpovědi | Tvar API |
 |---|---|---|---|
-| **Perplexity** | ano, `web_search` tool s `filters` | položka v `output` s `type: "search_results"` (url, title, date, snippet, source) | Responses API na `/v1/agent` |
+| **Perplexity** | ano, `web_search` tool s `filters` | položka v `output` s `type: "search_results"` (url, title, date, snippet, source) | Responses API na ~~`/v1/agent`~~ `/v1/responses` (viz korekce níž) |
 | **DeepSeek** | **žádný** | **žádné** | OpenAI i Anthropic kompatibilní, `https://api.deepseek.com` |
-| **xAI Grok** | ano, `web_search` tool | `response.citations` | OpenAI Responses API, `base_url=https://api.x.ai/v1` |
+| **xAI Grok** | ano, `web_search` tool | ~~`response.citations`~~ | OpenAI Responses API, `base_url=https://api.x.ai/v1` |
+
+> **Korekce (NP-T1, 2026-09-23):** řádek „Citace v odpovědi" pro xAI
+> Grok byl špatně — platí pro Perplexity a DeepSeek, u Groku ne. Reálné
+> volání ukázalo `output[].content[].annotations` s `type:
+> "url_citation"`, stejný tvar jako u OpenAI, ne ploché pole
+> `response.citations`. Viz sekce „Ověřené tvary odpovědí (NP-T1)" níž
+> pro detail a dopad na design decision 4.
 
 ---
 
@@ -62,11 +69,18 @@ dokumentace se v jednom bodě mýlila.
 **1. Perplexity se staví proti Agent API, ne proti Sonaru.**
 Dokumentace Perplexity uvádí: „Sonar Chat Completions is now Agent API.
 Sonar will be supported until September 27, 2026." Stavět adapter proti
-API, které končí, nemá smysl. Agent API volá `responses.create()` na
-`/v1/agent`, prompt jde do `input`, system prompt do `instructions`, search
+API, které končí, nemá smysl. Agent API volá `responses.create()`,
+prompt jde do `input`, system prompt do `instructions`, search
 se zapíná `tools=[{"type": "web_search", "filters": {...}}]`, text se čte z
 `output_text`. To je **tvarově totéž, co už umí `app/adapters/openai.py`** —
 Perplexity adapter je varianta existujícího, ne stavba od nuly.
+
+> **Korekce (NP-T1, 2026-09-23):** cesta `/v1/agent` z dokumentace se
+> jako reálný request path nepotvrdila. Skutečný endpoint je
+> `POST {base_url}/responses` s `base_url="https://api.perplexity.ai/v1"`
+> — SDK sám skládá `/responses` za `base_url`, takže bez `/v1` v
+> `base_url` dá Perplexity 404. `POST /v1/agent/responses` vrací 405.
+> Detail v sekci „Ověřené tvary odpovědí (NP-T1)".
 
 **2. Pořadí: Perplexity → DeepSeek → Grok.**
 Rozhodnuto uživatelem 2026-09-23. Perplexity jde první, protože má pro
@@ -115,6 +129,17 @@ dal. **Neimplementuj to na první dobrou** — nejdřív se podívej na reálnou
 odpověď, jestli je číslování spolehlivě spárované s pořadím v
 `search_results`. Pokud ne, nech prázdné.
 
+> **Korekce (NP-T1, 2026-09-23):** mechanismus popsaný výš pro Grok
+> („ploché seznamy bez offsetů, `response.citations`") je špatně —
+> Grok vrací `url_citation` anotace stejně jako OpenAI, ale s
+> `start_index`/`end_index` vždy `0`/`0` a `title` vždy rovným `url`.
+> **Závěr zůstává stejný** (span prázdný), ale z jiného důvodu — nulové,
+> ne chybějící offsety. Adapter by měl dokumentovat tohle, ne kopírovat
+> zdůvodnění z tohohle odstavce. Perplexity naopak dopadla přesně podle
+> plánu: `output_text.annotations` bylo prázdné pole, žádné `[1]`
+> odkazy se v textu neobjevily, span zůstává `None`. Detail viz sekce
+> „Ověřené tvary odpovědí (NP-T1)".
+
 **5. Design decision 9 v `docs/TASKS_SEARCH_QUERIES.md` je překonané.**
 Ten dokument zaznamenal (2026-09-10), že Perplexity texty vyhledávacích
 dotazů vůbec nevrací a `search_queries` u něj budou „trvale prázdné, ne
@@ -148,11 +173,11 @@ provider kód objeví v kódu. Vše ostatní (dropdowny, `/providers`,
 
 | ID | Name | Status |
 |----|------|--------|
-| NP-T1 | Prerekvizity: klíče, config, compose + ověření tvaru odpovědí | ⏳ |
-| NP-T2 | Perplexity (Agent API): adapter, migrace, ceny, testy | ⏳ |
-| NP-T3 (podmíněný) | DeepSeek: adapter + zacházení s runem bez citací | ⏳ |
-| NP-T4 | Grok (xAI): adapter, migrace, ceny, testy | ⏳ |
-| NP-T5 | Docs: REQUIREMENTS amendment, TASKS.md, oprava SQ design decision 9 | ⏳ |
+| NP-T1 | Prerekvizity: klíče, config, compose + ověření tvaru odpovědí | ✅ config/compose hotové; všichni tři provideři ověřeni reálným voláním |
+| NP-T2 | Perplexity (Agent API): adapter, migrace, ceny, testy | ✅ ověřeno reálným runem, uživatel potvrdil |
+| NP-T3 (podmíněný) | DeepSeek: adapter + zacházení s runem bez citací | ✅ potvrzeno uživatelem před startem i po dokončení |
+| NP-T4 | Grok (xAI): adapter, migrace, ceny, testy | ✅ ověřeno reálným runem, uživatel potvrdil |
+| NP-T5 | Docs: REQUIREMENTS amendment, TASKS.md, oprava SQ design decision 9 | ✅ |
 
 Pořadí podle design decision 2. NP-T2, NP-T3 i NP-T4 potřebují klíče a
 ověřené tvary z NP-T1 — to je jediná tvrdá závislost.
@@ -174,6 +199,183 @@ NP-T5 se dělá až nakonec, aby amendment popisoval, co reálně vzniklo.
 
 Prerekvizita mimo kód: placené účty a API klíče u xAI, Perplexity a
 DeepSeeku. Bez nich tenhle task nelze dokončit — nepokračuj a řekni to.
+
+**Stav klíčů (2026-09-23):** Všichni tři provideři mají klíč v `.env`
+a byli probnuti níž (xAI klíč přibyl a byl doprobnut dodatečně týž
+den) — NP-T2, NP-T3 i NP-T4 mají tedy ověřený tvar odpovědi k dispozici.
+
+### Ověřené tvary odpovědí (NP-T1)
+
+Ověřeno reálným voláním 2026-09-23 (probe skript spuštěný jednorázově
+přes `docker compose exec app python .probe_*.py`, žádný `tools/local/
+probe_model.py` v repu neexistoval). Jeden `response.model_dump(mode=
+"json")`/raw JSON na providera, výsledky nejsou uložené v repu (obsahují
+skutečný text odpovědi) — kdokoli chce reprodukovat, spustí probe znovu.
+
+#### DeepSeek
+
+- **API tvar:** OpenAI Chat Completions (`chat.completions.create()`),
+  `base_url="https://api.deepseek.com"`, **ne** Responses API.
+- **Modely (z `client.models.list()`, ne z dokumentace):** `deepseek-flash`,
+  `deepseek-v4-pro`. Starší `deepseek-v4-flash` z dokumentace se
+  v `models.list()` vůbec neobjevil — potvrzuje se deprecated.
+- **Web search:** žádný. `choices[0].message` nemá `tool_calls` a
+  `annotations` je `null`. Potvrzuje design decision 3 — strukturální
+  vlastnost, ne dočasná mezera.
+- **Citace:** žádné pole v odpovědi k mapování neexistuje.
+  `_map_citations()` bude vždy vracet `([], False)`.
+- **Search queries:** žádné pole. `_map_search_queries()` bude vždy `[]`.
+- **Token usage** (`usage` klíč):
+  ```
+  usage.prompt_tokens              int  — CELKEM, cache tokeny už zahrnuty
+  usage.completion_tokens          int
+  usage.total_tokens                int  — prompt_tokens + completion_tokens
+  usage.prompt_tokens_details.cached_tokens        int (byl 0 v testu)
+  usage.prompt_cache_hit_tokens     int — DUPLICITNÍ s cached_tokens výše (stejná hodnota, 0)
+  usage.prompt_cache_miss_tokens    int — prompt_tokens - prompt_cache_hit_tokens
+  usage.completion_tokens_details.reasoning_tokens int (nenulové i bez
+    explicitního reasoning modelu — DeepSeek reasonuje interně a účtuje to
+    do completion_tokens; `message.reasoning_content` nese ten text)
+  ```
+  **Pro NP-T3 (pokud se potvrdí):** `prompt_tokens` už obsahuje cache
+  tokeny (je to součet hit+miss, ne jen miss) — `input_key` v
+  `TokenUsageShape` proto musí mapovat na `prompt_tokens` přímo, ne na
+  `prompt_cache_miss_tokens`, jinak se cachovaný provoz naúčtuje 0×
+  místo 1× (opačná chyba, než na jakou varuje design decision 6, ale
+  stejná rodina bugu).
+
+#### Perplexity (Agent API)
+
+- **API tvar:** Responses API tvar (`responses.create()`), ale **base_url
+  musí být `https://api.perplexity.ai/v1`**, ne `https://api.perplexity.ai`
+  — SDK skládá `{base_url}/responses`, takže bez `/v1` v base_url dá
+  Perplexity 404. Cesta z dokumentace „`/v1/agent`" se jako reálný
+  request path nepotvrdila; `POST /v1/agent/responses` vrací 405,
+  `POST /v1/responses` je ten správný endpoint. Zaznamenat do docstringu
+  adapteru, ať se `/v1/agent` nikdo nesnaží použít doslova.
+- **Model/preset:** `model` (ne `preset`, jak spekulovala NP-T2 §2) —
+  string ve tvaru `{vendor}/{model}`, např. `perplexity/sonar`,
+  `xai/grok-4.7`, `anthropic/claude-opus-5-5`. `client.models.list()`
+  vrací celý katalog přes vendory — Perplexity Agent API je router přes
+  víc modelů, ne jen přes vlastní Sonar rodinu. **Design decision pro
+  NP-T2:** `ai_models.model_name` = ten plný `vendor/model` string
+  (`perplexity/sonar` pro výchozí), protože přesně to jde do `model`
+  pole requestu.
+- **Web search:** `tools=[{"type": "web_search"}]` funguje beze změny
+  oproti tomu, co dělá `app/adapters/openai.py`.
+- **Citace:** **žádná položka `type: "message"` s `annotations`
+  obsahujícím `url_citation`** — jiný tvar než OpenAI/Grok. Citace jsou
+  samostatná položka v `output` s `type: "search_results"`:
+  ```
+  output[i].type == "search_results"
+  output[i].queries   list[str]  — vyhledávací dotazy pro tenhle krok
+  output[i].results   list[{
+    id: int, url: str, title: str, source: "web",
+    snippet: str, date: str|None, last_updated: str,
+  }]
+  ```
+  `snippet` je v testu delší, strukturovaný text s `...` odděleným
+  více fragmenty stránky (ne jedna citovaná pasáž) — **potvrzuje
+  podezření z NP-T2 bodu 3**: nejde o `source_passage` v tom smyslu,
+  jak ho má Anthropic; nechat `source_passage = None`.
+  `citation_position` = pořadí v `results`.
+- **Search queries:** `output[i].queries` (stejná položka jako citace
+  výše, ne samostatný typ kroku) — potvrzuje design decision 5, design
+  decision 9 v `TASKS_SEARCH_QUERIES.md` je pro Agent API skutečně
+  překonané.
+- **Span z `[1]` odkazů (design decision 4, výjimka k ověření):**
+  **neimplementovat.** Textová zpráva (`output[j].type == "message"`,
+  `content[0].type == "output_text"`) měla `annotations: []` — prázdné,
+  žádné číslované odkazy v `text` ani offsety. Span zůstává `None` podle
+  základního pravidla design decision 4, výjimka se nepotvrdila.
+- **Token usage** (`usage` klíč, celý jiný tvar než OpenAI/DeepSeek):
+  ```
+  usage.input_tokens                              int
+  usage.output_tokens                             int
+  usage.total_tokens                               int
+  usage.input_tokens_details.cache_creation_input_tokens  int
+  usage.input_tokens_details.cache_read_input_tokens      int
+  usage.input_tokens_details.cached_tokens                int
+  usage.output_tokens_details.reasoning_tokens             int
+  usage.cost.input_cost / output_cost / cache_creation_cost /
+       tool_calls_cost / tool_calls_cost_details.search_web / total_cost
+       — Perplexity vlastní přepočet v USD (design decision 6: jen pro
+         křížovou kontrolu, ne zdroj pravdy)
+  ```
+  V testu byl `input_tokens` (5272) výrazně vyšší než `output_tokens`
+  (97) kvůli `cache_creation_input_tokens` (4725) — potvrzuje, že
+  `input_tokens` **zahrnuje** cache tokeny stejně jako DeepSeekův
+  `prompt_tokens`; `TokenUsageShape.input_key` pro Perplexity mapuje na
+  `usage.input_tokens` přímo.
+
+#### xAI Grok
+
+Ověřeno reálným voláním 2026-09-23 (klíč doplněn do `.env` uživatelem
+mezitím). **Zjištění se v jednom bodě rozchází s design decision 1 a 4
+tohohle dokumentu** — obě vycházely z dokumentace, ne z probu, a
+dokumentace se mýlila. Zapsáno tady jako oprava, ne mlčky přepsáno.
+
+- **API tvar:** Responses API (`responses.create()`),
+  `base_url="https://api.x.ai/v1"` — tohle se potvrdilo.
+- **Modely:** `client.models.list()` vrátil `grok-4.7` jako existující
+  (spolu s `grok-4.3`/`4.5`/`4.6` a několika `grok-4.20-*` a
+  `grok-imagine-*` variantami mimo scope) — **potvrzuje `grok-4.7`** nad
+  `grok-4.6` z design decision 8 v NP-T4, teď i přímo proti `api.x.ai`,
+  ne jen zprostředkovaně přes Perplexity.
+- **Web search:** `tools=[{"type": "web_search"}]` funguje, `output`
+  obsahuje `web_search_call` položky s `action.query` a
+  `action.sources` (holé URL, bez title/snippet) — pro
+  `_map_search_queries()` použitelné (`action.query`), pro citace ne
+  (viz níž, skutečné citace jsou jinde).
+- **⚠️ OPRAVA design decision 1 a 4 — citace NEJSOU v `response.citations`.**
+  Žádné pole `citations` na top úrovni odpovědi neexistuje
+  (`"citations" in data` → `False`). Grok používá **stejný tvar jako
+  OpenAI** (`app/adapters/openai.py`): `output` obsahuje položku
+  `type: "message"`, jejíž `content[0].annotations` nese
+  `type: "url_citation"` záznamy s `url`, `title`, `start_index`,
+  `end_index`. `_map_citations()` pro Grok tedy může být **skoro
+  identická s OpenAI adapterem**, ne vlastní mapování nad plochým
+  polem, jak NP-T4 bod 2 předpokládal.
+- **Ale span opravdu nejde použít — z jiného důvodu, než tvrdila
+  dokumentace:** všech 11 anotací v testu mělo `start_index == 0` a
+  `end_index == 0` (ne chybějící pole, ale nulové/neplatné offsety) a
+  `title` byl vždy identický s `url` (žádný skutečný název stránky).
+  Výsledek pro NP-T4 je stejný, jaký předpokládala design decision 4
+  (`cited_answer_span`, `answer_span_start`, `answer_span_end`,
+  `source_passage` zůstávají `None`) — ale **z jiného mechanismu**:
+  není to "plochý seznam bez offsetů", je to anotační tvar s offsety,
+  které jsou vždy 0/0 a tedy nepoužitelné. Docstring adapteru by měl
+  psát pravdu (nulové offsety), ne kopírovat zdůvodnění z OpenAI/Anthropic
+  rozdílu, které sem nesedí.
+- **`source_domain`** lze odvodit z `url` přes `extract_domain` stejně
+  jako u OpenAI. `citation_position` = pořadí v `content[0].annotations`.
+- **Token usage** (`usage` klíč, vlastní tvar, ani OpenAI ani
+  Perplexity):
+  ```
+  usage.input_tokens                           int
+  usage.output_tokens                           int
+  usage.total_tokens                             int
+  usage.input_tokens_details.cached_tokens       int
+  usage.output_tokens_details.reasoning_tokens    int — nenulové (Grok
+    reasonuje interně přes samostatné `type: "reasoning"` output
+    položky, podobně jako DeepSeek)
+  usage.num_sources_used                          int — byl 0 v testu
+    i přes 11 citací v odpovědi; nepoužívat jako proxy za has_citations
+  usage.num_server_side_tools_used                int
+  usage.server_side_tool_usage_details.web_search_calls  int
+  usage.cost_in_usd_ticks                         int — xAI vlastní
+    jednotka (desetinné "tickety", ne USD přímo); nepoužívat jako zdroj
+    pravdy (design decision 6), navíc by potřebovalo zjistit přepočet
+  ```
+  `input_tokens` (12001) zahrnoval `cached_tokens` (2304) v součtu —
+  stejný vzorec jako u DeepSeek/Perplexity výš; `TokenUsageShape.input_key`
+  mapuje na `usage.input_tokens` přímo.
+- **`market_country` → geo filtry `web_search` toolu:** v tomhle testu
+  nebyl posílán žádný filtr, takže se to neověřilo. Nechat jako otevřený
+  bod pro NP-T4 bod 4 — zkusit `tools=[{"type": "web_search",
+  "user_location": {...}}]` po vzoru OpenAI/Anthropic a ověřit, jestli
+  xAI parametr přijme, než se do adapteru napíše cokoliv o geo
+  targetingu.
 
 1. `app/config.py` — přidej `xai_api_key: str = ""`,
    `perplexity_api_key: str = ""`, `deepseek_api_key: str = ""` (stejný
@@ -219,15 +421,19 @@ prošlapaný provider z trojice (Agent API je čerstvě zmigrované), takže
 počítej s větší rezervou než u zbylých dvou (design decision 2).
 
 1. `app/adapters/perplexity.py` — `PerplexityAdapter` proti **Agent API**
-   (`/v1/agent`, `responses.create()`), ne proti Sonaru (design decision 1;
-   Sonar končí 27. 9. 2026). Do docstringu napiš proč, ať to někdo
+   (`base_url="https://api.perplexity.ai/v1"`, `responses.create()` →
+   reálně `POST /v1/responses`, **ne** `/v1/agent` — viz korekce u design
+   decision 1 a sekce „Ověřené tvary odpovědí (NP-T1)"), ne proti Sonaru
+   (Sonar končí 27. 9. 2026). Do docstringu napiš proč, ať to někdo
    „nezjednoduší" zpátky na chat completions. Formát docstringu podle
    `app/adapters/openai.py`: co bylo ověřené, kdy a proti čemu.
 2. Request: `input` místo `messages`, `instructions` pro system prompt,
-   `preset` místo `model` — ověř podle NP-T1, jak se preset mapuje na naše
-   `ai_models.model_name`. Pokud Perplexity pracuje s presety a ne s
-   modely, **zaznamenej to jako nové design decision** a zvol, co půjde do
-   `model_name` (návrh: preset, protože to je to, co se reálně posílá).
+   `model` (**ne `preset`** — NP-T1 to ověřilo a vyvrátilo). Hodnota je
+   string `{vendor}/{model}`, např. `perplexity/sonar`, `xai/grok-4.7` —
+   Agent API je router přes víc modelů/vendorů, ne jen přes vlastní
+   Sonar rodinu. `ai_models.model_name` = ten plný `vendor/model` string
+   (`perplexity/sonar` pro výchozí), protože přesně to jde do `model`
+   pole requestu (design decision zapsaná v NP-T1 sekci).
 3. `_map_citations()` — z položky `output` s `type: "search_results"`:
    `url` → `source_url`, `title` → `source_title`, doména přes
    `extract_domain`. `citation_position` = pořadí v seznamu.
@@ -235,10 +441,11 @@ počítej s větší rezervou než u zbylých dvou (design decision 2).
    list (FR-13). Pole `snippet` je kandidát na `source_passage` — ověř na
    reálných datech, jestli je to citovaná pasáž ze stránky, nebo jen
    náhled výsledku; při pochybnosti nech `None` a zdůvodni v docstringu.
-4. Span z číslovaných `[1]` odkazů v `output_text` implementuj **jen
-   tehdy**, když se na reálné odpovědi ukáže spolehlivé párování s pořadím
-   v `search_results`. Jinak nech `cited_answer_span`, `answer_span_start`
-   a `answer_span_end` prázdné (design decision 4).
+4. Span z číslovaných `[1]` odkazů **neimplementuj** — NP-T1 to už
+   ověřilo na reálné odpovědi: `output_text.annotations` bylo prázdné
+   pole, žádné číslované odkazy se v textu neobjevily. `cited_answer_span`,
+   `answer_span_start` a `answer_span_end` zůstávají prázdné (design
+   decision 4).
 5. `_map_search_queries()` — z kroků v poli `output`. Tohle je místo, kde
    je design decision 9 v `docs/TASKS_SEARCH_QUERIES.md` překonané (design
    decision 5 tady); opravu toho dokumentu ale **nedělej tady**, patří do
@@ -339,16 +546,24 @@ liší se hlavně mapování citací.
    `ProviderAdapter`. Jde přes OpenAI SDK s
    `base_url="https://api.x.ai/v1"` a `responses.create()`, protože xAI
    tuhle plochu podporuje; **nepiš vlastního HTTP klienta.**
-2. `_map_citations()` — z `response.citations`. Pozor, je to ploché pole,
-   ne anotace s offsety: `cited_answer_span`, `answer_span_start`,
-   `answer_span_end` a `source_passage` zůstávají `None` (design decision
-   4, napiš to do docstringu). `citation_position` = pořadí v poli.
+2. `_map_citations()` — **⚠️ NE z `response.citations`, to pole
+   neexistuje.** NP-T1 to ověřilo reálným voláním a opravilo (viz
+   „Ověřené tvary odpovědí (NP-T1)" → xAI Grok): zdroj je
+   `output[].content[].annotations` s `type: "url_citation"`, stejný
+   tvar jako `app/adapters/openai.py`. `cited_answer_span`,
+   `answer_span_start`, `answer_span_end` a `source_passage` přesto
+   zůstávají `None` — ne protože pole chybí, ale protože `start_index`/
+   `end_index` byly v testu vždy `0`/`0` a `title` vždy rovné `url`.
+   `citation_position` = pořadí v `annotations`.
    `has_citations` explicitně `False` při prázdném seznamu (FR-13).
 3. `_map_search_queries()` — podle toho, co ukázalo NP-T1. Pokud xAI texty
    dotazů nevrací, vrať prázdný seznam a **zdůvodni to v docstringu**.
 4. `market_country` → doménové/geo filtry `web_search` toolu, pokud je
-   xAI podporuje (ověř v NP-T1). Pokud ne, zdokumentuj to jako rozdíl
-   proti Anthropicu a OpenAI, kde je geo targeting reálný.
+   xAI podporuje — **NP-T1 tohle neověřilo** (probe žádný geo filtr
+   neposílal), zůstává otevřené pro tenhle task. Zkus
+   `tools=[{"type": "web_search", "user_location": {...}}]` po vzoru
+   OpenAI/Anthropic. Pokud xAI parametr nepřijme, zdokumentuj to jako
+   rozdíl proti Anthropicu a OpenAI, kde je geo targeting reálný.
 5. Sdílený checklist — body 6 až 9 z NP-T2 (registry `"xai"`, cost shape,
    migrace, testy). Model `grok-4.7`; pozor, Philipův seznam uvádí
    `grok-4.6`, dokumentace `grok-4.7` — použij to, co prošlo probem.

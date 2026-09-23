@@ -22,8 +22,19 @@ reconstructed from git history later. PR numbers and merge dates come from
 
 | Document | Prefix | Branch | Status |
 |---|---|---|---|
-| TASKS_VERSIONING | VER | feature/signalmap-versioning-footer | 🚧 In progress |
 | TASKS_NEW_PROVIDERS | NP | feature/signalmap-new-providers | ⏳ Not started — needs API keys and the §4 confirmation |
+
+## Merged, release pending
+
+Code is on `master`; no version bump/tag/deploy yet (`AI_INSTRUCTIONS.md` §4
+— that's the user's own step, never the agent's). `TASKS_VERSIONING`'s own
+release is deliberately deferred until `TASKS_NEW_PROVIDERS` also merges, so
+both ship in one deploy as `v1.1.0` rather than tagging an untested `v1.0.0`
+that never actually runs in production by itself.
+
+| Document | Prefix | Branch | PR | Merged | Planned release |
+|---|---|---|---|---|---|
+| TASKS_VERSIONING | VER | feature/signalmap-versioning-footer | #19 | 2026-09-23 | v1.1.0 |
 
 ## Released — newest first
 

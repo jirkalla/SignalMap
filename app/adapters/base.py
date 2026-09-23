@@ -90,6 +90,17 @@ class RawResponsePayload:
 class ProviderAdapter(Protocol):
     """Interface every provider adapter (app/adapters/<provider>.py) implements."""
 
+    # Whether `market_country` reaches this provider's API as real geographic search targeting
+    # (e.g. `user_location` on the `web_search` tool), not just a text hint. Read generically via
+    # `app.adapters.ADAPTERS[provider.code].supports_geo_targeting` — app/routers/settings.py uses
+    # it to show a provider-specific hint instead of a one-size-fits-all paragraph that used to
+    # mention "Anthropic's web_search user_location" verbatim on every provider's card, DeepSeek's
+    # included. The single source of truth for this fact lives on the adapter class itself (same
+    # place `run()`'s own docstring already documented it), not a second hardcoded provider-code
+    # list — consistent with the "no hardcoded provider list outside ADAPTERS" rule (design
+    # decision 8, docs/TASKS_NEW_PROVIDERS.md).
+    supports_geo_targeting: bool = False
+
     def run(
         self,
         prompt_text: str,

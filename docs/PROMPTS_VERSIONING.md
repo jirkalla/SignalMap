@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Verzování, changelog a patička
 
+## Status: 🔜 Merged (PR #19, 2026-09-23) — release pending, bundled with new AI providers into v1.1.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:
