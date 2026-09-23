@@ -250,6 +250,27 @@ def test_estimate_run_cost_does_not_double_count_deepseek_cache_hit_tokens():
     assert cost == round(expected, 6)
 
 
+def test_estimate_run_cost_handles_grok_shaped_usage_via_openai_shape():
+    # NP-T4: Grok's real payload uses the identical field names as OpenAI's own shape
+    # (input_tokens/output_tokens/input_tokens_details.cached_tokens) — verified real usage, not
+    # a separate GROK_SHAPE constant (see cost.py's comment above OPENAI_SHAPE).
+    model = _model()
+    prices = {"input": Decimal("2.00"), "output": Decimal("6.00"), "cache_read": Decimal("0.50")}
+    token_usage = {
+        "input_tokens": 12_001,
+        "output_tokens": 774,
+        "total_tokens": 12_775,
+        "input_tokens_details": {"cached_tokens": 2_304},
+        "output_tokens_details": {"reasoning_tokens": 666},
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 12001 - 2304 (cached, already folded into input_tokens) = 9697
+    expected = 9_697 / 1e6 * 2.00 + 774 / 1e6 * 6.00 + 2_304 / 1e6 * 0.50
+    assert cost == round(expected, 6)
+
+
 def test_estimate_run_cost_is_none_for_perplexity_nonzero_cache_creation_with_no_price():
     # design decision 14, Perplexity-specific: NP-T1's probe found no published cache-write price
     # for Perplexity, so migration 0033 seeds no cache_write component for it — a run that

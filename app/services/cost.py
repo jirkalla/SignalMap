@@ -97,6 +97,18 @@ OPENAI_SHAPE = TokenUsageShape(
     input_includes_cache_write=True,
 )
 
+# xAI Grok (docs/TASKS_NEW_PROVIDERS.md NP-T4) reuses OPENAI_SHAPE rather than getting its own
+# constant — verified against a real Responses API call, its `usage` object has the identical
+# field names (`input_tokens`/`output_tokens`/`input_tokens_details.cached_tokens`), and
+# `input_tokens` was confirmed to already include `cached_tokens` the same way OpenAI's does
+# (total_tokens == input_tokens + output_tokens exactly, cached_tokens folded inside input_tokens
+# — same double-count trap `input_includes_cache_read=True` guards against). No `cache_write_tokens`
+# field exists in Grok's payload, so OPENAI_SHAPE's `cache_write_paths` simply reads None/0 for
+# it — harmless, not a bug: Grok has no cache-write tier to lose. This is a genuine shape match,
+# not a shortcut: if a future Grok payload diverges (e.g. gains its own write tier under a
+# different key), split it into its own shape then, the same way PERPLEXITY_SHAPE was split out
+# once its payload turned out to differ.
+
 ANTHROPIC_SHAPE = TokenUsageShape(
     input_key="input_tokens",
     output_key="output_tokens",
