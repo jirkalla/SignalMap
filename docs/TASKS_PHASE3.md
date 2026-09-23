@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Phase 3 (First Analysis Skill — Mention/Visibility Detection)
 
+## Status: ✅ Done — PR #5, merged 2026-09-10, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-phase3-mention-detection
 ## Task ID prefix: P3

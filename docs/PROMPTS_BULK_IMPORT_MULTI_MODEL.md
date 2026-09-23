@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Bulk Prompt Import + Multi-Model Run
 
+## Status: ✅ Done — PR #12, merged 2026-09-15, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

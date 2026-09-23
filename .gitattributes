@@ -6,3 +6,8 @@ crontab.example text eol=lf
 .env.example text eol=lf
 docker-compose.yaml text eol=lf
 dockerfile text eol=lf
+
+# tests/test_version.py parses this file with a regex anchored on `$` in MULTILINE mode, which
+# does not match before `\r` — a CRLF working-tree copy (the Windows default without this rule)
+# makes the guard test silently find zero version headings instead of comparing versions.
+CHANGELOG.md text eol=lf

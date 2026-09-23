@@ -1,5 +1,7 @@
 # SignalMap — Tasks: ChatGPT adapter + persona placeholder + AI-model price history
 
+## Status: ✅ Done — PR #10, merged 2026-09-13, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-chatgpt-persona-pricehistory
 ## Task ID prefix: CPH

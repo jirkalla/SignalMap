@@ -1,5 +1,6 @@
 {
   "app.title": "SignalMap",
+  "footer.built_by": "erstellt von jirkalla",
   "nav.clients": "Klienten",
   "nav.dashboard": "Dashboard",
   "nav.ops": "Ops",

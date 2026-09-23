@@ -6,6 +6,9 @@ citations — works end to end with real data, no mocks. See "Beyond phase 1
 scope" below for what got built on top of the original 6 tasks along the
 way.
 
+For the status of every feature branch since phase 1 — done or not, PR,
+merge date, released version — see `docs/00_INDEX.md`, not this file.
+
 Scope: create a client, create a prompt (with market/language), run it
 against Google Gemini, store and view the raw response. No auth, no
 multi-tenancy, no strategy/analysis layer, no scheduling — those are later

@@ -33,6 +33,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app import __version__
 from app.config import get_settings
 from app.database import SessionLocal
 from app.logging_config import configure_logging
@@ -49,10 +50,6 @@ from app.services.queue import claim_next, enqueue_due_schedules, reconcile_inte
 from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
 
 logger = logging.getLogger(__name__)
-
-# Matches app/main.py's FastAPI `version=` — no shared constant exists yet for either to import;
-# duplicated rather than introducing a cross-import between an entrypoint module and another.
-APP_VERSION = "0.1.0"
 
 HEARTBEAT_FILE = Path("/tmp/worker-alive")
 _TICKER_INTERVAL = timedelta(minutes=1)
@@ -253,10 +250,10 @@ def write_heartbeat(db: Session, *, worker_name: str, dry_run: bool, now: dateti
     """Upsert this worker's liveness row and touch the healthcheck file (design decision 19)."""
     stmt = (
         pg_insert(WorkerHeartbeat)
-        .values(worker_name=worker_name, last_seen_at=now, version=APP_VERSION, dry_run=dry_run)
+        .values(worker_name=worker_name, last_seen_at=now, version=__version__, dry_run=dry_run)
         .on_conflict_do_update(
             index_elements=["worker_name"],
-            set_={"last_seen_at": now, "version": APP_VERSION, "dry_run": dry_run},
+            set_={"last_seen_at": now, "version": __version__, "dry_run": dry_run},
         )
     )
     db.execute(stmt)

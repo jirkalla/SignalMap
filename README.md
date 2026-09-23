@@ -136,6 +136,10 @@ rollback; this section is the shape of it.
 
 ### Ship a release
 
+Decide the version bump (MAJOR/MINOR/PATCH) and tag it per
+`docs/DEPLOYMENT.md` §0 first — move `CHANGELOG.md`'s `[Unreleased]`
+block under the new version number before deploying.
+
 ```bash
 # 1. Test locally first. Nothing reaches the server that did not pass here.
 git checkout master && git pull --ff-only && docker compose up -d --build --wait

@@ -92,6 +92,13 @@ DOCUMENTATION:
 - Every non-obvious `Form(...)`/Pydantic field gets `description=...`.
 - Update `docs/REQUIREMENTS.md` / `TASKS.md` / `PROMPTS.md` when a
   decision changes what they say — show the diff, don't silently drift.
+- A user-visible change gets one bullet under `## [Unreleased]` in
+  `CHANGELOG.md`, added as part of that task's docs step — not
+  reconstructed later from git history.
+- At the end of a feature branch, right before merging, its
+  `docs/TASKS_*.md`/`docs/PROMPTS_*.md` get the `## Status: ...` heading
+  and a row in `docs/00_INDEX.md` (see `docs/TASKS_VERSIONING.md`
+  decision 20 for why the index lives there, not in `docs/TASKS.md`).
 
 FRONTEND:
 - Jinja2 + HTMX + Tailwind for CRUD screens; Vue3 islands only for
@@ -114,6 +121,8 @@ FRONTEND:
 NEVER:
 - Create new top-level documentation files without explicit instruction —
   fold operational notes into the existing `docs/*.md` files instead.
+  `CHANGELOG.md` is the one approved exception (confirmed 2026-09-22,
+  docs/TASKS_VERSIONING.md).
 - Implement anything from a phase later than the one currently active in
   `docs/TASKS.md` — flag it instead of building it silently.
 - Invent a table, column, or provider list beyond what
@@ -124,6 +133,10 @@ NEVER:
 - Run `git push` or merge to `main`/`master` without explicit instruction.
 - Run a destructive git operation (`reset --hard`, `checkout --`,
   `clean -f`, force-push) without explicit instruction.
+- Bump `app.__version__` or create a git tag without explicit
+  instruction — same class of action as `git commit`/`git push`: propose
+  it, wait for confirmation, then do it (docs/TASKS_VERSIONING.md
+  decision 18).
 - Let a provider adapter be called directly from a router, bypassing the
   shared adapter interface.
 - Return a raw, unstructured error from an API route.
@@ -181,9 +194,14 @@ After completing every task:
      tablet/desktop widths — not just "should work").
   3. Docs update — update docs/REQUIREMENTS.md / TASKS.md / PROMPTS.md if
      anything they describe changed, only after the user confirms the
-     feature works.
+     feature works. A user-visible change also gets a bullet under
+     `## [Unreleased]` in `CHANGELOG.md` at this step, not saved for
+     release time.
   4. Commit message — compose it and show it to the user; never commit
      without being asked to.
+  5. End-of-branch docs (once, right before the branch that completes it
+     is merged) — give its `docs/TASKS_*.md`/`docs/PROMPTS_*.md` a
+     `## Status: ...` heading and a row in `docs/00_INDEX.md`.
 
 ======================================================================
 8. COMMIT CONVENTIONS
@@ -198,10 +216,13 @@ Examples:
   fix(clients): keep slug immutable on edit
   chore(infra): move Postgres password into .env
   docs(requirements): record Tailwind-now decision for phase 1
+  chore(release): v1.1.0
 
 Rules:
 - Subject in English, imperative mood, max ~72 characters.
 - One logical change per commit — don't mix feat + docs.
+- A release commit (`app.__version__` bump + tag, always the user's own
+  action per §4) uses `chore(release): vX.Y.Z` as its subject.
 - Never `git commit` without showing the message and getting explicit
   go-ahead first — not just before push. A local commit is still an
   action on the user's repo; propose it, wait for confirmation, then run

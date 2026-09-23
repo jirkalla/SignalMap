@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Search Query Capture
 
+## Status: ✅ Done — PR #4, merged 2026-09-10, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

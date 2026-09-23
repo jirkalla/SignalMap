@@ -30,6 +30,12 @@ services:
     build:
       context: .
       dockerfile: dockerfile
+      # Baked into the image as ENV (dockerfile), shown in the footer to logged-in users
+      # (docs/TASKS_VERSIONING.md VER-T2). Empty when the shell doesn't set them — a normal dev
+      # build; the app starts fine and the footer just omits them.
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     restart: unless-stopped
     init: true
     depends_on:
@@ -97,6 +103,14 @@ services:
       # set the SAME literal value in every `docker compose up --scale worker=N` replica, breaking
       # the one-heartbeat-row-per-worker identity this is meant to give for free.
       WORKER_NAME:
+      # No GIT_SHA/BUILD_TIME here, unlike the API keys above: they're baked into the shared
+      # signalmap-app image as ENV at build time, so this service inherits whatever that image
+      # was built with (docs/TASKS_VERSIONING.md decision 8) — which is only the current commit
+      # right after a docs/DEPLOYMENT.md-style deploy. The periodic maintenance rebuild in
+      # README.md's "day-to-day commands" (`docker compose build --pull app`) does not pass
+      # these args, so it silently re-bakes both as empty; the footer then just omits the SHA/
+      # build-time until the next real deploy (found in code review, 2026-09-23 — cosmetic only,
+      # app/config.py's empty defaults mean this never fails startup).
     # No HTTP port to probe (design decision 19) — checks that app/worker.py's main loop is
     # still touching its liveness file, written on every iteration (~every 5s). 30s = 6x that
     # interval, so one slow iteration doesn't flap the container between healthy/unhealthy.

@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Scheduler
 
+## Status: ✅ Done — PR #18, merged 2026-09-22, released in v1.0.0
+
 ## v1.2 | Září 2026
 ##
 ## v1.2 (2026-09-21) — přibyl prompt SCH-5c (upozornění na překryv

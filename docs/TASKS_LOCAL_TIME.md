@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Local Timezone Display for Timestamps
 
+## Status: ✅ Done — PR #11, merged 2026-09-14, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-local-time-display
 ## Task ID prefix: LT

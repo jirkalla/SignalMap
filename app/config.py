@@ -28,8 +28,15 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     # Defaults to development (safe default, same philosophy as cookie_secure above) — lets a
     # script make a real technical decision (e.g. scripts/seed_dev_users.py refusing to run) in
-    # place of a comment nobody reads. Not otherwise read by the app itself.
+    # place of a comment nobody reads. Also shown as a badge in the page footer to logged-in users
+    # when not "production" (docs/TASKS_VERSIONING.md VER-T2).
     environment: Literal["development", "production"] = "development"
+    # Baked into the image at build time (dockerfile ARG/ENV, passed from docs/DEPLOYMENT.md §3.1's
+    # $SHA) and shown in the footer to logged-in users only (docs/TASKS_VERSIONING.md decision 10).
+    # Empty by default on purpose: a plain dev build passes no build args, and a missing value must
+    # never fail startup — the opposite of `secret_key` above. The footer simply omits it.
+    git_sha: str = ""
+    build_time: str = ""
     # Bootstrap-only: read by `scripts/create_admin.py --from-env`, never by the app itself.
     # Local dev convenience so a fresh `docker compose up` + one script call gets you a working
     # admin account without typing a password interactively every time you reset the DB.

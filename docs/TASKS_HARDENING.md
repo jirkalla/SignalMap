@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Production-Readiness Hardening
 
+## Status: ✅ Done — PR #1, merged 2026-09-09, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-phase1-hardening
 ## Task ID prefix: HD

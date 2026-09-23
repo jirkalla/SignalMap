@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Phase 5 (Dashboard extensions + competitive visibility)
 
+## Status: ✅ Done — PR #7, merged 2026-09-11, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:
