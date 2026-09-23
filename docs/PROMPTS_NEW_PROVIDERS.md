@@ -1,6 +1,6 @@
 # SignalMap — Claude Code Session Prompts: Tři noví AI provideři
 
-## Status: ⏳ Not started — needs API keys and the §4 confirmation
+## Status: ✅ Done — PR #20, merged 2026-09-23, release pending
 
 ## v1.0 | Září 2026
 ##

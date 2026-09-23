@@ -1,6 +1,6 @@
 # SignalMap — Tasks: Tři noví AI provideři (Perplexity, DeepSeek, Grok)
 
-## Status: ⏳ Tasks complete (NP-T1 through NP-T5), user-confirmed 2026-09-23 — not yet merged
+## Status: ✅ Done — PR #20, merged 2026-09-23, release pending
 
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-new-providers
