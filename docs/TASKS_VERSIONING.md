@@ -214,11 +214,11 @@ začátku. `00_` prefix ho řadí v abecedním výpisu `docs/` jako první.
 
 | ID | Name | Status |
 |----|------|--------|
-| VER-T1 | Verze jako jediný zdroj pravdy + patička | ⏳ |
-| VER-T2 | Commit SHA a čas buildu z build argumentů | ⏳ |
-| VER-T3 | `CHANGELOG.md` + guard test proti driftu | ⏳ |
-| VER-T4 | Úklid hotových TASKS/PROMPTS dokumentů + index | ⏳ |
-| VER-T5 | Pravidla do AI_INSTRUCTIONS, DEPLOYMENT a README | ⏳ |
+| VER-T1 | Verze jako jediný zdroj pravdy + patička | ✅ Done |
+| VER-T2 | Commit SHA a čas buildu z build argumentů | ✅ Done |
+| VER-T3 | `CHANGELOG.md` + guard test proti driftu | ✅ Done |
+| VER-T4 | Úklid hotových TASKS/PROMPTS dokumentů + index | ✅ Done |
+| VER-T5 | Pravidla do AI_INSTRUCTIONS, DEPLOYMENT a README | ✅ Done |
 
 Pořadí vynucené u T1 → T2 (patička musí existovat, než do ní přibude SHA)
 a u T3 → T5 (changelog musí existovat, než se na něj odkážou pravidla).
