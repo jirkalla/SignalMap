@@ -461,6 +461,41 @@ def test_successful_run_without_search_queries_shows_empty_state(
     assert "did not issue any search queries" in detail_response.text
 
 
+def test_successful_run_against_a_model_with_no_web_search_shows_dedicated_explanation(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """NP-T3: a run against a model with `supports_web_search = False` (e.g. DeepSeek) gets a
+    dedicated explanation for why there are no citations, distinct from the generic empty state
+    every other (search-capable) provider's occasional citation-less run shows.
+    """
+    no_search_model = AIModel(
+        provider_id=seed["provider"].id, model_name="no-search-test-model", capability_tier="economy", supports_web_search=False
+    )
+    db_session.add(no_search_model)
+    db_session.commit()
+    db_session.refresh(no_search_model)
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme is a solid company."},
+        rendered_text="Acme is a solid company.",
+        has_citations=False,
+        citations=[],
+        token_usage={"prompt_tokens": 10, "completion_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": no_search_model.id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "no web search" in detail_response.text
+    assert "No citations were returned for this run." not in detail_response.text
+
+
 def test_failed_run_records_error_status_and_message(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
     FakeAdapter.error_to_raise = RuntimeError("simulated provider failure")
 

@@ -368,6 +368,7 @@
   "run.raw_json_toggle": "Show / hide raw JSON",
   "run.citations_label": "Citations",
   "run.citations_empty": "No citations were returned for this run.",
+  "run.citations_not_supported": "This model has no web search — its answers come from model knowledge only, so citations are never returned.",
   "run.citation_claim_label": "Cited claim",
   "run.citation_source_passage_label": "Source passage",
   "run.search_queries_label": "Search queries",

@@ -173,6 +173,8 @@
     </li>
     {% endfor %}
   </ul>
+  {% elif not run.model.supports_web_search %}
+  <p class="text-stone-500 text-sm">{{ t('run.citations_not_supported') }}</p>
   {% else %}
   <p class="text-stone-500 text-sm">{{ t('run.citations_empty') }}</p>
   {% endif %}

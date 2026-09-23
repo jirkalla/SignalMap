@@ -22,6 +22,8 @@ from app.adapters.anthropic import _map_citations as anthropic_map_citations
 from app.adapters.anthropic import _map_search_queries as anthropic_map_search_queries
 from app.adapters.google import _map_citations as google_map_citations
 from app.adapters.google import _map_search_queries as google_map_search_queries
+from app.adapters.deepseek import _map_citations as deepseek_map_citations
+from app.adapters.deepseek import _map_search_queries as deepseek_map_search_queries
 from app.adapters.openai import _map_citations as openai_map_citations
 from app.adapters.perplexity import _map_citations as perplexity_map_citations
 from app.adapters.perplexity import _map_search_queries as perplexity_map_search_queries
@@ -483,3 +485,31 @@ def test_perplexity_returns_search_queries_from_search_results_items_in_order():
 def test_perplexity_handles_missing_output():
     assert perplexity_map_search_queries({}) == []
     assert perplexity_map_search_queries({"output": []}) == []
+
+
+# --- DeepSeek: permanently empty citations/queries (NP-T3) -------------------
+
+
+def _deepseek_payload(content: str) -> dict:
+    return {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "index": 0,
+                "message": {"content": content, "role": "assistant", "annotations": None, "tool_calls": None},
+            }
+        ]
+    }
+
+
+def test_deepseek_never_returns_citations():
+    """No citation field exists in DeepSeek's payload at all — design decision 3, a structural
+    fact about the provider, not an unfinished mapper (see app/adapters/deepseek.py docstring).
+    """
+    assert deepseek_map_citations(_deepseek_payload("Some answer.")) == ([], False)
+    assert deepseek_map_citations({}) == ([], False)
+
+
+def test_deepseek_never_returns_search_queries():
+    assert deepseek_map_search_queries(_deepseek_payload("Some answer.")) == []
+    assert deepseek_map_search_queries({}) == []

@@ -218,6 +218,38 @@ def test_estimate_run_cost_does_not_double_count_perplexity_cache_creation_token
     assert cost == round(expected, 6)
 
 
+def test_estimate_run_cost_handles_deepseek_shaped_usage():
+    # NP-T3: DeepSeek uses prompt_tokens/completion_tokens (Chat Completions naming), distinct
+    # from every other shape's key names — no collision, but must still be detected as its own
+    # shape rather than falling through to None ("unrecognized").
+    model = _model()
+    prices = {"input": Decimal("0.30"), "output": Decimal("1.20")}
+    token_usage = {"prompt_tokens": 95, "completion_tokens": 21, "total_tokens": 116, "prompt_cache_hit_tokens": 0}
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    assert cost == round(95 / 1e6 * 0.30 + 21 / 1e6 * 1.20, 6)
+
+
+def test_estimate_run_cost_does_not_double_count_deepseek_cache_hit_tokens():
+    # prompt_tokens is the SUM of hit+miss (verified in NP-T1), same double-count trap as
+    # OpenAI/Perplexity above.
+    model = _model()
+    prices = {"input": Decimal("1.32"), "output": Decimal("3.96"), "cache_read": Decimal("0.044")}
+    token_usage = {
+        "prompt_tokens": 10_000,
+        "completion_tokens": 500,
+        "prompt_cache_hit_tokens": 4_000,
+        "prompt_cache_miss_tokens": 6_000,
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 10000 - 4000 (hit) = 6000
+    expected = 6_000 / 1e6 * 1.32 + 500 / 1e6 * 3.96 + 4_000 / 1e6 * 0.044
+    assert cost == round(expected, 6)
+
+
 def test_estimate_run_cost_is_none_for_perplexity_nonzero_cache_creation_with_no_price():
     # design decision 14, Perplexity-specific: NP-T1's probe found no published cache-write price
     # for Perplexity, so migration 0033 seeds no cache_write component for it — a run that

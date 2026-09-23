@@ -368,6 +368,7 @@
   "run.raw_json_toggle": "Rohes JSON ein-/ausblenden",
   "run.citations_label": "Quellenangaben",
   "run.citations_empty": "Für diesen Lauf wurden keine Quellenangaben zurückgegeben.",
+  "run.citations_not_supported": "Dieses Modell hat keine Websuche — seine Antworten stammen ausschließlich aus dem Modellwissen, weshalb keine Quellenangaben zurückgegeben werden.",
   "run.citation_claim_label": "Zitierte Aussage",
   "run.citation_source_passage_label": "Quellenpassage",
   "run.search_queries_label": "Suchanfragen",
