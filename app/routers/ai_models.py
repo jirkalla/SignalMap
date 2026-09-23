@@ -54,6 +54,26 @@ def _model_rows(db: Session) -> list[tuple[AIModel, int, dict[str, Decimal]]]:
     return [(m, run_counts.get(m.id, 0), prices.get(m.id, {})) for m in models]
 
 
+def _grouped_model_rows(rows: list[tuple[AIModel, int, dict[str, Decimal]]]) -> list[tuple[str, list[tuple[AIModel, int, dict[str, Decimal]]]]]:
+    """`_model_rows`'s flat, already-provider-ordered list, folded into (provider_name, rows)
+    groups for list.html's per-provider section headers — six providers as of NP-T4 made the flat
+    table hard to scan (found while building that branch, docs/TASKS_NEW_PROVIDERS.md), the rows
+    always blending together with no visual break between providers.
+
+    A plain dict keyed by provider name (not `itertools.groupby`, which needs pre-sorted input AND
+    silently produces a new group per *adjacent* run rather than merging same-keyed groups that
+    aren't contiguous) — `_model_rows`'s own `ORDER BY Provider.name` already keeps a provider's
+    rows contiguous, but a dict is one line simpler here and doesn't depend on that ordering
+    invariant holding forever. Same "group by, insertion order" idiom as
+    app/routers/prompts.py's `_runnable_model_groups`.
+    """
+    groups: dict[str, list[tuple[AIModel, int, dict[str, Decimal]]]] = {}
+    for row in rows:
+        model = row[0]
+        groups.setdefault(model.provider.name, []).append(row)
+    return list(groups.items())
+
+
 def _model_run_count(db: Session, model_id: int) -> int:
     """How many runs exist against this one model — the delete-block check (same pattern as
 
@@ -270,8 +290,8 @@ def _validate_and_parse_model_form(
 
 @router.get("")
 def list_ai_models(request: Request, db: Session = Depends(get_db)):
-    """List every AI model across all providers, with pricing, capability tier, and run-based delete eligibility."""
-    return render(request, "ai_models/list.html", {"rows": _model_rows(db)})
+    """List every AI model, grouped by provider, with pricing, capability tier, and run-based delete eligibility."""
+    return render(request, "ai_models/list.html", {"grouped_rows": _grouped_model_rows(_model_rows(db))})
 
 
 @router.get("/new")

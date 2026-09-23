@@ -11,12 +11,11 @@
 <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-md px-4 py-3 mb-4">{{ error }}</div>
 {% endif %}
 
-{% if rows %}
+{% if grouped_rows %}
 <div class="hidden lg:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
   <table class="w-full text-sm text-left">
     <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
       <tr>
-        <th class="py-3 px-4 font-medium">{{ t('ai_model.provider_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('ai_model.model_name_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('ai_model.cost_label') }}</th>
         <th class="py-3 px-4 font-medium">{{ t('ai_model.context_max_label') }}</th>
@@ -26,10 +25,15 @@
         <th class="py-3 px-4 font-medium text-right">{{ t('common.actions') }}</th>
       </tr>
     </thead>
+    {% for provider_name, provider_rows in grouped_rows %}
     <tbody>
-      {% for model, run_count, prices in rows %}
+      <tr class="bg-stone-50/70">
+        <th colspan="7" scope="colgroup" class="py-2 px-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wide border-t border-stone-200">
+          {{ provider_name }} <span class="font-normal normal-case text-stone-400">({{ provider_rows|length }})</span>
+        </th>
+      </tr>
+      {% for model, run_count, prices in provider_rows %}
       <tr class="border-t border-stone-100 hover:bg-stone-50">
-        <td class="py-3 px-4 text-stone-600">{{ model.provider.name }}</td>
         <td class="py-3 px-4">
           <div class="font-mono text-xs text-stone-900">{{ model.model_name }}</div>
           {% if model.display_name %}<div class="text-stone-500">{{ model.display_name }}</div>{% endif %}
@@ -50,29 +54,38 @@
       </tr>
       {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
 </div>
 
-<div class="lg:hidden space-y-3">
-  {% for model, run_count, prices in rows %}
-  <div class="border border-stone-200 rounded-lg p-4 bg-white">
-    <div class="flex items-center justify-between">
-      <span class="text-xs text-stone-400">{{ model.provider.name }}</span>
-      {{ cost_badge(model, prices, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}
-    </div>
-    <div class="font-mono text-sm font-medium text-stone-900 mt-1">{{ model.model_name }}</div>
-    {% if model.display_name %}<div class="text-sm text-stone-500">{{ model.display_name }}</div>{% endif %}
-    <div class="text-xs text-stone-500 mt-2">
-      {{ t('ai_model.context_max_label') }}: {{ model.context_window_tokens if model.context_window_tokens is not none else t('common.none') }} / {{ model.max_output_tokens if model.max_output_tokens is not none else t('common.none') }}
-      · {{ t('ai_model.web_search_label') }}: {{ t('common.yes') if model.supports_web_search else t('common.no') }}
-    </div>
-    <div class="flex items-center justify-between mt-3">
-      {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
-      <span class="text-xs text-stone-400">{{ local_time(model.updated_at, t('common.utc_suffix'), seconds=False) }}</span>
-    </div>
-    <div class="flex gap-4 mt-3 text-sm">
-      <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
-      {{ delete_button('/ai-models/' ~ model.id ~ '/delete', t('ai_model.delete_confirm'), t('ai_model.delete_button'), extra_classes=(' opacity-40' if run_count else '')) }}
+<div class="lg:hidden space-y-5">
+  {% for provider_name, provider_rows in grouped_rows %}
+  <div>
+    <p class="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2 px-1">
+      {{ provider_name }} <span class="font-normal normal-case text-stone-400">({{ provider_rows|length }})</span>
+    </p>
+    <div class="space-y-3">
+      {% for model, run_count, prices in provider_rows %}
+      <div class="border border-stone-200 rounded-lg p-4 bg-white">
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-sm font-medium text-stone-900">{{ model.model_name }}</span>
+          {{ cost_badge(model, prices, t('ai_model.cost_free'), t('ai_model.cost_per_million_suffix')) }}
+        </div>
+        {% if model.display_name %}<div class="text-sm text-stone-500">{{ model.display_name }}</div>{% endif %}
+        <div class="text-xs text-stone-500 mt-2">
+          {{ t('ai_model.context_max_label') }}: {{ model.context_window_tokens if model.context_window_tokens is not none else t('common.none') }} / {{ model.max_output_tokens if model.max_output_tokens is not none else t('common.none') }}
+          · {{ t('ai_model.web_search_label') }}: {{ t('common.yes') if model.supports_web_search else t('common.no') }}
+        </div>
+        <div class="flex items-center justify-between mt-3">
+          {{ toggle_button('/ai-models/' ~ model.id ~ '/toggle-active', model.is_active, t('ai_model.active_label'), t('ai_model.inactive_label')) }}
+          <span class="text-xs text-stone-400">{{ local_time(model.updated_at, t('common.utc_suffix'), seconds=False) }}</span>
+        </div>
+        <div class="flex gap-4 mt-3 text-sm">
+          <a href="/ai-models/{{ model.id }}/edit" class="text-stone-600 hover:underline">{{ t('common.edit') }}</a>
+          {{ delete_button('/ai-models/' ~ model.id ~ '/delete', t('ai_model.delete_confirm'), t('ai_model.delete_button'), extra_classes=(' opacity-40' if run_count else '')) }}
+        </div>
+      </div>
+      {% endfor %}
     </div>
   </div>
   {% endfor %}
