@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Cost Components
 
+## Status: ✅ Done — PR #14, merged 2026-09-16, released in v1.0.0
+
 ## v1.2 | Září 2026
 ## Branch: feature/signalmap-cost-components
 ## Task ID prefix: CC

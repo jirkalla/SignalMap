@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Runs Export (CSV / XLSX / JSON)
 
+## Status: ✅ Done — PR #3, merged 2026-09-10, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-runs-export
 ## Task ID prefix: EX

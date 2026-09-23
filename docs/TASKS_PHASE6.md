@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Phase 6 (Auth + user management)
 
+## Status: ✅ Done — PR #8, merged 2026-09-12, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-phase6-auth
 ## Task ID prefix: P6

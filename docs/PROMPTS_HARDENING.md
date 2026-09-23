@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Production-Readiness Hardening
 
+## Status: ✅ Done — PR #1, merged 2026-09-09, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

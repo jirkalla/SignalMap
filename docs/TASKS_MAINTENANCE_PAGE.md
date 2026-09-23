@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Maintenance Page
 
+## Status: ✅ Done — PR #16, merged 2026-09-18, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-maintenance-page
 ## Task ID prefix: MP

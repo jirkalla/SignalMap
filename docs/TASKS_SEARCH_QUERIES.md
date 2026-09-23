@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Search Query Capture (from existing raw_payload)
 
+## Status: ✅ Done — PR #4, merged 2026-09-10, released in v1.0.0
+
 ## v1.1 | Září 2026
 ## Branch: feature/signalmap-search-queries
 ## Task ID prefix: SQ

@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Phase 2 (Anthropic Adapter + Provider/Model Admin)
 
+## Status: ✅ Done — PR #2, merged 2026-09-09, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-phase2-anthropic-admin
 ## Task ID prefix: P2

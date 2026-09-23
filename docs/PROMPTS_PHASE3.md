@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Phase 3 (First Analysis Skill)
 
+## Status: ✅ Done — PR #5, merged 2026-09-10, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Phase 4 (Dashboard v0)
 
+## Status: ✅ Done — PR #6, merged 2026-09-11, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

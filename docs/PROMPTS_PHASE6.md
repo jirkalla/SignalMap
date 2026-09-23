@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Phase 6 (Auth + user management)
 
+## Status: ✅ Done — PR #8, merged 2026-09-12, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

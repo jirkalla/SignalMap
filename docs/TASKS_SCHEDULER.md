@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Scheduler
 
+## Status: ✅ Done — PR #18, merged 2026-09-22, released in v1.0.0
+
 ## v1.1 | Září 2026
 ## Branch: feature/signalmap-scheduler
 ## Task ID prefix: SCH

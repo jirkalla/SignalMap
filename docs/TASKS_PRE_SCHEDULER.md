@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Pre-Scheduler Data Hygiene
 
+## Status: ✅ Done — PR #17, merged 2026-09-19, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-prescheduler-data-hygiene
 ## Task ID prefix: PRE

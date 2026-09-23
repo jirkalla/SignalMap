@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: ChatGPT adapter + persona + price history
 
+## Status: ✅ Done — PR #10, merged 2026-09-13, released in v1.0.0
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:

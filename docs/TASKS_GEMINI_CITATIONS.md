@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Oprava extrakce citací (Gemini) + sémantika spanů
 
+## Status: ✅ Done — PR #15, merged 2026-09-16, released in v1.0.0
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-gemini-citation-extraction
 ## Task ID prefix: GC
