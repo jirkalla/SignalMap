@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    xai_api_key: str = ""
+    perplexity_api_key: str = ""
+    deepseek_api_key: str = ""
     # JWT signing key for the login session cookie (app/auth.py). No default — a missing value
     # must fail app startup loudly, never silently fall back to a weak, guessable secret.
     secret_key: str
