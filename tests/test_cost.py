@@ -192,3 +192,41 @@ def test_estimate_run_cost_prices_normally_when_unpriced_cache_component_is_zero
     cost = estimate_run_cost(token_usage, model, {"input": Decimal("2.0"), "output": Decimal("10.0")})
 
     assert cost == round(1000 / 1e6 * 2.0 + 200 / 1e6 * 10.0, 6)
+
+
+def test_estimate_run_cost_does_not_double_count_perplexity_cache_creation_tokens():
+    # NP-T2: Perplexity's input_tokens_details ALSO exists (like OpenAI's), but with different
+    # nested field names (cache_creation_input_tokens, not cache_write_tokens) — must be detected
+    # as PERPLEXITY_SHAPE, not misidentified as OPENAI_SHAPE, or these paths would read as None
+    # and the cache tokens would double-bill exactly like the OpenAI regression test above guards.
+    model = _model()
+    prices = {"input": Decimal("0.25"), "output": Decimal("2.50"), "cache_read": Decimal("0.0625"), "cache_write": Decimal("0.10")}
+    token_usage = {
+        "input_tokens": 10_000,
+        "output_tokens": 1_000,
+        "input_tokens_details": {
+            "cache_creation_input_tokens": 4_000,
+            "cache_read_input_tokens": 1_000,
+            "cached_tokens": 1_000,
+        },
+    }
+
+    cost = estimate_run_cost(token_usage, model, prices)
+
+    # billable input = 10000 - 1000 (read) - 4000 (write) = 5000
+    expected = 5_000 / 1e6 * 0.25 + 1_000 / 1e6 * 2.50 + 1_000 / 1e6 * 0.0625 + 4_000 / 1e6 * 0.10
+    assert cost == round(expected, 6)
+
+
+def test_estimate_run_cost_is_none_for_perplexity_nonzero_cache_creation_with_no_price():
+    # design decision 14, Perplexity-specific: NP-T1's probe found no published cache-write price
+    # for Perplexity, so migration 0033 seeds no cache_write component for it — a run that
+    # actually reports nonzero cache_creation_input_tokens must come back "unknown", never free.
+    model = _model()
+    token_usage = {
+        "input_tokens": 5_272,
+        "output_tokens": 97,
+        "input_tokens_details": {"cache_creation_input_tokens": 4_725, "cache_read_input_tokens": 0, "cached_tokens": 0},
+    }
+
+    assert estimate_run_cost(token_usage, model, {"input": Decimal("0.25"), "output": Decimal("2.50")}) is None

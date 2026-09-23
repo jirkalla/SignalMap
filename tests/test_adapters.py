@@ -23,6 +23,8 @@ from app.adapters.anthropic import _map_search_queries as anthropic_map_search_q
 from app.adapters.google import _map_citations as google_map_citations
 from app.adapters.google import _map_search_queries as google_map_search_queries
 from app.adapters.openai import _map_citations as openai_map_citations
+from app.adapters.perplexity import _map_citations as perplexity_map_citations
+from app.adapters.perplexity import _map_search_queries as perplexity_map_search_queries
 
 
 def test_google_returns_web_search_queries_in_order():
@@ -403,3 +405,81 @@ def test_openai_skips_non_url_citation_annotations():
 def test_openai_without_annotations_reports_no_citations():
     assert openai_map_citations(_openai_payload("A claim.", [])) == ([], False)
     assert openai_map_citations({}) == ([], False)
+
+
+# --- Perplexity citations and search queries (NP-T2) -------------------------
+
+
+def _perplexity_search_results_item(queries: list[str], results: list[dict]) -> dict:
+    return {"type": "search_results", "queries": queries, "results": results}
+
+
+def _perplexity_result(url: str, title: str, snippet: str = "...") -> dict:
+    return {"id": 1, "url": url, "title": title, "source": "web", "snippet": snippet, "date": None, "last_updated": "2026-09-23"}
+
+
+def test_perplexity_maps_citations_from_search_results_item():
+    """Citations are a dedicated `search_results` output item, not `url_citation` annotations —
+    shape verified in docs/TASKS_NEW_PROVIDERS.md NP-T1, unlike OpenAI/Grok.
+    """
+    payload = {
+        "output": [
+            _perplexity_search_results_item(
+                ["Knauf AG company products"],
+                [
+                    _perplexity_result("https://knauf.com/en", "Knauf | Building materials"),
+                    _perplexity_result("https://en.wikipedia.org/wiki/Knauf", "Knauf - Wikipedia"),
+                ],
+            ),
+            {"type": "message", "content": [{"type": "output_text", "text": "Knauf makes gypsum products.", "annotations": []}]},
+        ]
+    }
+
+    citations, has_citations = perplexity_map_citations(payload)
+
+    assert has_citations is True
+    assert [c.source_url for c in citations] == ["https://knauf.com/en", "https://en.wikipedia.org/wiki/Knauf"]
+    assert [c.citation_position for c in citations] == [0, 1]
+    assert citations[0].source_domain == "knauf.com"
+    # Permanently None: no offsets into the answer text exist for this provider (design decision 4).
+    assert citations[0].cited_answer_span is None
+    assert citations[0].answer_span_start is None
+    assert citations[0].source_passage is None
+
+
+def test_perplexity_position_runs_across_several_search_results_items():
+    payload = {
+        "output": [
+            _perplexity_search_results_item(["first query"], [_perplexity_result("https://a.de/x", "A")]),
+            _perplexity_search_results_item(
+                ["second query"], [_perplexity_result("https://b.de/y", "B"), _perplexity_result("https://c.de/z", "C")]
+            ),
+        ]
+    }
+
+    citations, _ = perplexity_map_citations(payload)
+
+    assert [c.citation_position for c in citations] == [0, 1, 2]
+    assert [c.source_url for c in citations] == ["https://a.de/x", "https://b.de/y", "https://c.de/z"]
+
+
+def test_perplexity_without_search_results_reports_no_citations():
+    assert perplexity_map_citations({"output": [{"type": "message", "content": []}]}) == ([], False)
+    assert perplexity_map_citations({}) == ([], False)
+
+
+def test_perplexity_returns_search_queries_from_search_results_items_in_order():
+    payload = {
+        "output": [
+            _perplexity_search_results_item(["first query"], []),
+            {"type": "message", "content": []},
+            _perplexity_search_results_item(["second query", "third query"], []),
+        ]
+    }
+
+    assert perplexity_map_search_queries(payload) == ["first query", "second query", "third query"]
+
+
+def test_perplexity_handles_missing_output():
+    assert perplexity_map_search_queries({}) == []
+    assert perplexity_map_search_queries({"output": []}) == []
