@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.password import PasswordHelper
 from sqlalchemy.orm import Session
 
+from app import __version__
 from app.auth import auth_backend, current_active_user, current_user_from_cookie, fastapi_users, require_role
 from app.database import get_db
 from app.errors import register_exception_handlers
@@ -53,7 +54,7 @@ app = FastAPI(
         "Configure a client, define a prompt, run it against Google Gemini, "
         "and inspect the stored raw answer and citations."
     ),
-    version="0.1.0",
+    version=__version__,
     # The built-in /docs, /redoc, and /openapi.json are unauthenticated by default — disabled
     # here and replaced below with admin-only versions (docs/TASKS_PHASE6.md follow-up: hiding
     # the nav link alone left the OpenAPI schema, which exposes every route/model in the app,

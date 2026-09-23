@@ -33,6 +33,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app import __version__
 from app.config import get_settings
 from app.database import SessionLocal
 from app.logging_config import configure_logging
@@ -50,9 +51,8 @@ from app.services.run_execution import QuotaExceededError, build_request_payload
 
 logger = logging.getLogger(__name__)
 
-# Matches app/main.py's FastAPI `version=` — no shared constant exists yet for either to import;
-# duplicated rather than introducing a cross-import between an entrypoint module and another.
-APP_VERSION = "0.1.0"
+# Written to worker_heartbeats.version — the same app.__version__ the web app reports.
+APP_VERSION = __version__
 
 HEARTBEAT_FILE = Path("/tmp/worker-alive")
 _TICKER_INTERVAL = timedelta(minutes=1)

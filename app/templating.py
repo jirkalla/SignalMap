@@ -12,6 +12,7 @@ from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
+from app import __version__
 from app.auth import current_user_from_cookie
 from app.i18n import LOCALE_COOKIE_NAME, get_t, get_translator, resolve_locale
 from app.models import User
@@ -19,6 +20,10 @@ from app.models import User
 __all__ = ["can_edit", "can_flag_test_client", "can_schedule", "get_t", "render", "templates"]
 
 templates = Jinja2Templates(directory="app/templates")
+
+# A process-wide constant, so a global rather than a render() context key — render() only adds what
+# differs per request (docs/TASKS_VERSIONING.md VER-T1).
+templates.env.globals["app_version"] = __version__
 
 
 def can_edit(user: "User | None") -> bool:
