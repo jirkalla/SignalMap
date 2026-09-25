@@ -24,7 +24,9 @@ Nothing in progress right now.
 
 ## Merged, release pending
 
-Nothing waiting for a release right now.
+| Document | Prefix | Branch | PR | Merged | Notes |
+|---|---|---|---|---|---|
+| TASKS_OPENAI_IMPORT_RACE | OIR | feature/signalmap-openai-import-race | #21 | 2026-09-25 | Production deploy and verification (T3) not done yet |
 
 ## Released — newest first
 
