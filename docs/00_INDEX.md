@@ -24,16 +24,7 @@ Nothing in progress right now.
 
 ## Merged, release pending
 
-Code is on `master`; no version bump/tag/deploy yet (`AI_INSTRUCTIONS.md` §4
-— that's the user's own step, never the agent's). `TASKS_VERSIONING` and
-`TASKS_NEW_PROVIDERS` have both now merged, so both ship together in one
-deploy as `v1.1.0` rather than tagging an untested `v1.0.0` that never
-actually runs in production by itself.
-
-| Document | Prefix | Branch | PR | Merged | Planned release |
-|---|---|---|---|---|---|
-| TASKS_VERSIONING | VER | feature/signalmap-versioning-footer | #19 | 2026-09-23 | v1.1.0 |
-| TASKS_NEW_PROVIDERS | NP | feature/signalmap-new-providers | #20 | 2026-09-23 | v1.1.0 |
+Nothing waiting for a release right now.
 
 ## Released — newest first
 
@@ -43,6 +34,8 @@ per-branch pattern.
 
 | Document | Prefix | Branch | PR | Merged | Released in |
 |---|---|---|---|---|---|
+| TASKS_NEW_PROVIDERS | NP | feature/signalmap-new-providers | #20 | 2026-09-23 | v1.1.0 |
+| TASKS_VERSIONING | VER | feature/signalmap-versioning-footer | #19 | 2026-09-23 | v1.1.0 |
 | TASKS_SCHEDULER | SCH | feature/signalmap-scheduler | #18 | 2026-09-22 | v1.0.0 |
 | TASKS_PRE_SCHEDULER | PRE | feature/signalmap-prescheduler-data-hygiene | #17 | 2026-09-19 | v1.0.0 |
 | TASKS_MAINTENANCE_PAGE | MP | feature/signalmap-maintenance-page | #16 | 2026-09-18 | v1.0.0 |

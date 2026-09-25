@@ -11,6 +11,12 @@ not a public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- The first runs on OpenAI, Perplexity, DeepSeek, Grok, or Anthropic
+  after a restart could fail with "deadlock detected by _ModuleLock"
+  when triggered concurrently.
+
 ## [1.1.0] - 2026-09-23
 
 ### Added

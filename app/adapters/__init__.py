@@ -4,6 +4,16 @@ Adding a new provider later means adding a new adapter module plus one
 entry here — routers never import a specific adapter class directly.
 """
 
+# The openai and anthropic SDKs load these lazily on first `client.chat` /
+# `client.responses` / `client.messages` access (cached_property + local import in their
+# _client.py). Left lazy, that first import happens inside a request thread, and two
+# concurrent runs can deadlock on Python's per-module import lock (_DeadlockError, seen on
+# the first Grok run after the v1.1.0 deploy). Importing them here moves it to process
+# startup, in the main thread. google-genai doesn't need this: it imports Models eagerly.
+import anthropic.resources.messages  # noqa: F401
+import openai.resources.chat  # noqa: F401
+import openai.resources.responses  # noqa: F401
+
 from app.adapters.anthropic import AnthropicAdapter
 from app.adapters.base import ProviderAdapter
 from app.adapters.deepseek import DeepSeekAdapter
