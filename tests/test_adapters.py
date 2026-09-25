@@ -12,9 +12,15 @@ serialized response shape they actually receive in production:
 verified 2026-09-16 against real stored `raw_responses.raw_payload` rows, and
 the SDK field names behind them 2026-09-10 against the installed SDKs (see
 docs/TASKS_SEARCH_QUERIES.md design decisions 4-5), so nothing here is guessed.
+
+The import-race regression test at the bottom (docs/TASKS_OPENAI_IMPORT_RACE.md
+OIR-T1) is the odd one out: it runs `import app.adapters` in a subprocess
+rather than testing a mapping function.
 """
 
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -609,3 +615,27 @@ def test_grok_returns_search_queries_from_web_search_call_items_in_order():
 def test_grok_handles_missing_output():
     assert grok_map_search_queries({}) == []
     assert grok_map_search_queries({"output": []}) == []
+
+
+# --- Import-race regression (OIR-T1) ------------------------------------------
+
+
+def test_importing_app_adapters_preloads_the_lazy_sdk_resource_modules():
+    """`import app.adapters` must eagerly load the openai/anthropic modules those SDKs
+    otherwise import lazily on first `client.chat`/`client.responses`/`client.messages`
+    access — left lazy, that first import happens inside a request thread, and two
+    concurrent runs can deadlock on Python's per-module import lock
+    (docs/TASKS_OPENAI_IMPORT_RACE.md, incident: first Grok run after the v1.1.0 deploy).
+
+    Runs in a subprocess: in-process, some earlier test could already have imported these
+    modules, and the assertion would pass without app/adapters/__init__.py doing anything.
+    """
+    script = (
+        "import sys\n"
+        "import app.adapters\n"
+        "modules = ['openai.resources.chat', 'openai.resources.responses', 'anthropic.resources.messages']\n"
+        "missing = [m for m in modules if m not in sys.modules]\n"
+        "assert not missing, f'not preloaded: {missing}'\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
