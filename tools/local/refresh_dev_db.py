@@ -37,10 +37,13 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from _dbtools import DB_USER, DEST, DUMP_RE, MIN_SIZE, PGDMP_MAGIC, PROJECT_DIR, compose, psql
+from _dbtools import (
+    COUNT_TABLES, DB_USER, DEST, DUMP_RE, MIN_SIZE, PGDMP_MAGIC, PROJECT_DIR, compose, psql,
+)
 
 SNAPSHOT_DIR = Path(
     os.environ.get("SIGNALMAP_DEV_SNAPSHOT_DIR", r"C:\Backups\SignalMap\dev-snapshots")
@@ -53,10 +56,56 @@ SNAPSHOT_KEEP = int(os.environ.get("SIGNALMAP_DEV_SNAPSHOT_KEEP", "10"))
 SNAPSHOT_RE = re.compile(r"^signalmap-local-(\d{8})-(\d{6})-([a-z0-9]+(?:-[a-z0-9]+)*)\.dump$")
 
 TARGET_DB = "signalmap"
+# Restores land here first and replace TARGET_DB only once checked and sanitised
+# (design decision 9), so a failed restore never touches the working database.
+INCOMING_DB = "signalmap_incoming"
 
-# Database comment written after a refresh (design decision 8), e.g.
-# "prod:signalmap-20260925-031500". Anything else, or no comment, means dev data.
-PROD_COMMENT_RE = re.compile(r"^prod:signalmap-(\d{8})-\d{6}$")
+# Database comment recording where the data came from (design decision 8), e.g.
+# "prod:signalmap-20260925-031500" after a refresh, or "prod:signalmap-20260925" after
+# restore-dev of a snapshot that held prod data. Anything else, or none, means dev data.
+PROD_COMMENT_RE = re.compile(r"^prod:signalmap-(\d{8})(?:-\d{6})?$")
+
+PULL_SCRIPT = Path(__file__).resolve().with_name("pull_backup.py")
+HEARTBEAT_TIMEOUT_SECONDS = 60
+
+# Design decisions 10b and 12, applied in INCOMING_DB before the swap, so TARGET_DB
+# never holds unsanitised prod data. One statement: data-modifying CTEs run in a single
+# transaction, all or nothing. Values come from alembic/versions/0030_scheduler.py
+# (run_queue CHECK) and app/models/notification.py (outbox, no CHECK); 'suppressed' is
+# the documented status for a backlog a channel must not deliver. runs are evidence and
+# are only counted, never changed (AI_INSTRUCTIONS section 3).
+SANITIZE_SQL = """
+WITH schedules AS (
+    UPDATE run_schedules
+       SET is_active = false,
+           inactive_reason = 'user',
+           next_run_at = NULL,
+           updated_at = now()
+     WHERE is_active
+    RETURNING 1
+), queue AS (
+    UPDATE run_queue
+       SET status = 'cancelled',
+           finished_at = now(),
+           leased_by = NULL,
+           leased_until = NULL
+     WHERE status IN ('queued', 'leased', 'deferred')
+    RETURNING 1
+), heartbeats AS (
+    DELETE FROM worker_heartbeats
+    RETURNING 1
+), outbox AS (
+    UPDATE notification_outbox
+       SET status = 'suppressed'
+     WHERE status = 'pending'
+    RETURNING 1
+)
+SELECT (SELECT count(*) FROM schedules),
+       (SELECT count(*) FROM queue),
+       (SELECT count(*) FROM heartbeats),
+       (SELECT count(*) FROM outbox),
+       (SELECT count(*) FROM runs WHERE status = 'pending')
+"""
 
 # pydantic v2's own bool parsing (case-insensitive), which is how app/config.py reads
 # SCHEDULER_DRY_RUN. Anything outside both sets makes the worker fail to start.
@@ -153,9 +202,26 @@ def db_comment() -> str:
 
 
 def origin_of(comment: str) -> str:
-    """Origin token used in a snapshot's filename: 'prod-YYYYMMDD' or 'dev'."""
+    """Origin token used in a snapshot's filename: 'prod-YYYYMMDD', 'prod' or 'dev'."""
     match = PROD_COMMENT_RE.match(comment)
-    return f"prod-{match.group(1)}" if match else "dev"
+    if match:
+        return f"prod-{match.group(1)}"
+    return "prod" if comment.startswith("prod:") else "dev"
+
+
+def comment_for(source: Path, is_refresh: bool) -> str:
+    """Database comment to write after restoring `source` (design decision 8)."""
+    if is_refresh:
+        return f"prod:{source.stem}"
+    match = SNAPSHOT_RE.match(source.name)
+    origin = match.group(3) if match else "dev"
+    if origin.startswith("prod-"):
+        return f"prod:signalmap-{origin[len('prod-'):]}"
+    return "prod:unknown" if origin == "prod" else "dev"
+
+
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def open_connections() -> list[str]:
@@ -397,24 +463,20 @@ def confirm(prompt: str) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
-def cmd_overwrite(args: argparse.Namespace) -> int:
-    """Shared flow of `refresh` and `restore-dev`: select, check, plan, confirm."""
-    is_refresh = args.command == "refresh"
+def describe(exc: BaseException) -> str:
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        return f"{' '.join(map(str, exc.cmd[2:7]))} ... selhal (kod {exc.returncode}): {stderr}"
+    return str(exc)
 
-    # Decision 5: never wait for an answer nobody can give.
-    if not args.plan and not args.yes and not sys.stdin.isatty():
-        sys.exit("stdin neni terminal a chybi --yes - potvrzeni nelze ziskat, koncim")
 
-    if is_refresh:
-        source = select_file(args.dump, DEST, DUMP_RE, "prod dumpy")
-        will_pull = not args.no_pull and not args.dump
-    else:
-        source = select_file(args.snapshot, SNAPSHOT_DIR, SNAPSHOT_RE, "dev zalohy")
-        will_pull = False
+def preflight() -> tuple[list[str], list[str], str, list[str]]:
+    """Checks that need no dump (decisions 10a, 13) plus the target's current state.
 
+    Returns (problems, warnings, current db comment, open connections).
+    """
     problems: list[str] = []
     warnings: list[str] = []
-
     try:
         config = compose_config()
         problems += check_compose(config)
@@ -423,17 +485,136 @@ def cmd_overwrite(args: argparse.Namespace) -> int:
         stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
         problems.append(f"`docker compose config` selhal: {stderr}")
 
-    revision, alembic_problems = check_alembic(source)
-    problems += alembic_problems
-
     try:
         comment = db_comment()
         connections = open_connections()
     except subprocess.CalledProcessError:
         problems.append("nelze se pripojit k postgres - bezi `docker compose up -d`?")
         comment, connections = "", []
+    return problems, warnings, comment, connections
 
-    backup = snapshot_path(origin_of(comment), datetime.now())
+
+def print_checks(problems: list[str], warnings: list[str]) -> None:
+    print("\nkontroly:")
+    for warning in warnings:
+        print(f"  VAROVANI  {warning}")
+    for problem in problems:
+        print(f"  CHYBA     {problem}")
+    if not problems:
+        print("  OK        dry-run workera, lokalni prostredi, revize alembic")
+
+
+def run_pull() -> None:
+    """Fetch new prod dumps first (T3 step 2). Exit 2 (stale server backup) only warns."""
+    print("stahuji nove zalohy ze serveru (pull_backup.py) ...")
+    code = subprocess.run([sys.executable, str(PULL_SCRIPT)]).returncode
+    if code == 2:
+        print("VAROVANI pull_backup.py skoncil kodem 2 (zastarala zaloha na serveru) - pokracuji")
+    elif code != 0:
+        sys.exit(
+            f"pull_backup.py selhal (kod {code}) - nic se nezmenilo. "
+            "Zopakuj s --no-pull pro posledni uz stazeny dump."
+        )
+    print()
+
+
+def restore_into_incoming(source: Path) -> None:
+    """Fresh INCOMING_DB with `source` restored into it. TARGET_DB is not touched."""
+    psql(f'DROP DATABASE IF EXISTS "{INCOMING_DB}" WITH (FORCE)')
+    psql(f'CREATE DATABASE "{INCOMING_DB}"')
+    with source.open("rb") as fh:
+        compose(
+            "exec", "-T", "postgres",
+            "pg_restore", "--exit-on-error", "--no-owner", "--no-privileges",
+            "-U", DB_USER, "-d", INCOMING_DB,
+            stdin=fh,
+        )
+
+
+def content_counts(database: str) -> dict[str, int]:
+    """Row counts proving the restore produced real content, not just a schema."""
+    counts = {}
+    for table in COUNT_TABLES:
+        try:
+            counts[table] = int(psql(f"SELECT count(*) FROM {table}", database=database))
+        except subprocess.CalledProcessError:
+            raise RuntimeError(f"obnovena databaze nema tabulku {table}") from None
+    if sum(counts.values()) == 0:
+        raise RuntimeError(f"obnovena databaze je prazdna ({', '.join(COUNT_TABLES)} = 0)")
+    if not psql("SELECT version_num FROM alembic_version", database=database):
+        raise RuntimeError("obnovena databaze ma prazdnou tabulku alembic_version")
+    return counts
+
+
+def sanitize(database: str) -> dict[str, int]:
+    out = psql(SANITIZE_SQL, database=database)
+    schedules, queue, heartbeats, outbox, pending = (int(x) for x in out.split("|"))
+    return {
+        "schedules": schedules, "queue": queue, "heartbeats": heartbeats,
+        "outbox": outbox, "pending_runs": pending,
+    }
+
+
+def wait_for_heartbeat(since: str) -> list[str]:
+    """Design decision 10c: the running worker itself reports dry_run = true.
+
+    Only rows written after `since` (the database's own clock just before the start)
+    count — never a row that merely exists. Returns the worker names seen; raises
+    RuntimeError on a non-dry-run worker or on timeout.
+    """
+    deadline = time.monotonic() + HEARTBEAT_TIMEOUT_SECONDS
+    while True:
+        out = psql(
+            "SELECT worker_name, dry_run FROM worker_heartbeats "
+            f"WHERE last_seen_at > {sql_literal(since)}::timestamptz",
+            database=TARGET_DB,
+        )
+        rows = [line.split("|") for line in out.splitlines() if line]
+        if rows:
+            wrong = [name for name, dry_run in rows if dry_run != "t"]
+            if wrong:
+                raise RuntimeError(f"worker {', '.join(wrong)} bezi BEZ dry-run")
+            return [name for name, _ in rows]
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"zadny heartbeat workera do {HEARTBEAT_TIMEOUT_SECONDS} s")
+        time.sleep(2)
+
+
+def cmd_overwrite(args: argparse.Namespace) -> int:
+    """Shared flow of `refresh` and `restore-dev` (docs/TASKS_DEV_DB_REFRESH.md T3).
+
+    The order is the safety argument: checks before anything is downloaded or
+    stopped, a backup before anything is overwritten, sanitising before the swap,
+    and the worker's own heartbeat checked after the start.
+    """
+    is_refresh = args.command == "refresh"
+
+    # Decision 5: never wait for an answer nobody can give.
+    if not args.plan and not args.yes and not sys.stdin.isatty():
+        sys.exit("stdin neni terminal a chybi --yes - potvrzeni nelze ziskat, koncim")
+
+    # 1. Checks that need no dump — before pull_backup.py downloads anything.
+    problems, warnings, comment, connections = preflight()
+
+    # 2. Newest prod dumps first, unless told otherwise. Never in --plan.
+    will_pull = is_refresh and not args.no_pull and not args.dump
+    if will_pull and not args.plan:
+        if problems:
+            print_checks(problems, warnings)
+            print(f"\n{len(problems)} problem(u) - nic se nestahlo ani nezmenilo.")
+            return 1
+        run_pull()
+
+    # Selected before the backup below, so restore-dev's "newest" is never the backup itself.
+    if is_refresh:
+        source = select_file(args.dump, DEST, DUMP_RE, "prod dumpy")
+    else:
+        source = select_file(args.snapshot, SNAPSHOT_DIR, SNAPSHOT_RE, "dev zalohy")
+    revision, alembic_problems = check_alembic(source)
+    problems += alembic_problems
+
+    # 3. Plan + confirmation.
+    backup_preview = snapshot_path(origin_of(comment), datetime.now())
     # A file given by path may be named anything; only a recognised name carries a date.
     pattern = DUMP_RE if is_refresh else SNAPSHOT_RE
     when = taken_at(source, pattern) if pattern.match(source.name) else None
@@ -444,11 +625,15 @@ def cmd_overwrite(args: argparse.Namespace) -> int:
           + (f", porizeno {when:%Y-%m-%d %H:%M:%S}" if when else "")
           + f", alembic {revision or '?'}")
     if will_pull:
-        print("  stazeni   pred obnovou se spusti pull_backup.py; kdyz stahne novejsi dump,")
-        print("            pouzije se ten (--no-pull nebo zadany DUMP to vypne)")
+        if args.plan:
+            print("  stazeni   pred obnovou se spusti pull_backup.py; kdyz stahne novejsi dump,")
+            print("            pouzije se ten (--no-pull nebo zadany DUMP to vypne)")
+        else:
+            print("  stazeni   pull_backup.py probehl, zdroj je nejnovejsi dump po stazeni")
     print(f"  cil       databaze '{TARGET_DB}' (puvod: {origin_of(comment)}"
           + (f", komentar '{comment}'" if comment else "") + ")")
-    print(f"  zaloha    {backup}")
+    print(f"            po obnove: komentar '{comment_for(source, is_refresh)}'")
+    print(f"  zaloha    {backup_preview}")
     print(f"            (pred prepisem, vzdy; retence poslednich {SNAPSHOT_KEEP})")
     if connections:
         print(f"  spojeni   {len(connections)} k '{TARGET_DB}' - app/worker se zastavi, zbytek se ukonci:")
@@ -456,14 +641,10 @@ def cmd_overwrite(args: argparse.Namespace) -> int:
             print(f"              {line}")
     else:
         print(f"  spojeni   zadna k '{TARGET_DB}'")
+    print("  uprava    rozvrhy vypnout, frontu zrusit, heartbeaty smazat, pending upozorneni")
+    print(f"            potlacit - v '{INCOMING_DB}', pred vymenou")
 
-    print("\nkontroly:")
-    for warning in warnings:
-        print(f"  VAROVANI  {warning}")
-    for problem in problems:
-        print(f"  CHYBA     {problem}")
-    if not problems:
-        print("  OK        dry-run workera, lokalni prostredi, revize alembic")
+    print_checks(problems, warnings)
 
     if problems:
         print(f"\n{len(problems)} problem(u) - nic se nezmenilo.")
@@ -476,9 +657,108 @@ def cmd_overwrite(args: argparse.Namespace) -> int:
         print("zruseno - nic se nezmenilo.")
         return 1
 
-    # Writing (backup, swap, sanitising, restart) is docs/TASKS_DEV_DB_REFRESH.md T3.
-    print("zapis jeste neni implementovany (DR-3) - nic se nezmenilo.")
-    return 1
+    # 4. Backup of the current database — no backup, no overwrite (decision 6).
+    print(f"\nzalohuji databazi '{TARGET_DB}' ...")
+    try:
+        backup = take_snapshot()
+    except (subprocess.CalledProcessError, RuntimeError, OSError) as exc:
+        print(f"ZALOHA SELHALA - nic se nezmenilo: {describe(exc)}", file=sys.stderr)
+        return 1
+    print(f"  {backup} ({size_mb(backup)})")
+    for removed in prune_snapshots(protect=source):
+        print(f"  retence smazala {removed.name}")
+
+    # 5-8. Stop, restore into INCOMING_DB, check + sanitise there, then swap.
+    dropped = False
+    try:
+        print("zastavuji app a worker ...")
+        compose("stop", "app", "worker")
+        print(f"obnovuji {source.name} do '{INCOMING_DB}' ...")
+        restore_into_incoming(source)
+        counts = content_counts(INCOMING_DB)
+        print(f"upravuji data v '{INCOMING_DB}' ...")
+        sanitized = sanitize(INCOMING_DB)
+        print(f"vymenuji '{INCOMING_DB}' -> '{TARGET_DB}' ...")
+        # FORCE ends leftover sessions (e.g. DBeaver) atomically with the drop (decision 14).
+        psql(f'DROP DATABASE "{TARGET_DB}" WITH (FORCE)')
+        dropped = True
+        psql(f'ALTER DATABASE "{INCOMING_DB}" RENAME TO "{TARGET_DB}"')
+    except (subprocess.CalledProcessError, RuntimeError, OSError) as exc:
+        print(f"\nOBNOVA SELHALA: {describe(exc)}", file=sys.stderr)
+        try:
+            psql(f'DROP DATABASE IF EXISTS "{INCOMING_DB}" WITH (FORCE)')
+            print(f"'{INCOMING_DB}' uklizena.", file=sys.stderr)
+        except subprocess.CalledProcessError as cleanup_exc:
+            print(f"'{INCOMING_DB}' se nepodarilo smazat: {describe(cleanup_exc)}", file=sys.stderr)
+        if dropped:
+            print(
+                f"POZOR: '{TARGET_DB}' uz byla smazana, ale prejmenovani selhalo. "
+                f"Obnov ji: python tools/local/refresh_dev_db.py restore-dev {backup}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"'{TARGET_DB}' zustala beze zmeny.", file=sys.stderr)
+        print(f"zaloha: {backup}", file=sys.stderr)
+        print(
+            "app a worker zustavaji zastavene - az zjistis pricinu: docker compose up -d",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        psql(f'COMMENT ON DATABASE "{TARGET_DB}" IS {sql_literal(comment_for(source, is_refresh))}')
+    except subprocess.CalledProcessError as exc:
+        print(f"VAROVANI komentar databaze se nezapsal: {describe(exc)}", file=sys.stderr)
+
+    # 10. Start with dry-run forced in this process's environment (second safeguard).
+    since = psql("SELECT now()")
+    print("spoustim app a worker (SCHEDULER_DRY_RUN=true) ...")
+    env = dict(os.environ, SCHEDULER_DRY_RUN="true")
+    try:
+        compose("up", "-d", "--wait", "app", "worker", env=env)
+    except subprocess.CalledProcessError as exc:
+        print(f"START SELHAL: {describe(exc)}", file=sys.stderr)
+        compose("stop", "worker")
+        print(f"worker zastaven. Data jsou obnovena, zaloha: {backup}", file=sys.stderr)
+        return 1
+
+    # 11. Dev admin, since the prod dump carries only prod users (decision 16).
+    try:
+        result = compose("exec", "-T", "app", "python", "-m", "scripts.create_admin", "--from-env")
+        # ASCII only: the script's output goes to a Windows console of unknown code page.
+        message = result.stdout.decode("utf-8", "replace").replace("—", "-").strip()
+        print(f"  {message.encode('ascii', 'replace').decode('ascii')}")
+    except subprocess.CalledProcessError as exc:
+        print(f"VAROVANI create_admin --from-env selhal: {describe(exc)}", file=sys.stderr)
+
+    # 12. The worker itself must report dry-run (third safeguard).
+    print("cekam na heartbeat workera ...")
+    try:
+        workers = wait_for_heartbeat(since)
+    except (subprocess.CalledProcessError, RuntimeError) as exc:
+        compose("stop", "worker")
+        print(f"\nKONTROLA DRY-RUN SELHALA: {describe(exc)}", file=sys.stderr)
+        print(f"worker zastaven. Zaloha: {backup}", file=sys.stderr)
+        return 1
+
+    # 13. Summary.
+    print(f"\nOK - '{TARGET_DB}' obsahuje {source.name}")
+    print(f"  puvod       {comment_for(source, is_refresh)}")
+    for table, count in counts.items():
+        print(f"  {table:<16} {count}")
+    print(f"  zaloha      {backup}")
+    print(f"  rozvrhy     vypnuto {sanitized['schedules']}")
+    print(f"  fronta      zruseno {sanitized['queue']}")
+    print(f"  upozorneni  potlaceno {sanitized['outbox']}")
+    print(f"  heartbeaty  smazano {sanitized['heartbeats']}; dry-run potvrdil: {', '.join(workers)}")
+    if sanitized["pending_runs"]:
+        print(
+            f"  pending     {sanitized['pending_runs']} behu - worker ty starsi nez 30 min oznaci jako "
+            "error (reconcile_interrupted_runs), stejne jako by to udelala produkce"
+        )
+    else:
+        print("  pending     0 behu")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +794,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Progress (stdout) and errors (stderr) must interleave in order even when redirected.
+    sys.stdout.reconfigure(line_buffering=True)
     argv = list(sys.argv[1:] if argv is None else argv)
     # No subcommand (or just options / a DUMP) means `refresh`.
     if not argv or (argv[0] not in COMMANDS and argv[0] not in ("-h", "--help")):
