@@ -4,9 +4,10 @@ Imported as a plain `import _dbtools` — the scripts are run as
 `python tools/local/<script>.py`, which puts this folder on sys.path.
 
 pull_backup.py deliberately does NOT import from here, even though it defines
-the same DEST and DUMP_RE. It runs unattended every morning under Task
-Scheduler, and a new import is a new way for it to fail that would only show up
-as backups quietly missing. Keep the two definitions identical by hand.
+the same DEST, DUMP_RE and PGDMP_MAGIC/MIN_SIZE. It runs unattended every
+morning under Task Scheduler, and a new import is a new way for it to fail that
+would only show up as backups quietly missing. Keep the definitions identical
+by hand.
 
 Standard library only.
 """
@@ -34,13 +35,28 @@ DUMP_RE = re.compile(r"^signalmap-(\d{8})-(\d{6})\.dump$")
 # produced actual content, not just an empty schema.
 COUNT_TABLES = ("clients", "prompts", "runs", "raw_responses", "citations")
 
+# pg_dump custom-format archives start with this; same check as pull_backup.py.
+# Catches a truncated or empty dump without needing postgres client tools on Windows.
+PGDMP_MAGIC = b"PGDMP"
+MIN_SIZE = 1024
 
-def compose(*args: str, stdin=None, capture: bool = True) -> subprocess.CompletedProcess:
+
+def compose(
+    *args: str, stdin=None, stdout=None, capture: bool = True, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
+    """Run `docker compose <args>` in the project directory, raising on failure.
+
+    `stdout` (an open file) overrides capturing, for streaming a dump to disk.
+    `env` replaces the process environment, which Compose gives precedence over .env.
+    """
+    if stdout is None:
+        stdout = subprocess.PIPE if capture else None
     return subprocess.run(
         ["docker", "compose", *args],
         cwd=PROJECT_DIR,
+        env=env,
         stdin=stdin,
-        stdout=subprocess.PIPE if capture else None,
+        stdout=stdout,
         stderr=subprocess.PIPE if capture else None,
         check=True,
     )
