@@ -57,6 +57,10 @@ per-branch pattern.
 | TASKS_PHASE2 | P2 | feature/signalmap-phase2-anthropic-admin | #2 | 2026-09-09 | v1.0.0 |
 | TASKS_HARDENING | HD | feature/signalmap-phase1-hardening | #1 | 2026-09-09 | v1.0.0 |
 
+`v1.0.0` is the changelog baseline (`docs/TASKS_VERSIONING.md` decision 13):
+it gathers everything live in production up to 2026-09-22 into one
+`CHANGELOG.md` block, but it was never tagged. The first git tag is `v1.1.0`.
+
 PR #9 (`feature/signalmap-deploy-compose`, merged 2026-09-17) isn't listed:
 it has no `TASKS_*.md`/`PROMPTS_*.md` pair of its own, it's covered by
 `docs/DEPLOYMENT.md` directly.
