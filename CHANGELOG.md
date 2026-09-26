@@ -11,6 +11,13 @@ not a public API.
 
 ## [Unreleased]
 
+### Added
+
+- `tools/local/refresh_dev_db.py` loads a production dump into the local
+  development database: it backs up the dev data first, turns off every
+  schedule in the copy, and enforces dry-run, so the copy can never call a
+  provider.
+
 ### Fixed
 
 - The first runs on OpenAI, Perplexity, DeepSeek, Grok, or Anthropic

@@ -22,48 +22,12 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
-import os
-import re
 import subprocess
 import sys
-from pathlib import Path
 
-DEST = Path(os.environ.get("SIGNALMAP_BACKUP_DIR", r"C:\Backups\SignalMap\dumps"))
-PROJECT_DIR = Path(__file__).resolve().parents[2]
-DB_USER = os.environ.get("SIGNALMAP_DB_USER", "signalmap_user")
+from _dbtools import COUNT_TABLES, DB_USER, DEST, compose, newest_dump, psql
+
 CHECK_DB = "signalmap_restore_check"
-
-# Same pattern as tools/local/pull_backup.py. Without it, an older manually named
-# dump such as "signalmap-backup-20260916-062154.dump" sorts after the server's
-# own "signalmap-20260917-141043.dump" and would silently be picked as "newest".
-DUMP_RE = re.compile(r"^signalmap-\d{8}-\d{6}\.dump$")
-
-# Tables every populated SignalMap database has — used to report that the restore
-# produced actual content, not just an empty schema.
-COUNT_TABLES = ("clients", "prompts", "runs", "raw_responses", "citations")
-
-
-def compose(*args: str, stdin=None, capture: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["docker", "compose", *args],
-        cwd=PROJECT_DIR,
-        stdin=stdin,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-        check=True,
-    )
-
-
-def psql(sql: str, *, database: str = "postgres") -> str:
-    result = compose("exec", "-T", "postgres", "psql", "-U", DB_USER, "-d", database, "-tAc", sql)
-    return result.stdout.decode("utf-8", "replace").strip()
-
-
-def newest_dump() -> Path:
-    dumps = sorted(p for p in DEST.glob("signalmap-*.dump") if DUMP_RE.match(p.name))
-    if not dumps:
-        sys.exit(f"zadne zalohy v {DEST} - spust nejdriv tools/local/pull_backup.py")
-    return dumps[-1]
 
 
 def main() -> int:

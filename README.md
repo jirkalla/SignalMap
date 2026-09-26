@@ -288,7 +288,8 @@ becomes visible instead of looking like "nothing new to download".
 Verify that a backup is actually restorable with
 `python tools/local/restore_local.py`. It restores into a separate database
 and leaves the working one alone; an unverified backup is only a file you
-believe is a backup.
+believe is a backup. It answers "is this backup usable?", not "let me work
+with this data": for that, use `refresh_dev_db.py` below.
 
 For a new, empty deployment (including moving this local database to
 Hetzner), copy `signalmap.dump` there, configure its `.env`, and restore
@@ -303,6 +304,43 @@ docker compose up -d --build --wait
 The backup includes accounts and evidence; log in with the existing
 account. Use new server secrets. An existing populated destination needs
 a separate, deliberate replacement procedure; do not restore over it.
+
+### Refresh the local dev database from production
+
+`tools/local/refresh_dev_db.py` replaces the local `signalmap` database with
+a production dump, for working against real data:
+
+```bash
+python tools/local/refresh_dev_db.py                         # pull new dumps, refresh from the newest
+python tools/local/refresh_dev_db.py refresh 20260925-0622   # a specific dump (timestamp prefix or path)
+python tools/local/refresh_dev_db.py restore-dev             # restore the newest dev snapshot
+python tools/local/refresh_dev_db.py restore-dev 20260926-1158
+python tools/local/refresh_dev_db.py snapshot                # back up the dev database now
+python tools/local/refresh_dev_db.py list                    # prod dumps and dev snapshots, with origin
+```
+
+`restore-dev` without an argument takes the newest snapshot, which is your
+dev data only right after a single refresh; every overwrite adds a snapshot
+of its own, so after more than one, pick yours from `list` (the origin
+column shows `dev` or `prod-YYYYMMDD`). A prefix matching more than one file
+is listed instead of guessed.
+
+Anything that overwrites prints a plan and asks `[y/N]` (`--plan` only
+prints, `--yes` skips the question), and first backs up the current dev
+database to `C:\Backups\SignalMap\dev-snapshots\` (the last 10 are kept). The
+dump is restored into `signalmap_incoming` and replaces `signalmap` only once
+it restored cleanly, so a failed restore leaves the dev database untouched.
+
+Restored production data must never call a provider, and three independent
+safeguards make sure it can't: the script refuses to start unless the worker
+would really get `SCHEDULER_DRY_RUN=true` (read from `docker compose config`,
+so a shell variable counts too), it turns off every schedule and cancels the
+open queue in the restored copy before the swap, and after the restart it
+checks that the running worker itself reports dry-run. It never edits
+`.env`: set `SCHEDULER_DRY_RUN=true` there yourself, or it refuses to run.
+It also refuses a dump from a schema newer than the checked-out code; switch
+to the current `master` first. The dev admin from `.env` (`DEV_ADMIN_*`) is
+recreated after every refresh.
 
 ## Running tests
 
