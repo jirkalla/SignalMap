@@ -9,16 +9,18 @@ writes to it. The application itself is not touched.
     python tools/local/compare_peec.py --plan                # only print what would be loaded and where to
     python tools/local/compare_peec.py --client Knauf --peec-dir docs/peec --overwrite
 
-This is T1+T2 of docs/TASKS_PEEC_COMPARISON.md: T1 ("Loading, pairing and
+This is T1+T2+T3 of docs/TASKS_PEEC_COMPARISON.md: T1 ("Loading, pairing and
 source export") loads the Peec JSON exports, matches each one to a SignalMap
 prompt by exact prompt TEXT (never by filename), pairs Peec answers with
 SignalMap runs by prompt x model x local (Europe/Prague) day, and writes the
 `sources/` half of the output folder. T2 ("Metrics and noise") adds the
 brand-matching "ruler" (design decision 6), domain normalization (decision
-9), per-pair metrics in pairs.csv, brand/domain aggregates, the three noise
-references with a bootstrap verdict (decision 7) and the Peec-vs-SignalMap-
-vs-ruler Detector check. report.xlsx and README.md (T3) are not produced
-here — T2's own aggregate/noise table is only printed to the console.
+9), per-pair metrics in pairs.csv, the three noise references with a
+bootstrap verdict (decision 7) and the Peec-vs-SignalMap-vs-ruler Detector
+check. T3 ("report.xlsx + README") adds the brand/domain aggregates, Cohen's
+kappa and Spearman correlation design decision 8 asked for, and writes
+`report.xlsx` + `README.md` at the top of the output folder — the thing
+Philip actually opens.
 
 Requires two exceptions to "standard library only" (design decision 2 allows
 openpyxl; tzdata is a second one this script needs for Europe/Prague date
@@ -253,6 +255,28 @@ def fetch_tracked_entities(client_id: str) -> list[tuple[str, list[str]]]:
     return [(e["name"], aliases_by_entity.get(e["id"], [])) for e in entities]
 
 
+def fetch_domain_classifications() -> dict[str, str]:
+    """Global domain -> type (institutional/editorial/corporate/reference/ugc/other),
+    not scoped to a client — used by the Domains sheet (T3).
+    """
+    rows = copy_query("SELECT domain, domain_type FROM domain_classifications")
+    return {row["domain"]: row["domain_type"] for row in rows}
+
+
+def fetch_latest_run_started_at(client_id: str) -> str:
+    """Latest started_at across ALL of the client's runs (any model/status, not just
+    the compared ones) — the dev DB state this comparison was computed against
+    (design decision 12), for the README.
+    """
+    rows = copy_query(
+        "SELECT max(r.started_at AT TIME ZONE 'UTC') AS latest FROM runs r "
+        "JOIN prompts p ON p.id = r.prompt_id "
+        "JOIN prompt_sets ps ON ps.id = p.prompt_set_id "
+        f"WHERE ps.client_id = {client_id}"
+    )
+    return rows[0]["latest"] if rows and rows[0]["latest"] else ""
+
+
 # ---------------------------------------------------------------------------
 # Peec exports
 # ---------------------------------------------------------------------------
@@ -353,25 +377,27 @@ def detect_brands(text: str, rules: list[BrandRule]) -> dict[str, BrandHit]:
     return hits
 
 
-def brand_metrics(hits: dict[str, BrandHit], client_name: str) -> dict:
-    """Client visibility derived from one detect_brands() call: whether the client
-    itself was mentioned, its rank among all mentioned brands by first-mention
-    position (1 = mentioned first; None if not mentioned at all), and its share of
-    voice (its own mention count / all tracked brands' mention count combined, 0.0
-    if nothing was mentioned).
+def brand_metrics(hits: dict[str, BrandHit], target_name: str) -> dict:
+    """One brand's visibility derived from a single detect_brands() call: whether
+    `target_name` was mentioned, its rank among all mentioned brands by
+    first-mention position (1 = mentioned first; None if not mentioned at all),
+    and its share of voice (its own mention count / all tracked brands' mention
+    count combined, 0.0 if nothing was mentioned). Generic over any tracked brand
+    so both the client-specific per-pair fields (T2) and the Brands sheet's
+    per-brand aggregates (T3) share one implementation.
     """
     mentioned = {name: hit for name, hit in hits.items() if hit.mentioned}
     total_count = sum(hit.count for hit in hits.values())
-    client_hit = hits[client_name]
+    target_hit = hits[target_name]
     rank = None
     if mentioned:
         ranked = sorted(mentioned.items(), key=lambda kv: kv[1].first_pos)
-        rank = next((i + 1 for i, (name, _) in enumerate(ranked) if name == client_name), None)
+        rank = next((i + 1 for i, (name, _) in enumerate(ranked) if name == target_name), None)
     return {
         "mentioned_brands": set(mentioned),
-        "client_mentioned": client_hit.mentioned,
-        "client_rank": rank,
-        "client_sov": (client_hit.count / total_count) if total_count else 0.0,
+        "mentioned": target_hit.mentioned,
+        "rank": rank,
+        "share_of_voice": (target_hit.count / total_count) if total_count else 0.0,
     }
 
 
@@ -516,6 +542,15 @@ class LoadedData:
     tracked_brands: list[dict] = field(default_factory=list)
     detector_check: list[dict] = field(default_factory=list)
     metric_series: dict = field(default_factory=dict)
+    summary_rows: list[dict] = field(default_factory=list)
+    coverage: list[dict] = field(default_factory=list)
+    brands: list[dict] = field(default_factory=list)
+    domains: list[dict] = field(default_factory=list)
+    gaps: list[dict] = field(default_factory=list)
+    kappas: dict = field(default_factory=dict)
+    correlations: dict = field(default_factory=dict)
+    readme_text: str = ""
+    db_state: str = ""
 
 
 def build_model_mapping() -> list[dict]:
@@ -577,9 +612,9 @@ def load_peec_answers(
                 # Internal (not CSV columns — ignored by DictWriter's extrasaction="ignore"):
                 # ruler-based ground truth for T2's metrics and Detector check.
                 "_brand_hits": hits,
-                "_client_mentioned": metrics["client_mentioned"],
-                "_client_rank": metrics["client_rank"],
-                "_client_sov": metrics["client_sov"],
+                "_client_mentioned": metrics["mentioned"],
+                "_client_rank": metrics["rank"],
+                "_client_sov": metrics["share_of_voice"],
                 "_mentioned_brands": metrics["mentioned_brands"],
                 "_domain_set": domains,
                 "_text_length": len(rec["assistant"]),
@@ -633,9 +668,9 @@ def build_signalmap_answers(
             "rendered_text": text,
             # Internal — same ruler-based fields as load_peec_answers, see there.
             "_brand_hits": hits,
-            "_client_mentioned": metrics["client_mentioned"],
-            "_client_rank": metrics["client_rank"],
-            "_client_sov": metrics["client_sov"],
+            "_client_mentioned": metrics["mentioned"],
+            "_client_rank": metrics["rank"],
+            "_client_sov": metrics["share_of_voice"],
             "_mentioned_brands": metrics["mentioned_brands"],
             "_domain_set": domains,
             "_text_length": len(text),
@@ -811,6 +846,12 @@ def build_detector_check(peec_answers: list[dict], signalmap_answers: list[dict]
 # ---------------------------------------------------------------------------
 
 METRIC_LABELS = {"knauf_agreement": "Knauf ano/ne", "brand_jaccard": "Znacky", "domain_jaccard": "Domeny"}
+# English labels for report.xlsx/README.md (design decision 10) — METRIC_LABELS
+# above stays Czech for the console table only, matching the sibling scripts'
+# convention of Czech developer-facing CLI output.
+METRIC_LABELS_EN = {
+    "knauf_agreement": "Knauf mentioned/not", "brand_jaccard": "Brands", "domain_jaccard": "Domains",
+}
 COMPARISON_LABELS = {
     "cross": "Peec x SignalMap, stejny den",
     "peec_same_day": "Peec x Peec, stejny den (opakovani)",
@@ -880,42 +921,83 @@ def compute_metric_series(peec_answers: list[dict], signalmap_answers: list[dict
     return series
 
 
-def print_metrics_table(series: dict) -> None:
+def build_summary_rows(series: dict) -> list[dict]:
+    """One row per (model, metric): cross value, the three noise references, which
+    one was used as "the lowest" (design decision 7), the bootstrap-CI difference
+    and an English verdict ("within noise" / "differs more than noise") — the data
+    behind both the console table and T3's Summary sheet.
+    """
+    rows = []
     for model in COMPARED_MODELS.values():
-        print(f"\n{model}")
         for metric in ("knauf_agreement", "brand_jaccard", "domain_jaccard"):
             cross_values = series[model]["cross"][metric]
             cross_mean = mean(cross_values)
-            print(f"  {METRIC_LABELS[metric]}")
-            if cross_mean is None:
-                print(f"    {COMPARISON_LABELS['cross']}: n/a (zadna spolecna dvojice)")
-                continue
-            print(f"    {COMPARISON_LABELS['cross']:38s} {cross_mean:.2f} (n={len(cross_values)})")
-
+            row = {
+                "signalmap_model": model, "metric_key": metric, "metric": METRIC_LABELS_EN[metric],
+                "cross": cross_mean, "cross_n": len(cross_values),
+            }
             noise_means = {}
             for kind in NOISE_KINDS:
                 values = series[model][kind][metric]
                 noise_means[kind] = mean(values)
-                shown = f"{noise_means[kind]:.2f} (n={len(values)})" if values else "n/a (zadna data)"
-                print(f"    {COMPARISON_LABELS[kind]:38s} {shown}")
-
+                row[kind] = noise_means[kind]
+                row[f"{kind}_n"] = len(values)
             available = {k: v for k, v in noise_means.items() if v is not None}
-            if not available:
-                print("    verdikt: nelze spocitat (chybi vsechny reference sumu)")
+            if cross_mean is None or not available:
+                row.update({
+                    "diff": "", "ci_low": "", "ci_high": "", "reference_used": "",
+                    "verdict": "n/a (missing cross or reference data)",
+                })
+                rows.append(row)
                 continue
             lowest_kind = min(available, key=available.get)
             ci = bootstrap_ci_diff(
                 cross_values, series[model][lowest_kind][metric], seed=BOOTSTRAP_SEED, iterations=BOOTSTRAP_ITERATIONS
             )
             if ci is None:
-                print("    verdikt: nelze spocitat bootstrap (malo dat)")
+                row.update({
+                    "diff": "", "ci_low": "", "ci_high": "", "reference_used": lowest_kind,
+                    "verdict": "n/a (not enough data for a bootstrap)",
+                })
+                rows.append(row)
                 continue
             diff = cross_mean - available[lowest_kind]
-            verdict = "lisi se vic nez sum" if ci[1] < 0 else "v ramci sumu"
-            print(
-                f"    rozdil (cross - {lowest_kind}, nejnizsi reference) = {diff:.3f}, "
-                f"95% CI [{ci[0]:.3f}, {ci[1]:.3f}] (seed={BOOTSTRAP_SEED}) -> {verdict}"
-            )
+            row.update({
+                "diff": diff, "ci_low": ci[0], "ci_high": ci[1], "reference_used": lowest_kind,
+                "verdict": "differs more than noise" if ci[1] < 0 else "within noise",
+            })
+            rows.append(row)
+    return rows
+
+
+_VERDICT_CS = {
+    "within noise": "v ramci sumu", "differs more than noise": "lisi se vic nez sum",
+}
+
+
+def print_metrics_table(series: dict) -> None:
+    current_model = None
+    for row in build_summary_rows(series):
+        if row["signalmap_model"] != current_model:
+            current_model = row["signalmap_model"]
+            print(f"\n{current_model}")
+        print(f"  {METRIC_LABELS[row['metric_key']]}")
+        if row["cross"] is None:
+            print(f"    {COMPARISON_LABELS['cross']}: n/a (zadna spolecna dvojice)")
+            continue
+        print(f"    {COMPARISON_LABELS['cross']:38s} {row['cross']:.2f} (n={row['cross_n']})")
+        for kind in NOISE_KINDS:
+            value = row.get(kind)
+            shown = f"{value:.2f} (n={row[f'{kind}_n']})" if value is not None else "n/a (zadna data)"
+            print(f"    {COMPARISON_LABELS[kind]:38s} {shown}")
+        if row["verdict"].startswith("n/a"):
+            print(f"    verdikt: {row['verdict']}")
+            continue
+        verdict_cs = _VERDICT_CS.get(row["verdict"], row["verdict"])
+        print(
+            f"    rozdil (cross - {row['reference_used']}, nejnizsi reference) = {row['diff']:.3f}, "
+            f"95% CI [{row['ci_low']:.3f}, {row['ci_high']:.3f}] (seed={BOOTSTRAP_SEED}) -> {verdict_cs}"
+        )
 
 
 def bootstrap_ci_diff(
@@ -932,6 +1014,320 @@ def bootstrap_ci_diff(
         for _ in range(iterations)
     ]
     return percentile(diffs, 2.5), percentile(diffs, 97.5)
+
+
+# ---------------------------------------------------------------------------
+# T3 aggregates — Brands, Domains, Coverage, Gaps sheets and the README.
+# design decision 8's "viditelnost kazde znacky, prumerna pozice, share of
+# voice, top 20 domen, Cohenovo kappa, Spearman" was scoped into T2's own
+# spec but never built there (T2 only needed the 3-metric cross/noise table);
+# building it here instead, since Brands/Domains/Summary are its first users.
+# ---------------------------------------------------------------------------
+
+
+def aggregate_brand_stats(answers: list[dict], rules: list[BrandRule]) -> list[dict]:
+    """Per brand, over one already-filtered (tool, model) slice of answers:
+    how often it's mentioned, its average first-mention rank among the answers
+    where it was mentioned, and its average share of voice.
+    """
+    total = len(answers)
+    rows = []
+    for rule in rules:
+        per_answer = [brand_metrics(a["_brand_hits"], rule.name) for a in answers]
+        mentioned = sum(1 for m in per_answer if m["mentioned"])
+        ranks = [m["rank"] for m in per_answer if m["rank"] is not None]
+        rows.append({
+            "brand": rule.name, "answers_total": total, "mentioned": mentioned,
+            "visibility": (mentioned / total) if total else 0.0,
+            "avg_rank": mean(ranks) if ranks else "",
+            "avg_share_of_voice": mean(m["share_of_voice"] for m in per_answer) if per_answer else "",
+        })
+    return rows
+
+
+def build_brands_sheet(peec_answers: list[dict], signalmap_answers: list[dict], rules: list[BrandRule]) -> list[dict]:
+    compared_peec = [a for a in peec_answers if a["compared"] == "true"]
+    rows = []
+    for model in COMPARED_MODELS.values():
+        sides = (
+            ("peec", [a for a in compared_peec if a["signalmap_model"] == model]),
+            ("signalmap", [s for s in signalmap_answers if s["signalmap_model"] == model]),
+        )
+        for tool, answers in sides:
+            for stat in aggregate_brand_stats(answers, rules):
+                rows.append({"signalmap_model": model, "tool": tool, **stat})
+    return rows
+
+
+def _domain_counts(answers: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for a in answers:
+        for d in a["_domain_set"]:
+            counts[d] = counts.get(d, 0) + 1
+    return counts
+
+
+def build_domains_sheet(
+    peec_answers: list[dict], signalmap_answers: list[dict], domain_types: dict[str, str], top_n: int = 20
+) -> list[dict]:
+    compared_peec = [a for a in peec_answers if a["compared"] == "true"]
+    rows = []
+    for model in COMPARED_MODELS.values():
+        peec_counts = _domain_counts([a for a in compared_peec if a["signalmap_model"] == model])
+        sm_counts = _domain_counts([s for s in signalmap_answers if s["signalmap_model"] == model])
+        peec_total = sum(peec_counts.values()) or 1
+        sm_total = sum(sm_counts.values()) or 1
+        peec_rank = {d: i + 1 for i, d in enumerate(sorted(peec_counts, key=peec_counts.get, reverse=True))}
+        sm_rank = {d: i + 1 for i, d in enumerate(sorted(sm_counts, key=sm_counts.get, reverse=True))}
+
+        combined = sorted(
+            set(peec_counts) | set(sm_counts),
+            key=lambda d: peec_counts.get(d, 0) + sm_counts.get(d, 0), reverse=True,
+        )
+        for d in combined[:top_n]:
+            rows.append({
+                "signalmap_model": model, "domain": d, "domain_type": domain_types.get(d, "unclassified"),
+                "peec_count": peec_counts.get(d, 0), "peec_share": peec_counts.get(d, 0) / peec_total,
+                "peec_rank": peec_rank.get(d, ""),
+                "signalmap_count": sm_counts.get(d, 0), "signalmap_share": sm_counts.get(d, 0) / sm_total,
+                "signalmap_rank": sm_rank.get(d, ""),
+            })
+    return rows
+
+
+def compute_rank_correlations(peec_answers: list[dict], signalmap_answers: list[dict], rules: list[BrandRule]) -> dict:
+    """Per model: Spearman rank correlation of brand mention counts and of domain
+    occurrence counts between Peec and SignalMap (design decision 8).
+    """
+    compared_peec = [a for a in peec_answers if a["compared"] == "true"]
+    result = {}
+    for model in COMPARED_MODELS.values():
+        peec_model_answers = [a for a in compared_peec if a["signalmap_model"] == model]
+        sm_model_answers = [s for s in signalmap_answers if s["signalmap_model"] == model]
+
+        peec_brand_counts = {s["brand"]: s["mentioned"] for s in aggregate_brand_stats(peec_model_answers, rules)}
+        sm_brand_counts = {s["brand"]: s["mentioned"] for s in aggregate_brand_stats(sm_model_answers, rules)}
+        brand_pairs = [(peec_brand_counts[b], sm_brand_counts[b]) for b in peec_brand_counts]
+
+        peec_d = _domain_counts(peec_model_answers)
+        sm_d = _domain_counts(sm_model_answers)
+        domain_pairs = [(peec_d.get(d, 0), sm_d.get(d, 0)) for d in (set(peec_d) | set(sm_d))]
+
+        result[model] = {
+            "brand_spearman": spearman(brand_pairs),
+            "domain_spearman": spearman(domain_pairs),
+        }
+    return result
+
+
+def compute_knauf_kappa(pairs: list[dict]) -> dict[str, float | None]:
+    """Cohen's kappa per model for Knauf mentioned/not, from pairs.csv's already
+    group-averaged shares (>=0.5 counted as "mentioned"), design decision 8.
+    """
+    by_model: dict[str, list[tuple[bool, bool]]] = {m: [] for m in COMPARED_MODELS.values()}
+    for row in pairs:
+        if row["knauf_in_peec_share"] == "" or row["knauf_in_signalmap_share"] == "":
+            continue
+        by_model[row["signalmap_model"]].append(
+            (row["knauf_in_peec_share"] >= 0.5, row["knauf_in_signalmap_share"] >= 0.5)
+        )
+    return {model: cohens_kappa(values) for model, values in by_model.items()}
+
+
+def build_coverage_sheet(pairs: list[dict]) -> list[dict]:
+    rows = [
+        {
+            "prompt_id": p["prompt_id"], "prompt_set_name": p["prompt_set_name"],
+            "signalmap_model": p["signalmap_model"], "local_date": p["local_date"],
+            "peec_answers": p["peec_answer_count"], "signalmap_runs": p["signalmap_run_count"],
+            "gap": "true" if (p["peec_answer_count"] == 0 or p["signalmap_run_count"] == 0) else "false",
+        }
+        for p in pairs
+    ]
+    rows.sort(key=lambda r: (r["prompt_id"], r["signalmap_model"], r["local_date"]))
+    return rows
+
+
+def build_gaps_sheet(data: "LoadedData", summary_rows: list[dict]) -> list[dict]:
+    rows = []
+    for m in data.model_mapping:
+        if m["compared"] == "false":
+            rows.append({
+                "category": "Model not compared",
+                "detail": f"peec={m['peec_model'] or '(none)'} / signalmap={m['signalmap_model'] or '(none)'}: {m['reason']}",
+            })
+    for p in data.pairs:
+        if p["peec_answer_count"] == 0 or p["signalmap_run_count"] == 0:
+            side = "Peec" if p["peec_answer_count"] == 0 else "SignalMap"
+            rows.append({
+                "category": "Missing pair",
+                "detail": (
+                    f"prompt {p['prompt_id']} ({p['prompt_set_name']}), {p['signalmap_model']}, "
+                    f"{p['local_date']}: no {side} answer"
+                ),
+            })
+    for row in summary_rows:
+        if row["verdict"] == "differs more than noise":
+            rows.append({
+                "category": "Metric differs more than noise",
+                "detail": (
+                    f"{row['signalmap_model']}, {row['metric']}: cross {row['cross']:.2f} vs. "
+                    f"{row['reference_used']} {row[row['reference_used']]:.2f}, diff {row['diff']:.3f}, "
+                    f"95% CI [{row['ci_low']:.3f}, {row['ci_high']:.3f}]"
+                ),
+            })
+    for d in data.detector_check:
+        if d["disagreements"] > 0:
+            rows.append({
+                "category": "Detector disagreement",
+                "detail": (
+                    f"{d['tool']} / {d['signalmap_model']} / {d['brand']}: {d['disagreements']} of "
+                    f"{d['answers_checked']} answers disagree with the ruler (example id: {d['example_id']})"
+                ),
+            })
+    if data.signalmap_answers_excluded:
+        dates = sorted({a["local_date"] for a in data.signalmap_answers_excluded})
+        rows.append({
+            "category": "Runs outside export window",
+            "detail": (
+                f"{len(data.signalmap_answers_excluded)} successful SignalMap run(s) on "
+                f"{', '.join(dates)} fell outside this export's date range and were excluded "
+                "from every metric above, not counted as a missing pair"
+            ),
+        })
+    rows.append({
+        "category": "Unknown Peec configuration",
+        "detail": (
+            "System prompt, locale and web-search settings Peec used for gpt-5.6-terra / "
+            "claude-haiku-4-5 are not part of the export — fill in manually if relevant "
+            "(TODO for whoever reviews this report)."
+        ),
+    })
+    rows.append({
+        "category": "Not measured",
+        "detail": (
+            "L4 (semantic similarity between answer texts / claim-level agreement) and sentiment "
+            "are out of scope for this branch — see docs/TASKS_PEEC_COMPARISON.md, 'Co tahle vetev "
+            "vedome nedela'."
+        ),
+    })
+    return rows
+
+
+def generate_findings(summary_rows: list[dict], kappas: dict, correlations: dict) -> list[str]:
+    """3-5 sentences generated from the actual numbers (design decision: never
+    hardcode the pilot's own wording), for the top of the Summary sheet.
+    """
+    sentences = []
+    for model in COMPARED_MODELS.values():
+        model_rows = [r for r in summary_rows if r["signalmap_model"] == model]
+        worse = [r for r in model_rows if r["verdict"] == "differs more than noise"]
+        if worse:
+            names = ", ".join(r["metric"] for r in worse)
+            sentences.append(f"For {model}, {names} differ(s) more than the tools' own internal noise.")
+        else:
+            sentences.append(f"For {model}, all three metrics fall within the noise floor of both tools' own variation.")
+    for model in COMPARED_MODELS.values():
+        kappa = kappas.get(model)
+        if kappa is not None:
+            sentences.append(f"Cohen's kappa for Knauf mentioned/not mentioned ({model}) is {kappa:.2f}.")
+    for model in COMPARED_MODELS.values():
+        domain_corr = correlations.get(model, {}).get("domain_spearman")
+        if domain_corr is not None:
+            sentences.append(
+                f"Domain occurrence ranking between Peec and SignalMap correlates at "
+                f"Spearman {domain_corr:.2f} for {model}."
+            )
+    return sentences[:5]
+
+
+def build_readme_text(
+    data: "LoadedData", summary_rows: list[dict], kappas: dict, correlations: dict,
+    generated_at: str, db_state: str,
+) -> str:
+    client = data.client["name"]
+    prompt_count = len(data.prompt_summary)
+    dates = sorted({a["local_date"] for a in data.peec_answers})
+    date_range = f"{dates[0]} to {dates[-1]}" if dates else "unknown"
+    compared_list = ", ".join(COMPARED_MODELS.values())
+    not_compared = [m for m in data.model_mapping if m["compared"] == "false"]
+
+    lines = [
+        f"# Peec vs SignalMap comparison — {client}",
+        "",
+        f"Generated at: {generated_at}",
+        f"SignalMap DB state: latest run for this client started at {db_state or 'unknown'}",
+        "",
+        "## What was compared",
+        "",
+        f"{prompt_count} prompts for client '{client}', {date_range} (Europe/Prague calendar days).",
+        f"Only models present in both tools were compared: {compared_list}.",
+        "Every other model each tool has is listed in model_mapping.csv / the Gaps sheet with a reason:",
+    ]
+    for m in not_compared:
+        lines.append(f"  - peec={m['peec_model'] or '(none)'} / signalmap={m['signalmap_model'] or '(none)'}: {m['reason']}")
+    lines += [
+        "",
+        "## Where the data comes from",
+        "",
+        "Peec: JSON exports in docs/peec/ (one file per prompt, downloaded manually from Peec's UI).",
+        "SignalMap: the local development database (a copy of production, refreshed via "
+        "tools/local/refresh_dev_db.py), read-only.",
+        "",
+        "## How pairing works",
+        "",
+        "Peec's `user` text is matched against SignalMap's own prompt text (never the export's "
+        "filename) to establish which prompt a Peec file belongs to. Answers are then grouped by "
+        "prompt x model x local (Europe/Prague) day. Peec collected 3 repeats on the first day of "
+        "the export; each group is averaged before anything else uses it, so that day does not get "
+        "3x the weight of every other day.",
+        "",
+        "## What each metric means",
+        "",
+        "- Knauf ano/ne (Knauf mentioned/not): whether the client's name or a known alias appears "
+        "in the raw answer text, detected by one shared rule set (the 'ruler') applied identically "
+        "to both tools' text — not by either tool's own built-in brand detector.",
+        "- Brand Jaccard: how much the SET of brands the ruler finds in a Peec answer overlaps with "
+        "the set it finds in the matching SignalMap answer (1.0 = identical set, 0.0 = no overlap).",
+        "- Domain Jaccard: the same idea, for the set of (normalized) source domains cited/returned "
+        "by each side.",
+        "- Share of voice / first-mention rank: the client's mention count relative to all tracked "
+        "brands, and where it first appears among brands mentioned in that answer.",
+        "- Cohen's kappa: chance-corrected agreement between the two tools on Knauf mentioned/not, "
+        "across all paired days.",
+        "- Spearman: rank correlation between how often each tool mentions each brand / cites each "
+        "domain.",
+        "",
+        "## How to read the noise references and verdict",
+        "",
+        "Every cross-tool value (Peec vs SignalMap, same day) is shown next to three references: "
+        "Peec vs itself on the day it repeated the same prompt 3 times, Peec vs itself on two "
+        "different days, and SignalMap vs itself on two different days. These describe how much "
+        "each tool's own answers already vary without any cross-tool difference at all. The verdict "
+        "compares the cross value to whichever reference is lowest: a 95% bootstrap confidence "
+        f"interval (fixed seed {BOOTSTRAP_SEED}, {BOOTSTRAP_ITERATIONS} resamples) is computed for "
+        "(cross mean - reference mean); if its upper bound is still below zero, the tools genuinely "
+        "differ more than either tool's own noise — otherwise the difference is within noise.",
+        "",
+        "## Main findings",
+        "",
+    ]
+    lines += [f"- {s}" for s in generate_findings(summary_rows, kappas, correlations)]
+    lines += [
+        "",
+        "## Limitations",
+        "",
+        "- L4 (semantic similarity between full answer texts, or claim-level agreement) is not "
+        "measured in this branch.",
+        "- Sentiment is not measured.",
+        "- Peec's own system prompt, locale and web-search configuration for gpt-5.6-terra / "
+        "claude-haiku-4-5 are unknown from the export alone — see Gaps.",
+        "- Models collected only through a web UI (ChatGPT, Gemini) are not compared — see "
+        "model_mapping.csv / Gaps for why.",
+        "",
+        "See the Gaps sheet for the complete, itemized list this report found — this section is a summary, not a substitute for it.",
+    ]
+    return "\n".join(lines)
 
 
 def load_all(client_name: str, peec_dir: Path) -> LoadedData:
@@ -984,6 +1380,16 @@ def load_all(client_name: str, peec_dir: Path) -> LoadedData:
     data.tracked_brands = build_tracked_brands(rules)
     data.detector_check = build_detector_check(peec_answers, in_window, rules)
     data.metric_series = compute_metric_series(peec_answers, in_window)
+
+    domain_types = fetch_domain_classifications()
+    data.db_state = fetch_latest_run_started_at(client["id"])
+    data.summary_rows = build_summary_rows(data.metric_series)
+    data.coverage = build_coverage_sheet(data.pairs)
+    data.brands = build_brands_sheet(peec_answers, in_window, rules)
+    data.domains = build_domains_sheet(peec_answers, in_window, domain_types)
+    data.kappas = compute_knauf_kappa(data.pairs)
+    data.correlations = compute_rank_correlations(peec_answers, in_window, rules)
+    data.gaps = build_gaps_sheet(data, data.summary_rows)
     return data
 
 
@@ -1071,6 +1477,29 @@ CSV_SCHEMAS: dict[str, list[str]] = {
     ],
 }
 
+# report.xlsx sheets (T3) — separate from CSV_SCHEMAS because these are read by
+# Philip, not re-parsed by this script, and some (Summary, Brands, Domains, Gaps)
+# have no equivalent CSV at all.
+REPORT_SCHEMAS: dict[str, list[str]] = {
+    "Summary": [
+        "signalmap_model", "metric", "cross", "cross_n", "peec_same_day", "peec_same_day_n",
+        "peec_diff_day", "peec_diff_day_n", "signalmap_diff_day", "signalmap_diff_day_n",
+        "reference_used", "diff", "ci_low", "ci_high", "verdict",
+    ],
+    "Coverage": [
+        "prompt_id", "prompt_set_name", "signalmap_model", "local_date",
+        "peec_answers", "signalmap_runs", "gap",
+    ],
+    "Brands": ["signalmap_model", "tool", "brand", "answers_total", "mentioned", "visibility", "avg_rank", "avg_share_of_voice"],
+    "Domains": [
+        "signalmap_model", "domain", "domain_type", "peec_count", "peec_share", "peec_rank",
+        "signalmap_count", "signalmap_share", "signalmap_rank",
+    ],
+    "Detector check": CSV_SCHEMAS["detector_check.csv"],
+    "Pairs": CSV_SCHEMAS["pairs.csv"],
+    "Gaps": ["category", "detail"],
+}
+
 
 def write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
     # utf-8-sig: BOM so Excel shows German umlauts correctly (design decision 11).
@@ -1141,6 +1570,55 @@ def write_outputs(data: LoadedData, peec_sources: list[dict], output_dir: Path) 
         shutil.copy2(path, raw_dir / path.name)
 
 
+def write_report_workbook(path: Path, readme_text: str, sheets: dict[str, tuple[list[str], list[dict]]]) -> None:
+    """report.xlsx (T3) — unlike sources.xlsx, this one gets the full decision-12
+    treatment: frozen header, autofilter, sized columns, numbers to 2 decimals.
+    README is its own sheet, plain text (one line per row), no table formatting.
+    """
+    openpyxl, Font = load_openpyxl()
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    readme_ws = wb.create_sheet(title="README")
+    for line in readme_text.split("\n"):
+        readme_ws.append([line])
+    readme_ws.column_dimensions["A"].width = 100
+
+    for name, (fieldnames, rows) in sheets.items():
+        ws = wb.create_sheet(title=name[:31])
+        ws.append(fieldnames)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        ws.freeze_panes = "A2"
+        for row in rows:
+            ws.append([row.get(f, "") for f in fieldnames])
+        ws.auto_filter.ref = ws.dimensions
+        for col_idx, field_name in enumerate(fieldnames, start=1):
+            letter = openpyxl.utils.get_column_letter(col_idx)
+            widest = max((len(str(row.get(field_name, ""))) for row in rows), default=0)
+            ws.column_dimensions[letter].width = min(max(len(field_name), widest) + 2, 60)
+            for row_idx in range(2, len(rows) + 2):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                if isinstance(cell.value, float):
+                    cell.number_format = "0.00"
+    wb.save(path)
+
+
+def write_report(data: LoadedData, output_dir: Path, generated_at: str) -> None:
+    readme_text = build_readme_text(data, data.summary_rows, data.kappas, data.correlations, generated_at, data.db_state)
+    sheets = {
+        "Summary": (REPORT_SCHEMAS["Summary"], data.summary_rows),
+        "Coverage": (REPORT_SCHEMAS["Coverage"], data.coverage),
+        "Brands": (REPORT_SCHEMAS["Brands"], data.brands),
+        "Domains": (REPORT_SCHEMAS["Domains"], data.domains),
+        "Detector check": (REPORT_SCHEMAS["Detector check"], data.detector_check),
+        "Pairs": (REPORT_SCHEMAS["Pairs"], data.pairs),
+        "Gaps": (REPORT_SCHEMAS["Gaps"], data.gaps),
+    }
+    write_report_workbook(output_dir / "report.xlsx", readme_text, sheets)
+    (output_dir / "README.md").write_text(readme_text, encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1185,8 +1663,11 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(output_dir)
 
     write_outputs(data, peec_sources, output_dir)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    write_report(data, output_dir, generated_at)
     print(f"hotovo: {output_dir}")
     print(f"  sources/*.csv, sources/sources.xlsx, sources/peec_raw/ ({len(data.peec_files)} souboru)")
+    print("  report.xlsx, README.md")
     print("\ncross vs sum (design decision 7):")
     print_metrics_table(data.metric_series)
     return 0
