@@ -17,6 +17,10 @@ not a public API.
   development database: it backs up the dev data first, turns off every
   schedule in the copy, and enforces dry-run, so the copy can never call a
   provider.
+- `tools/local/compare_peec.py` compares SignalMap's own runs against a
+  client's Peec export for the models both tools have, and reports whether
+  the two tools' brand and source-domain findings differ more than either
+  tool's own day-to-day/repeat noise.
 
 ### Fixed
 
