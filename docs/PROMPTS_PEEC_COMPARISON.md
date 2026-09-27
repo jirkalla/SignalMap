@@ -85,7 +85,7 @@ souborů + zdůvodnění proti T1) a počkej na potvrzení.
 feat(tools): export Peec and SignalMap answers for comparison
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit ed8873a72eea728f2c1475c3270d19ff4b6cb596
 
 ---
 
@@ -114,7 +114,7 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 feat(tools): compute Peec vs SignalMap agreement metrics
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 1d750a823f5d74d5154db5f58683b5bad4b88c5e
 
 ---
 
@@ -142,7 +142,7 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 feat(tools): write the Peec comparison report workbook
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 7fb1127a2dd664e9fabf9939a7cf4ba4e51b2434
 
 ---
 
@@ -165,7 +165,7 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 test(tools): cover the Peec comparison helpers
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit 13bd010ddcd02ec8952eb073668bba613f273433
 
 ---
 
@@ -187,4 +187,4 @@ Nejdřív navrhni CO uděláš + PROČ a počkej na potvrzení.
 docs(docs): document the Peec comparison tool
 ```
 
-### (sem dopiš DONE — commit {hash} až bude hotovo)
+### DONE — commit da1c477d4aa2b23f7b6595699aca136e26d02b10

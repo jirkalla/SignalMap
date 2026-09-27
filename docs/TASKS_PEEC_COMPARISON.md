@@ -153,11 +153,11 @@ docs/peec/comparison_knauf_2026-09-23_2026-09-26/
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Načtení, párování a export zdrojů (L1) | ⏳ |
-| T2 | Metriky L2/L3/L5 + šum a verdikt | ⏳ |
-| T3 | `report.xlsx` + README (metoda, mezery) | ⏳ |
-| T4 | Testy čistých funkcí + ověření na reálných datech | ⏳ |
-| T5 | Dokumentace, CHANGELOG, uzavření větve | ⏳ |
+| T1 | Načtení, párování a export zdrojů (L1) | ✅ |
+| T2 | Metriky L2/L3/L5 + šum a verdikt | ✅ |
+| T3 | `report.xlsx` + README (metoda, mezery) | ✅ |
+| T4 | Testy čistých funkcí + ověření na reálných datech | ✅ |
+| T5 | Dokumentace, CHANGELOG, uzavření větve | ✅ |
 
 ---
 
