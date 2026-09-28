@@ -1,0 +1,530 @@
+{
+  "run_id": 108,
+  "provider_code": "anthropic",
+  "rendered_text": "Basierend auf der Recherche kann ich Ihnen einen umfassenden Überblick über die Rolle des Leichtbaus in der deutschen Bauwirtschaft geben:\n\n## Die Bedeutung des Leichtbaus für die deutsche Bauwirtschaft\n\nLeichtbau ist eine zukunftsträchtige Schlüsseltechnologie mit Relevanz für zahlreiche Branchen: In der Automobil- und Luftfahrtindustrie sowie der Bauwirtschaft bis hin zu Maschinenbau und Medizintechnik werden neue Materialien wie Verbundwerkstoffe, Aluminiumlegierungen oder innovative Kunststoffe entwickelt, die leicht, stark und langlebig sind.\n\nFür die Bauwirtschaft spielt Leichtbau eine zunehmend strategische Rolle: Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden. Mit neuen 3D-Druckverfahren können Gebäude voll digitalisiert, kostengünstig sowie energie- und materialsparend gefertigt werden.\n\nTechnologien wie der Leichtbau haben das Potenzial oder sind notwendig, um den großen Herausforderungen unserer Zeit, wie Klimawandel, Digitalisierung, Energie- und Ressourcenknappheit entgegenzuwirken.\n\n## Wirtschaftliche Bedeutung\n\nDie wirtschaftliche Relevanz ist erheblich: Der Leichtbau trägt inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des Bruttoinlandsprodukts entspricht. Deutschland liegt bei Patentanmeldungen weltweit auf Platz 3 nach Südkorea und Japan.\n\n## Prägende Unternehmen und Organisationen\n\nDie Branche ist breit aufgestellt. Wichtige Akteure sind u. a.:\n\n- **Forschungseinrichtungen**: Die Technische Universität Dresden umfasst das Institut für Leichtbau und Kunststofftechnik mit 240 Mitarbeitern. Die Studienrichtung „Leichtbau\" wird in Deutschland ausschließlich an der TU Dresden angeboten.\n\n- **Regionale Schwerpunkte**: Der Raum Dresden gehört neben München und Stade/Hamburg zu den deutschen Hochburgen des Faserverbund-Leichtbaus. Die Leichtbauinitiative Berlin-Brandenburg bekräftigt seit 2023 die Bedeutung des Leichtbaus für die Zukunft des Industriestandorts und versucht, die Hauptstadtregion als Region der Leichtbauindustrie zu profilieren.\n\n- **Infrastruktur und Netzwerke**: Der Leichtbauatlas informiert über Leichtbau-Kompetenzen in Deutschland und Europa; material- und technologie-übergreifend sowie branchenneutral. Organisationen können hier ihre Verfahren und Aktivitäten präsentieren.\n\nSeit 2020 wird die Förderung durch das auf den branchen- und materialübergreifenden Wissens- und Technologietransfer ausgerichtete Technologietransfer-Programm Leichtbau (TTP Leichtbau) des BMWK ergänzt.\n\nDer Leichtbau ist somit ein Querschnittsthema mit großem Potential für nachhaltige Transformation der deutschen Bauwirtschaft und des Industriestandorts insgesamt.",
+  "raw_payload": {
+    "id": "msg_011CfLC17RgnENLS6bBUBw8D",
+    "role": "assistant",
+    "type": "message",
+    "model": "claude-haiku-4-5-20251001",
+    "usage": {
+      "input_tokens": 19599,
+      "service_tier": "standard",
+      "inference_geo": "not_available",
+      "output_tokens": 1228,
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "server_tool_use": {
+        "web_fetch_requests": 0,
+        "web_search_requests": 2
+      },
+      "output_tokens_details": null,
+      "cache_read_input_tokens": 0,
+      "cache_creation_input_tokens": 0
+    },
+    "content": [
+      {
+        "id": "srvtoolu_01XSL4zCjo9DNK3XtizAHPvQ",
+        "name": "web_search",
+        "type": "server_tool_use",
+        "input": {
+          "query": "Leichtbau Deutschland Bauwirtschaft Entwicklung"
+        },
+        "caller": null
+      },
+      {
+        "id": "srvtoolu_01RWPp4e41yWjwENbKrSPn1R",
+        "name": "web_search",
+        "type": "server_tool_use",
+        "input": {
+          "query": "Leichtbau Unternehmen Deutschland Branchenführer"
+        },
+        "caller": null
+      },
+      {
+        "type": "web_search_tool_result",
+        "caller": {
+          "type": "direct"
+        },
+        "content": [
+          {
+            "url": "https://wm.baden-wuerttemberg.de/fileadmin/redaktion/m-wm/intern/Publikationen/Innovation/Praxis-Leitfaden_Leichtbau_im_Bauwesen_2018_Web.pdf",
+            "type": "web_search_result",
+            "title": "Leichtbau im Bauwesen Ein Praxis-Leitfaden zur Entwicklung und Anwendung",
+            "page_age": null
+          },
+          {
+            "url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Downloads/Studien/bestandsaufnahme-leichtbau-in-deutschland-kurzfassung.pdf?__blob=publicationFile&v=1",
+            "type": "web_search_result",
+            "title": "1 Bestandsaufnahme Leichtbau in Deutschland Kurzfassung der Kurzstudie",
+            "page_age": null
+          },
+          {
+            "url": "https://dserver.bundestag.de/btd/20/079/2007930.pdf",
+            "type": "web_search_result",
+            "title": "Deutscher Bundestag Drucksache 20/7930 20. Wahlperiode 27.07.2023",
+            "page_age": "July 27, 2023"
+          },
+          {
+            "url": "https://www.aif.de/forschung/themen/mobilitaet-leichtbau/",
+            "type": "web_search_result",
+            "title": "Mobilität/Leichtbau - AIF - Allianz für Industrie und Forschung",
+            "page_age": "December 29, 2025"
+          },
+          {
+            "url": "https://www.aif.de/11-leichtbau-forum-des-bmwk-taeglich-44-patente-in-deutschland/",
+            "type": "web_search_result",
+            "title": "11. Leichtbau-Forum des BMWK: „Täglich 44 Patente in Deutschland“ - AIF - Allianz für Industrie und Forschung",
+            "page_age": "February 7, 2025"
+          },
+          {
+            "url": "https://www.leichtbauwelt.de/teilnahmeaufruf-die-oekonomische-bedeutung-des-leichtbaus-erfassen/",
+            "type": "web_search_result",
+            "title": "Teilnahmeaufruf: Die ökonomische Bedeutung des Leichtbaus erfassen - Leichtbauwelt",
+            "page_age": "March 4, 2024"
+          },
+          {
+            "url": "https://leichtbau-bw.eu/leichtbau/",
+            "type": "web_search_result",
+            "title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+            "page_age": "June 16, 2026"
+          },
+          {
+            "url": "https://www.innos.global/explore/neuigkeiten/studienergebnisse-belegen-bedeutung-des-leichtbaus-in-deutschland",
+            "type": "web_search_result",
+            "title": "Leichtbau in Deutschland generiert 124 Mrd. Euro – innos.global",
+            "page_age": null
+          },
+          {
+            "url": "https://de.statista.com/themen/3265/leichtbau-in-der-industrie/",
+            "type": "web_search_result",
+            "title": "Leichtbau: Alle Statistiken und Daten | Statista",
+            "page_age": null
+          }
+        ],
+        "tool_use_id": "srvtoolu_01XSL4zCjo9DNK3XtizAHPvQ"
+      },
+      {
+        "type": "web_search_tool_result",
+        "caller": {
+          "type": "direct"
+        },
+        "content": [
+          {
+            "url": "https://www.hannovermesse.de/de/news/news-fachartikel/leichtbau-made-in-germany-geniesst-eine-spitzenposition",
+            "type": "web_search_result",
+            "title": "Leichtbau: Leichtbau „Made in Germany“ genießt eine Spitzenposition",
+            "page_age": "May 19, 2020"
+          },
+          {
+            "url": "https://leichtbauatlas.de/de/",
+            "type": "web_search_result",
+            "title": "leichtbauatlas.de – Netzwerk für den Leichtbau in Deutschland und Europa",
+            "page_age": null
+          },
+          {
+            "url": "https://www.businesslocationcenter.de/industrie/leichtbau",
+            "type": "web_search_result",
+            "title": "Leichtbau - Motor für die Berliner Industrie",
+            "page_age": null
+          },
+          {
+            "url": "https://de.statista.com/statistik/daten/studie/663713/umfrage/bedeutung-von-leichtbau-im-verarbeitenden-gewerbe-in-deutschland/",
+            "type": "web_search_result",
+            "title": "Nutzung von Leichtbaumaterialien im Verarbeitenden Gewerbe in Deutschland nach Branchen | Statista",
+            "page_age": null
+          },
+          {
+            "url": "https://firmenland.leichtbauwelt.de/",
+            "type": "web_search_result",
+            "title": "Firmenland – Firmenverzeichnis der Leichtbau-Branche",
+            "page_age": null
+          },
+          {
+            "url": "https://www.leichtbauwelt.de/",
+            "type": "web_search_result",
+            "title": "Leichtbauwelt - Wissen und Aktuelles aus dem Leichtbau",
+            "page_age": null
+          },
+          {
+            "url": "https://www.europages.de/unternehmen/hersteller%20fabrikant/leichtbau.html",
+            "type": "web_search_result",
+            "title": "leichtbau Hersteller/Fabrikant | B2B Firmen & Lieferanten | europages",
+            "page_age": null
+          },
+          {
+            "url": "https://www.firmendatenbanken.de/firmen/liste/leichtbau/1.html",
+            "type": "web_search_result",
+            "title": "leichtbau Firmenliste -Deutschland",
+            "page_age": null
+          },
+          {
+            "url": "https://leichtbau.com/standort/",
+            "type": "web_search_result",
+            "title": "Standort | leichtbau.com",
+            "page_age": null
+          }
+        ],
+        "tool_use_id": "srvtoolu_01RWPp4e41yWjwENbKrSPn1R"
+      },
+      {
+        "text": "Basierend auf der Recherche kann ich Ihnen einen umfassenden Überblick über die Rolle des Leichtbaus in der deutschen Bauwirtschaft geben:\n\n## Die Bedeutung des Leichtbaus für die deutsche Bauwirtschaft\n\n",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Leichtbau ist eine zukunftsträchtige Schlüsseltechnologie mit Relevanz für zahlreiche Branchen: In der Automobil- und Luftfahrtindustrie sowie der Bauwirtschaft bis hin zu Maschinenbau und Medizintechnik werden neue Materialien wie Verbundwerkstoffe, Aluminiumlegierungen oder innovative Kunststoffe entwickelt, die leicht, stark und langlebig sind.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://www.aif.de/forschung/themen/mobilitaet-leichtbau/",
+            "type": "web_search_result_location",
+            "title": "Mobilität/Leichtbau - AIF - Allianz für Industrie und Forschung",
+            "cited_text": "Leichtbau ist eine zukunftsträchtige Schlüsseltechnologie mit Relevanz für zahlreiche Branchen: In der Automobil- und Luftfahrtindustrie sowie der Bau..."
+          }
+        ]
+      },
+      {
+        "text": "\n\nFür die Bauwirtschaft spielt Leichtbau eine zunehmend strategische Rolle: ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://leichtbau-bw.eu/leichtbau/",
+            "type": "web_search_result_location",
+            "title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+            "cited_text": "Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden. "
+          },
+          {
+            "url": "https://leichtbau-bw.eu/leichtbau/",
+            "type": "web_search_result_location",
+            "title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+            "cited_text": "Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden. "
+          }
+        ]
+      },
+      {
+        "text": " ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Mit neuen 3D-Druckverfahren können Gebäude voll digitalisiert, kostengünstig sowie energie- und materialsparend gefertigt werden.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://leichtbau-bw.eu/leichtbau/",
+            "type": "web_search_result_location",
+            "title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+            "cited_text": "Mit neuen 3D-Druckverfahren können Gebäude voll digitalisiert, kostengünstig sowie energie- und materialsparend gefertigt werden. \n\n"
+          }
+        ]
+      },
+      {
+        "text": "\n\n",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Technologien wie der Leichtbau haben das Potenzial oder sind notwendig, um den großen Herausforderungen unserer Zeit, wie Klimawandel, Digitalisierung, Energie- und Ressourcenknappheit entgegenzuwirken.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://dserver.bundestag.de/btd/20/079/2007930.pdf",
+            "type": "web_search_result_location",
+            "title": "Deutscher Bundestag Drucksache 20/7930 20. Wahlperiode 27.07.2023",
+            "cited_text": "Dies gilt besonders für Techno- logien wie den Leichtbau, die das Potenzial haben oder gar notwendig sind, um den großen Herausforderungen · unserer Z..."
+          }
+        ]
+      },
+      {
+        "text": "\n\n## Wirtschaftliche Bedeutung\n\nDie wirtschaftliche Relevanz ist erheblich: ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Der Leichtbau trägt inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des Bruttoinlandsprodukts entspricht.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://www.innos.global/explore/neuigkeiten/studienergebnisse-belegen-bedeutung-des-leichtbaus-in-deutschland",
+            "type": "web_search_result_location",
+            "title": "Leichtbau in Deutschland generiert 124 Mrd. Euro – innos.global",
+            "cited_text": "Laut der Studie trägt der Leichtbau inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des..."
+          },
+          {
+            "url": "https://www.innos.global/explore/neuigkeiten/studienergebnisse-belegen-bedeutung-des-leichtbaus-in-deutschland",
+            "type": "web_search_result_location",
+            "title": "Leichtbau in Deutschland generiert 124 Mrd. Euro – innos.global",
+            "cited_text": "Laut der Studie trägt der Leichtbau inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des..."
+          }
+        ]
+      },
+      {
+        "text": " ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Deutschland liegt bei Patentanmeldungen weltweit auf Platz 3 nach Südkorea und Japan.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://www.aif.de/11-leichtbau-forum-des-bmwk-taeglich-44-patente-in-deutschland/",
+            "type": "web_search_result_location",
+            "title": "11. Leichtbau-Forum des BMWK: „Täglich 44 Patente in Deutschland“ - AIF - Allianz für Industrie und Forschung",
+            "cited_text": "Pro Tag würden dazu 44 Patente angemeldet; damit liege Deutschland weltweit auf Platz 3 nach Südkorea und Japan.\n\n"
+          }
+        ]
+      },
+      {
+        "text": "\n\n## Prägende Unternehmen und Organisationen\n\nDie Branche ist breit aufgestellt. Wichtige Akteure sind u. a.:\n\n- **Forschungseinrichtungen**: ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Die Technische Universität Dresden umfasst das Institut für Leichtbau und Kunststofftechnik mit 240 Mitarbeitern. Die Studienrichtung „Leichtbau\" wird in Deutschland ausschließlich an der TU Dresden angeboten.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://leichtbau.com/standort/",
+            "type": "web_search_result_location",
+            "title": "Standort | leichtbau.com",
+            "cited_text": "Die Technische Universität Dresden, die einzige Universität mit Exzellenz-Status in Ostdeutschland, umfasst auch das Institut für Leichtbau und Kunsts..."
+          }
+        ]
+      },
+      {
+        "text": "\n\n- **Regionale Schwerpunkte**: ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Der Raum Dresden gehört neben München und Stade/Hamburg zu den deutschen Hochburgen des Faserverbund-Leichtbaus.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://leichtbau.com/standort/",
+            "type": "web_search_result_location",
+            "title": "Standort | leichtbau.com",
+            "cited_text": "Der Raum Dresden gehört neben München und Stade/Hamburg zu den deutschen Hochburgen des Faserverbund-Leichtbaus. "
+          }
+        ]
+      },
+      {
+        "text": " ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Die Leichtbauinitiative Berlin-Brandenburg bekräftigt seit 2023 die Bedeutung des Leichtbaus für die Zukunft des Industriestandorts und versucht, die Hauptstadtregion als Region der Leichtbauindustrie zu profilieren.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://www.businesslocationcenter.de/industrie/leichtbau",
+            "type": "web_search_result_location",
+            "title": "Leichtbau - Motor für die Berliner Industrie",
+            "cited_text": "Die Leichtbauinitiative Berlin-Brandenburg bekräftigt seit 2023 die Bedeutung des Leichtbaus für die Zukunft des Industriestandorts. Ziel ist es, die ..."
+          }
+        ]
+      },
+      {
+        "text": "\n\n- **Infrastruktur und Netzwerke**: ",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Der Leichtbauatlas informiert über Leichtbau-Kompetenzen in Deutschland und Europa; material- und technologie-übergreifend sowie branchenneutral. Organisationen können hier ihre Verfahren und Aktivitäten präsentieren.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://leichtbauatlas.de/de/",
+            "type": "web_search_result_location",
+            "title": "leichtbauatlas.de – Netzwerk für den Leichtbau in Deutschland und Europa",
+            "cited_text": "Der Leichtbauatlas informiert über Leichtbau-Kompetenzen in Deutschland und Europa; material- und technologie-übergreifend sowie branchenneutral. "
+          },
+          {
+            "url": "https://leichtbauatlas.de/de/",
+            "type": "web_search_result_location",
+            "title": "leichtbauatlas.de – Netzwerk für den Leichtbau in Deutschland und Europa",
+            "cited_text": "Organisationen können hier ihre Verfahren und Aktivitäten präsentieren. "
+          }
+        ]
+      },
+      {
+        "text": "\n\n",
+        "type": "text",
+        "citations": null
+      },
+      {
+        "text": "Seit 2020 wird die Förderung durch das auf den branchen- und materialübergreifenden Wissens- und Technologietransfer ausgerichtete Technologietransfer-Programm Leichtbau (TTP Leichtbau) des BMWK ergänzt.",
+        "type": "text",
+        "citations": [
+          {
+            "url": "https://dserver.bundestag.de/btd/20/079/2007930.pdf",
+            "type": "web_search_result_location",
+            "title": "Deutscher Bundestag Drucksache 20/7930 20. Wahlperiode 27.07.2023",
+            "cited_text": "Diese werden seit 2020 durch das auf den branchen- und materi- alübergreifenden Wissens- und Technologietransfer ausgerichtete Technologietransfer-Pro..."
+          }
+        ]
+      },
+      {
+        "text": "\n\nDer Leichtbau ist somit ein Querschnittsthema mit großem Potential für nachhaltige Transformation der deutschen Bauwirtschaft und des Industriestandorts insgesamt.",
+        "type": "text",
+        "citations": null
+      }
+    ],
+    "container": null,
+    "stop_reason": "end_turn",
+    "stop_details": null,
+    "stop_sequence": null
+  },
+  "citations": [
+    {
+      "citation_position": 0,
+      "source_url": "https://www.aif.de/forschung/themen/mobilitaet-leichtbau/",
+      "source_title": "Mobilität/Leichtbau - AIF - Allianz für Industrie und Forschung",
+      "source_domain": "www.aif.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Leichtbau ist eine zukunftsträchtige Schlüsseltechnologie mit Relevanz für zahlreiche Branchen: In der Automobil- und Luftfahrtindustrie sowie der Bau..."
+    },
+    {
+      "citation_position": 1,
+      "source_url": "https://leichtbau-bw.eu/leichtbau/",
+      "source_title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+      "source_domain": "leichtbau-bw.eu",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden. "
+    },
+    {
+      "citation_position": 2,
+      "source_url": "https://leichtbau-bw.eu/leichtbau/",
+      "source_title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+      "source_domain": "leichtbau-bw.eu",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Durch den Einsatz von Leichtbauprinzipien in der Baubranche und vor allem CO2-speicherndes Holz können wertvolle Ressourcen gespart werden. "
+    },
+    {
+      "citation_position": 3,
+      "source_url": "https://leichtbau-bw.eu/leichtbau/",
+      "source_title": "Leichtbau in BW - Leichtbau Allianz Baden-Württemberg",
+      "source_domain": "leichtbau-bw.eu",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Mit neuen 3D-Druckverfahren können Gebäude voll digitalisiert, kostengünstig sowie energie- und materialsparend gefertigt werden. \n\n"
+    },
+    {
+      "citation_position": 4,
+      "source_url": "https://dserver.bundestag.de/btd/20/079/2007930.pdf",
+      "source_title": "Deutscher Bundestag Drucksache 20/7930 20. Wahlperiode 27.07.2023",
+      "source_domain": "dserver.bundestag.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Dies gilt besonders für Techno- logien wie den Leichtbau, die das Potenzial haben oder gar notwendig sind, um den großen Herausforderungen · unserer Z..."
+    },
+    {
+      "citation_position": 5,
+      "source_url": "https://www.innos.global/explore/neuigkeiten/studienergebnisse-belegen-bedeutung-des-leichtbaus-in-deutschland",
+      "source_title": "Leichtbau in Deutschland generiert 124 Mrd. Euro – innos.global",
+      "source_domain": "www.innos.global",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Laut der Studie trägt der Leichtbau inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des..."
+    },
+    {
+      "citation_position": 6,
+      "source_url": "https://www.innos.global/explore/neuigkeiten/studienergebnisse-belegen-bedeutung-des-leichtbaus-in-deutschland",
+      "source_title": "Leichtbau in Deutschland generiert 124 Mrd. Euro – innos.global",
+      "source_domain": "www.innos.global",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Laut der Studie trägt der Leichtbau inklusive Dienstleistungen rund 124 Milliarden Euro zur deutschen Wirtschaftsleistung bei, was knapp 4 Prozent des..."
+    },
+    {
+      "citation_position": 7,
+      "source_url": "https://www.aif.de/11-leichtbau-forum-des-bmwk-taeglich-44-patente-in-deutschland/",
+      "source_title": "11. Leichtbau-Forum des BMWK: „Täglich 44 Patente in Deutschland“ - AIF - Allianz für Industrie und Forschung",
+      "source_domain": "www.aif.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Pro Tag würden dazu 44 Patente angemeldet; damit liege Deutschland weltweit auf Platz 3 nach Südkorea und Japan.\n\n"
+    },
+    {
+      "citation_position": 8,
+      "source_url": "https://leichtbau.com/standort/",
+      "source_title": "Standort | leichtbau.com",
+      "source_domain": "leichtbau.com",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Die Technische Universität Dresden, die einzige Universität mit Exzellenz-Status in Ostdeutschland, umfasst auch das Institut für Leichtbau und Kunsts..."
+    },
+    {
+      "citation_position": 9,
+      "source_url": "https://leichtbau.com/standort/",
+      "source_title": "Standort | leichtbau.com",
+      "source_domain": "leichtbau.com",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Der Raum Dresden gehört neben München und Stade/Hamburg zu den deutschen Hochburgen des Faserverbund-Leichtbaus. "
+    },
+    {
+      "citation_position": 10,
+      "source_url": "https://www.businesslocationcenter.de/industrie/leichtbau",
+      "source_title": "Leichtbau - Motor für die Berliner Industrie",
+      "source_domain": "www.businesslocationcenter.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Die Leichtbauinitiative Berlin-Brandenburg bekräftigt seit 2023 die Bedeutung des Leichtbaus für die Zukunft des Industriestandorts. Ziel ist es, die ..."
+    },
+    {
+      "citation_position": 11,
+      "source_url": "https://leichtbauatlas.de/de/",
+      "source_title": "leichtbauatlas.de – Netzwerk für den Leichtbau in Deutschland und Europa",
+      "source_domain": "leichtbauatlas.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Der Leichtbauatlas informiert über Leichtbau-Kompetenzen in Deutschland und Europa; material- und technologie-übergreifend sowie branchenneutral. "
+    },
+    {
+      "citation_position": 12,
+      "source_url": "https://leichtbauatlas.de/de/",
+      "source_title": "leichtbauatlas.de – Netzwerk für den Leichtbau in Deutschland und Europa",
+      "source_domain": "leichtbauatlas.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Organisationen können hier ihre Verfahren und Aktivitäten präsentieren. "
+    },
+    {
+      "citation_position": 13,
+      "source_url": "https://dserver.bundestag.de/btd/20/079/2007930.pdf",
+      "source_title": "Deutscher Bundestag Drucksache 20/7930 20. Wahlperiode 27.07.2023",
+      "source_domain": "dserver.bundestag.de",
+      "cited_answer_span": null,
+      "answer_span_start": null,
+      "answer_span_end": null,
+      "source_passage": "Diese werden seit 2020 durch das auf den branchen- und materi- alübergreifenden Wissens- und Technologietransfer ausgerichtete Technologietransfer-Pro..."
+    }
+  ]
+}
