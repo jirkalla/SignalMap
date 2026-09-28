@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Peec Comparison
 
+## Status: ✅ Done — PR #23, merged 2026-09-28, release pending
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-peec-comparison
 ## Task ID prefix: PC

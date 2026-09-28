@@ -1,5 +1,7 @@
 # SignalMap — Claude Code Session Prompts: Peec Comparison
 
+## Status: ✅ Done — PR #23, merged 2026-09-28, release pending
+
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:
