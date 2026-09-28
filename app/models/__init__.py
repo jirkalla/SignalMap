@@ -19,6 +19,7 @@ from app.models.schedule import RunQueueItem, RunSchedule
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
 from app.models.user import User
+from app.models.verification import SourceDocument, SourceText, VerificationJob
 
 __all__ = [
     "Base",
@@ -46,4 +47,7 @@ __all__ = [
     "TrackedEntity",
     "TrackedEntityAlias",
     "User",
+    "SourceText",
+    "SourceDocument",
+    "VerificationJob",
 ]
