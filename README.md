@@ -342,6 +342,26 @@ It also refuses a dump from a schema newer than the checked-out code; switch
 to the current `master` first. The dev admin from `.env` (`DEV_ADMIN_*`) is
 recreated after every refresh.
 
+### Compare against Peec
+
+`tools/local/compare_peec.py` pairs SignalMap's own runs with a client's
+Peec export (JSON files downloaded manually from Peec's UI) — same prompt,
+same model, same local day — and computes agreement metrics (brand
+visibility, source domains, Knauf mentioned/not) alongside each tool's own
+day-to-day/repeat noise, so a difference can be judged against how much
+either tool already varies on its own, not against a bare number:
+
+```bash
+python tools/local/compare_peec.py --plan                # counts only, writes nothing
+python tools/local/compare_peec.py --overwrite            # full run: sources/, report.xlsx, README.md
+```
+
+It reads the local dev database read-only (same `docker compose exec
+postgres psql` pattern as `refresh_dev_db.py`, never a write) and Peec
+exports from `docs/peec/`. Output goes into a dated subfolder of
+`docs/peec/`, which is gitignored — it holds client data and is never
+committed; share the folder with whoever needs it outside git.
+
 ## Running tests
 
 Tests use a separate real Postgres database, `signalmap_test`, and fake

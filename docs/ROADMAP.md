@@ -614,6 +614,82 @@ dokumenty**, jen sledovat, jestli se v `raw_payload` nezačne objevovat
 `steps`. `docs/TASKS_SEARCH_QUERIES.md` design decision 4 si téhož rozporu
 všiml už 2026-09-10 a uzavřel ho stejně.
 
+## 18. Souběžnost workeru podle poskytovatele (C1 / C2)
+
+**Přidáno 2026-09-26** z analýzy doby běhu rozvrhů Knaufu (100 runů denně,
+~42 min). Předstupeň — **A** (worker nespí, když má ve frontě práci) a
+**B** (`WORKER_REPLICAS=4`) — je samostatná větev:
+`docs/TASKS_WORKER_THROUGHPUT.md`, kde jsou i naměřená data a simulace.
+Tahle položka je **další krok**, až A + B přestanou stačit.
+
+**Proč to přijde:** s B jde na každého poskytovatele až tolik souběžných
+požadavků, kolik je workerů — polovina položek jsou dva GPT modely, takže
+při N workerech až N souběžných volání na OpenAI s `web_search`. Při 4
+workerech je to v pořádku; při ~10 klientech se stejným časem startu
+potřebuje fronta 12–16 workerů a pak hrozí 429 a rozhozené pořadí
+(backoff 1/5/25 min). Zároveň pomalý OpenAI (30–36 s/run) blokuje rychlou
+Gemini (7 s/run) ve stejné frontě.
+
+**Simulace (reálné latence z 2026-09-26, 10 klientů = 10 kopií Knaufu,
+všichni v 10:00; bez modelování 429):**
+
+| Varianta | Konec dávky | Max souběžně na OpenAI |
+|---|---|---|
+| B, 4 workery | 85 min | 4 |
+| B, 12 workerů | 29 min | 11 (bez kontroly) |
+| C, limity OpenAI/Anthropic/Google 10/4/3 | 27 min | 10 (řízeně) |
+| C, limity 20/8/4 | 14 min | 20 (řízeně) |
+
+Při stejném celkovém počtu workerů C nezrychlí víc než B — přínos C je
+**kontrola** (rate limity, férovost mezi poskytovateli), ne rychlost sama.
+
+**Kdy to dělat** (kterákoli z podmínek):
+- v produkci se objeví 429 od poskytovatele (měření v WT-T5);
+- ~10+ klientů, kteří musí mít data ve stejný čas (nejdou rozložit
+  po 15 min — rozložení startů samo zvládne 10 klientů se 4 workery);
+- potřeba měnit limity bez redeploye.
+
+### C1 — workery podle poskytovatele („lanes“)
+
+- Env proměnná workeru, např. `WORKER_PROVIDERS=openai`; `claim_next`
+  přidá filtr `ai_models.provider_id IN (...)`.
+- V compose víc služeb ze stejného image: `worker-openai` (replicas 6),
+  `worker-anthropic` (3), `worker-google` (2) + `worker-default` bez
+  filtru, aby položky nového poskytovatele nikdy nezůstaly bez workeru.
+- Limit = počet replik. **Bez migrace**, malá změna v `claim_next`.
+- Slabina: nový poskytovatel s vlastním limitem = úprava compose a
+  redeploy.
+
+### C2 — dynamický limit v DB
+
+- Nový sloupec `providers.max_concurrency` (**migrace — před
+  implementací flagovat**, AI_INSTRUCTIONS.md §4), výchozí hodnota z
+  dnes nečteného `SCHEDULER_PROVIDER_CONCURRENCY` (`app/config.py`).
+- `claim_next` vezme jen položku poskytovatele, který má méně `leased`
+  položek než svůj limit; souběh dvou workerů hlídá advisory lock na
+  `provider_id` (stejný vzor jako `check_daily_quota`).
+- Workery tvoří jeden pool o velikosti součtu limitů; limit se mění v UI
+  u poskytovatele bez redeploye.
+- Rozšíření: při 429 respektovat `Retry-After` a dočasně snížit limit
+  daného poskytovatele (adaptivní strop).
+
+**Pořadí:** C1 první (levné, bez schématu); C2 až když bude reálná
+potřeba měnit limity z UI.
+
+**Zváženo a odloženo (konverzace 2026-09-26):**
+- **Vlákna v jednom workeru** — stejný efekt jako C2 v jednom procesu,
+  ale přepis smyčky (sloty, lease, heartbeat, shutdown); zvážit, až bude
+  počet replik nepraktický.
+- **Async (asyncio)** — přepis celého řetězce (7 adaptérů, async DB
+  session, `execute_run`, testy); vyplatí se až při stovkách souběžných
+  volání.
+- **Batch API** (OpenAI Batch, Anthropic Message Batches, Gemini Batch)
+  — ~50 % levnější, výsledek do 24 h. Řeší cenu, ne rychlost; před
+  čímkoli ověřit, že batch podporuje `web_search`/grounding u každého
+  poskytovatele (bez toho nejsou citace). Kandidát, až bude tlačit cena.
+- **Celery/Redis** — ne; Postgres fronta se `SKIP LOCKED` je pro tenhle
+  objem standard.
+
 ## Mimo tuhle roadmapu, zaznamenáno pro pořádek
 
 Z diskuze o vzorovém mockupu (peec.ai-style konkurent) vyplynuly dvě další
@@ -721,3 +797,4 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
+| 18 | Souběžnost workeru podle poskytovatele (C1/C2) | Navrženo 2026-09-26; předstupeň A + B = `docs/TASKS_WORKER_THROUGHPUT.md` (neimplementováno). C čeká na 429 v produkci nebo ~10+ klientů se stejným startem |
