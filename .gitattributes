@@ -11,3 +11,11 @@ dockerfile text eol=lf
 # does not match before `\r` — a CRLF working-tree copy (the Windows default without this rule)
 # makes the guard test silently find zero version headings instead of comparing versions.
 CHANGELOG.md text eol=lf
+
+# PDF is not line-oriented — without this, git's default text-file heuristics (core.autocrlf on
+# Windows) can rewrite bare LF bytes inside the binary content to CRLF on checkout, corrupting
+# the file's byte offsets (xref table, /Length stream lengths) that pypdf depends on to parse it
+# at all. Caught before it shipped: `git check-attr` showed sample.pdf/blank.pdf
+# (tests/fixtures/sources/, tests/test_source_extract.py) as "text: unspecified", and `git diff
+# --stat` was already diffing them line-by-line like a text file.
+*.pdf binary
