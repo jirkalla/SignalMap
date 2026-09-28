@@ -372,6 +372,7 @@
   "run.citations_empty": "No citations were returned for this run.",
   "run.citations_not_supported": "This model has no web search — its answers come from model knowledge only, so citations are never returned.",
   "run.citation_claim_label": "Cited claim",
+  "run.citation_claim_derived_hint": "Derived from the answer text",
   "run.citation_source_passage_label": "Source passage",
   "run.search_queries_label": "Search queries",
   "run.search_queries_empty": "The provider did not issue any search queries for this run.",

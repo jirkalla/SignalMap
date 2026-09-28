@@ -397,6 +397,108 @@ def test_successful_run_stores_and_displays_the_source_passage(
     assert "Cited claim" not in detail_response.text
 
 
+def test_openai_run_detail_shows_the_derived_sentence_not_the_raw_link_marker(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CITATION_VERIFICATION.md T2 — before this, the detail page showed OpenAI's
+
+    `cited_answer_span` (the raw `([domain](url))` link marker) as the "Cited claim". It must
+    now show the sentence `derive_claim` recovers from before that marker instead.
+    """
+    sentence = "Acme is a reliable brand."
+    marker = "([acme.com](https://acme.com/about?utm_source=openai))"
+    rendered_text = f"{sentence} {marker}"
+    marker_start = len(sentence) + 1
+    marker_end = marker_start + len(marker)
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"output": [{"type": "message", "content": [{"type": "output_text", "text": rendered_text}]}]},
+        rendered_text=rendered_text,
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://acme.com/about?utm_source=openai",
+                source_title="Acme",
+                source_domain="acme.com",
+                citation_position=0,
+                cited_answer_span=marker,
+                answer_span_start=marker_start,
+                answer_span_end=marker_end,
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["openai_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Cited claim" in detail_response.text
+    assert f"&ldquo;{sentence}&rdquo;" in detail_response.text
+    assert f"&ldquo;{marker}&rdquo;" not in detail_response.text
+
+
+def test_anthropic_run_detail_now_shows_the_cited_claim(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CITATION_VERIFICATION.md T2 — before this, an Anthropic citation never showed a
+
+    "Cited claim" at all (`cited_answer_span` is permanently None for Anthropic — see Citation's
+    docstring). The detail page must now derive and show one from the response block the citation
+    is attached to, alongside the "Source passage" it already showed.
+    """
+    rendered_text = "Acme is known for reliability."
+    raw_payload = {
+        "content": [
+            {
+                "type": "text",
+                "text": rendered_text,
+                "citations": [
+                    {
+                        "url": "https://example.com/a",
+                        "title": "A",
+                        "cited_text": "Acme has topped reliability rankings since 2019.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload=raw_payload,
+        rendered_text=rendered_text,
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a",
+                source_title="A",
+                source_domain="example.com",
+                citation_position=0,
+                source_passage="Acme has topped reliability rankings since 2019.",
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Cited claim" in detail_response.text
+    assert "Source passage" in detail_response.text
+    assert f"&ldquo;{rendered_text}&rdquo;" in detail_response.text
+
+
 def test_successful_run_stores_and_displays_search_queries_in_order(
     authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
 ):

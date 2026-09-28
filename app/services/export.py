@@ -22,7 +22,8 @@ from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import AIModel, Prompt, PromptSet, RawResponse, Run
+from app.models import AIModel, Citation, Prompt, PromptSet, RawResponse, Run
+from app.services.claims import derive_claim
 
 ExportContent = Literal["answer", "raw", "full"]
 
@@ -70,6 +71,8 @@ CITATION_COLUMNS: tuple[str, ...] = (
     "source_passage",
     "answer_span_start",
     "answer_span_end",
+    "claim_text",
+    "claim_method",
 )
 
 SEARCH_QUERY_COLUMNS: tuple[str, ...] = (
@@ -221,11 +224,27 @@ def _xlsx_safe(value: Any) -> Any:
     return value
 
 
+def _citation_claim_fields(provider_code: str, citation: Citation, raw: RawResponse) -> dict[str, Any]:
+    """`claim_text`/`claim_method` for one citation (docs/TASKS_CITATION_VERIFICATION.md T2).
+
+    Shared by `_citation_rows` (CSV/XLSX) and `build_json` so `derive_claim` is called from
+    exactly one place in the export path, same as app/routers/runs.py's `run_detail` does for the
+    on-screen citation list. `cited_answer_span` (the provider's own field, kept as-is per design
+    decision 5) stays a separate column — this only adds the derived claim alongside it.
+    """
+    derived = derive_claim(provider_code, citation, raw.rendered_text, raw.raw_payload)
+    return {
+        "claim_text": derived.text if derived else None,
+        "claim_method": derived.method if derived else None,
+    }
+
+
 def _citation_rows(run: Run) -> list[dict[str, Any]]:
     """One row per citation on this run's raw response — empty when there is none or it has no citations."""
     raw = run.raw_response
     if raw is None:
         return []
+    provider_code = run.model.provider.code
     return [
         {
             "run_id": run.id,
@@ -237,6 +256,7 @@ def _citation_rows(run: Run) -> list[dict[str, Any]]:
             "source_passage": citation.source_passage,
             "answer_span_start": citation.answer_span_start,
             "answer_span_end": citation.answer_span_end,
+            **_citation_claim_fields(provider_code, citation, raw),
         }
         for citation in raw.citations
     ]
@@ -375,6 +395,7 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
             entry["rendered_text"] = raw.rendered_text if raw else None
             entry["has_citations"] = raw.has_citations if raw else False
             entry["token_usage"] = raw.token_usage if raw else None
+            provider_code = run.model.provider.code
             entry["citations"] = [
                 {
                     "source_url": citation.source_url,
@@ -385,6 +406,7 @@ def build_json(runs: list[Run], content: ExportContent) -> bytes:
                     "source_passage": citation.source_passage,
                     "answer_span_start": citation.answer_span_start,
                     "answer_span_end": citation.answer_span_end,
+                    **_citation_claim_fields(provider_code, citation, raw),
                 }
                 for citation in (raw.citations if raw else [])
             ]

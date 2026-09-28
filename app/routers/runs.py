@@ -40,6 +40,7 @@ from app.models import (
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
+from app.services.claims import DerivedClaim, derive_claim
 from app.services.export import (
     ExportContent,
     build_csv_zip,
@@ -285,6 +286,16 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         if raw_response
         else []
     )
+    # docs/TASKS_CITATION_VERIFICATION.md T2 — keyed by citation.id (not position) so the
+    # template can look one up per citation without also threading an index through the loop.
+    # None per citation is a normal outcome (see derive_claim), not an error to guard against.
+    citation_claims: dict[int, DerivedClaim | None] = {}
+    if raw_response:
+        provider_code = run.model.provider.code
+        citation_claims = {
+            citation.id: derive_claim(provider_code, citation, raw_response.rendered_text, raw_response.raw_payload)
+            for citation in citations
+        }
     rendered_text_html = None
     if raw_response and raw_response.rendered_text:
         match_spans = next(
@@ -333,6 +344,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "raw_response": raw_response,
             "rendered_text_html": rendered_text_html,
             "citations": citations,
+            "citation_claims": citation_claims,
             "search_queries": search_queries,
             "single_entity_analysis_results": single_entity_analysis_results,
             "competitive_result": competitive_result,

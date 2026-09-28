@@ -29,8 +29,20 @@ EXPORT_MEDIA_TYPES = {
 }
 
 
-def _trigger_run(authed_client: TestClient, prompt_id: int, seed: dict, *, payload: RawResponsePayload | None = None) -> int:
-    """POST a run through FakeAdapter (never a real provider) and return the created run id."""
+def _trigger_run(
+    authed_client: TestClient,
+    prompt_id: int,
+    seed: dict,
+    *,
+    payload: RawResponsePayload | None = None,
+    model_id: int | None = None,
+) -> int:
+    """POST a run through FakeAdapter (never a real provider) and return the created run id.
+
+    `model_id` defaults to `seed["model"]` (google_gemini) — pass `seed["openai_model"].id` /
+    `seed["anthropic_model"].id` when a test needs `run.model.provider.code` to actually be that
+    provider, e.g. to exercise `derive_claim`'s provider-specific branches.
+    """
     FakeAdapter.payload_to_return = payload or RawResponsePayload(
         raw_payload={"answer": "test raw payload"},
         rendered_text="Test rendered answer.",
@@ -45,7 +57,11 @@ def _trigger_run(authed_client: TestClient, prompt_id: int, seed: dict, *, paylo
     )
     response = authed_client.post(
         f"/prompts/{prompt_id}/runs",
-        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        data={
+            "model_id": model_id or seed["model"].id,
+            "market_id": seed["market"].id,
+            "persona_id": seed["persona"].id,
+        },
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -310,3 +326,71 @@ def test_export_carries_the_split_citation_columns_in_every_format(
     assert json_citations[0]["source_passage"] is None
     assert json_citations[1]["source_passage"] == "Quoted from the source page."
     assert json_citations[1]["cited_answer_span"] is None
+
+
+def test_export_citation_columns_carry_the_derived_claim_not_the_raw_marker(
+    authed_client: TestClient, seed: dict, sample_prompt: Prompt
+):
+    """docs/TASKS_CITATION_VERIFICATION.md T2 — `claim_text`/`claim_method`, appended after the
+
+    existing citation columns (never reordering or renaming them — design decision under CV-2).
+    Uses an OpenAI-shaped citation, where `cited_answer_span` is the raw link marker rather than a
+    claim (design decision 4), so the assertions also pin down that `claim_text` is the DERIVED
+    sentence, distinct from the `cited_answer_span` column it sits next to, which is kept exactly
+    as the provider returned it.
+    """
+    sentence = "Acme is a reliable brand."
+    marker = "([acme.com](https://acme.com/about?utm_source=openai))"
+    rendered_text = f"{sentence} {marker}"
+    marker_start = len(sentence) + 1
+    marker_end = marker_start + len(marker)
+
+    run_id = _trigger_run(
+        authed_client,
+        sample_prompt.id,
+        seed,
+        model_id=seed["openai_model"].id,
+        payload=RawResponsePayload(
+            raw_payload={"output": [{"type": "message", "content": [{"type": "output_text", "text": rendered_text}]}]},
+            rendered_text=rendered_text,
+            has_citations=True,
+            citations=[
+                AdapterCitation(
+                    source_url="https://acme.com/about?utm_source=openai",
+                    source_title="Acme",
+                    source_domain="acme.com",
+                    citation_position=0,
+                    cited_answer_span=marker,
+                    answer_span_start=marker_start,
+                    answer_span_end=marker_end,
+                ),
+            ],
+            token_usage={"input_tokens": 3, "output_tokens": 2},
+        ),
+    )
+
+    new_columns = ["claim_text", "claim_method"]
+
+    csv_response = authed_client.get(f"/runs/{run_id}/export", params={"format": "csv"})
+    zf = zipfile.ZipFile(io.BytesIO(csv_response.content))
+    csv_rows = list(csv.DictReader(io.StringIO(zf.read("citations.csv").decode())))
+    header = list(csv_rows[0])
+    assert header[-2:] == new_columns, "claim_text/claim_method must be appended, not inserted"
+    assert csv_rows[0]["cited_answer_span"] == marker
+    assert csv_rows[0]["claim_text"] == sentence
+    assert csv_rows[0]["claim_method"] == "openai_before_marker"
+
+    xlsx_response = authed_client.get(f"/runs/{run_id}/export", params={"format": "xlsx"})
+    sheet = load_workbook(io.BytesIO(xlsx_response.content))["Citations"]
+    xlsx_header = [cell.value for cell in sheet[1]]
+    assert xlsx_header[-2:] == new_columns
+    xlsx_row = dict(zip(xlsx_header, [cell.value for cell in next(sheet.iter_rows(min_row=2))]))
+    assert xlsx_row["claim_text"] == sentence
+    assert xlsx_row["claim_method"] == "openai_before_marker"
+
+    json_citations = json.loads(authed_client.get(f"/runs/{run_id}/export", params={"format": "json"}).content)[0][
+        "citations"
+    ]
+    assert json_citations[0]["cited_answer_span"] == marker
+    assert json_citations[0]["claim_text"] == sentence
+    assert json_citations[0]["claim_method"] == "openai_before_marker"
