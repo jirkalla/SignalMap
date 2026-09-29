@@ -29,7 +29,7 @@ the GC-T3 backfill replays them over stored `raw_payload` rows.
 
 import openai
 
-from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 
@@ -154,4 +154,15 @@ class OpenAIAdapter:
             citations=citations,
             search_queries=search_queries,
             token_usage=token_usage,
+        )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Not implemented (docs/TASKS_CITATION_VERIFICATION.md T11) — Anthropic is T11's only
+
+        judge() provider; OpenAI's own citations get the LLM claim-check via T12 same as Gemini's,
+        but no task has wired judge() up here yet.
+        """
+        raise NotImplementedError(
+            "OpenAIAdapter.judge() is not implemented — docs/TASKS_CITATION_VERIFICATION.md T11 "
+            "only built this for Anthropic; OpenAI has no judge() yet."
         )

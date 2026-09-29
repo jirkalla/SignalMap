@@ -25,14 +25,20 @@ import sys
 import pytest
 
 from app.adapters.anthropic import _map_citations as anthropic_map_citations
+from app.adapters.anthropic import _map_judge_response as anthropic_map_judge_response
 from app.adapters.anthropic import _map_search_queries as anthropic_map_search_queries
-from app.adapters.google import _map_citations as google_map_citations
-from app.adapters.google import _map_search_queries as google_map_search_queries
+from app.adapters.deepseek import DeepSeekAdapter
 from app.adapters.deepseek import _map_citations as deepseek_map_citations
 from app.adapters.deepseek import _map_search_queries as deepseek_map_search_queries
+from app.adapters.google import GoogleGeminiAdapter
+from app.adapters.google import _map_citations as google_map_citations
+from app.adapters.google import _map_search_queries as google_map_search_queries
+from app.adapters.grok import GrokAdapter
 from app.adapters.grok import _map_citations as grok_map_citations
 from app.adapters.grok import _map_search_queries as grok_map_search_queries
+from app.adapters.openai import OpenAIAdapter
 from app.adapters.openai import _map_citations as openai_map_citations
+from app.adapters.perplexity import PerplexityAdapter
 from app.adapters.perplexity import _map_citations as perplexity_map_citations
 from app.adapters.perplexity import _map_search_queries as perplexity_map_search_queries
 
@@ -364,6 +370,54 @@ def test_anthropic_position_runs_across_several_text_blocks():
 def test_anthropic_without_citations_reports_none():
     assert anthropic_map_citations({"content": [{"type": "text", "text": "x", "citations": None}]}) == ([], False)
     assert anthropic_map_citations({}) == ([], False)
+
+
+# --- Anthropic judge() (T11) --------------------------------------------------
+
+
+def test_anthropic_judge_response_extracts_text_and_usage():
+    payload = {
+        "content": [{"type": "text", "text": "supported | Directly states the claim."}],
+        "usage": {"input_tokens": 512, "output_tokens": 12},
+    }
+
+    result = anthropic_map_judge_response(payload)
+
+    assert result.text == "supported | Directly states the claim."
+    assert result.token_usage == {"input_tokens": 512, "output_tokens": 12}
+
+
+def test_anthropic_judge_response_joins_several_text_blocks():
+    payload = {"content": [{"type": "text", "text": "first "}, {"type": "text", "text": "second"}]}
+
+    assert anthropic_map_judge_response(payload).text == "first second"
+
+
+def test_anthropic_judge_response_with_no_text_block_is_an_empty_string():
+    assert anthropic_map_judge_response({"content": []}).text == ""
+    assert anthropic_map_judge_response({}).text == ""
+
+
+def test_anthropic_judge_response_without_usage_reports_none():
+    assert anthropic_map_judge_response({"content": [{"type": "text", "text": "x"}]}).token_usage is None
+
+
+@pytest.mark.parametrize(
+    "adapter_cls",
+    [GoogleGeminiAdapter, OpenAIAdapter, PerplexityAdapter, GrokAdapter, DeepSeekAdapter],
+)
+def test_non_anthropic_adapters_raise_not_implemented_for_judge(adapter_cls):
+    """docs/TASKS_CITATION_VERIFICATION.md T11 point 2 — every other adapter must fail loudly
+
+    and clearly, not silently (an AttributeError, or worse, inheriting some Protocol default).
+    Each adapter's own `__init__` builds a real SDK client, which just reads settings and never
+    makes a network call — no monkeypatching needed to keep this test call-free; `judge()` itself
+    raises before it would ever reach the network.
+    """
+    adapter = adapter_cls()
+
+    with pytest.raises(NotImplementedError):
+        adapter.judge("system prompt", "user prompt", "some-model")
 
 
 # --- OpenAI citations (GC-T5) ------------------------------------------------

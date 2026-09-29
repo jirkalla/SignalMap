@@ -5,14 +5,20 @@ conftest.py resets them after each test) since ADAPTERS registers a class,
 not an instance — app.adapters.get_adapter() always instantiates fresh.
 """
 
-from app.adapters.base import ProviderAdapter, RawResponsePayload
+from app.adapters.base import JudgePayload, ProviderAdapter, RawResponsePayload
 
 
 class FakeAdapter:
-    """Returns `payload_to_return` on `run()`, or raises `error_to_raise` if set."""
+    """Returns `payload_to_return` on `run()` (or raises `error_to_raise`), and
+
+    `judge_payload_to_return` on `judge()` (or raises `judge_error_to_raise`) — docs/
+    TASKS_CITATION_VERIFICATION.md T11.
+    """
 
     payload_to_return: RawResponsePayload | None = None
     error_to_raise: Exception | None = None
+    judge_payload_to_return: JudgePayload | None = None
+    judge_error_to_raise: Exception | None = None
 
     def run(
         self,
@@ -26,6 +32,12 @@ class FakeAdapter:
             raise FakeAdapter.error_to_raise
         assert FakeAdapter.payload_to_return is not None, "Set FakeAdapter.payload_to_return before triggering a run."
         return FakeAdapter.payload_to_return
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        if FakeAdapter.judge_error_to_raise is not None:
+            raise FakeAdapter.judge_error_to_raise
+        assert FakeAdapter.judge_payload_to_return is not None, "Set FakeAdapter.judge_payload_to_return before calling judge()."
+        return FakeAdapter.judge_payload_to_return
 
 
 # Static check that FakeAdapter satisfies the ProviderAdapter protocol.
