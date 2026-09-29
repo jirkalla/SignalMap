@@ -278,3 +278,62 @@ class CitationVerification(Base):
     citation: Mapped["Citation"] = relationship()
     source_document: Mapped["SourceDocument | None"] = relationship()
     llm_model: Mapped["AIModel | None"] = relationship()
+
+
+# The four verdict words a human ever picks (docs/TASKS_CITATION_VERIFICATION.md T14, design
+# decision 22's prompt vocabulary) — never CitationVerification.VERDICTS' llm_supported/etc.:
+# a person always judges "does the page support this claim", the same four-way call regardless
+# of whether they're labeling blind or reviewing an LLM verdict already on screen.
+HUMAN_VERDICTS = ("supported", "partially_supported", "not_supported", "contradicted")
+
+MODES = ("blind", "review")
+
+
+class VerificationLabel(Base):
+    """One human's verdict on one citation (docs/TASKS_CITATION_VERIFICATION.md T14, design
+
+    decision 27) — the gate before `auto_verify_citations` (T13) is trusted more broadly than
+    Knauf's own pilot. Append-only like `CitationVerification` (NFR-6): a re-label (by the same
+    or a different user) is a new row, never an edit — T15's inter-rater agreement measurement
+    needs to see every independent judgement, not just the latest.
+
+    `mode='blind'`: the labeler never sees any LLM verdict for this citation (`app/routers/
+    verification.py`'s `/verification/label` — only the claim, the captured page's nearest
+    passages, and a link). `agrees_with_verification_id` is always NULL here — comparing a blind
+    label against the LLM's own verdict is done later (T15) by joining on `citation_id`, not
+    through this column, precisely so the SAME citation can be blind-labeled by more than one
+    user (T15's "~20 z nich nezávisle druhý člověk") without this row claiming to "agree/disagree
+    with" one specific verdict it never saw.
+
+    `mode='review'`: the labeler DID see one specific `CitationVerification` (the "Souhlasím /
+    Nesouhlasím" control on the run detail page) — `agrees_with_verification_id` names exactly
+    which one. `verdict` is what the human says the correct verdict actually is: a copy of that
+    verification's own verdict on "Souhlasím" (agreement is then just `verdict ==
+    citation_verifications.verdict`, no separate boolean needed), the human's own correction on
+    "Nesouhlasím" + a picked verdict, or NULL on a bare "Nesouhlasím" with no correction offered —
+    still useful signal ("the LLM was wrong") even without knowing what right looks like.
+    """
+
+    __tablename__ = "verification_labels"
+    __table_args__ = (
+        CheckConstraint("mode IN ('" + "', '".join(MODES) + "')", name="ck_verification_labels_mode"),
+        CheckConstraint(
+            "verdict IS NULL OR verdict IN ('" + "', '".join(HUMAN_VERDICTS) + "')",
+            name="ck_verification_labels_verdict",
+        ),
+        Index("idx_verification_labels_citation", "citation_id"),
+        Index("idx_verification_labels_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    citation_id: Mapped[int] = mapped_column(ForeignKey("citations.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    verdict: Mapped[str | None] = mapped_column(String(25))
+    mode: Mapped[str] = mapped_column(String(10), nullable=False)
+    agrees_with_verification_id: Mapped[int | None] = mapped_column(ForeignKey("citation_verifications.id"))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    citation: Mapped["Citation"] = relationship()
+    user: Mapped["User"] = relationship()
+    agrees_with: Mapped["CitationVerification | None"] = relationship()

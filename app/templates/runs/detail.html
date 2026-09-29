@@ -190,6 +190,51 @@
       {% if ev and ev.verdict %}
       <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium mb-1 {{ tone_badge_classes[ev.tone] }}">{{ t(ev.label_key) }}</span>
       {% endif %}
+      {% if ev and ev.verdict and ev.verdict.startswith('llm_') and can_edit(current_user) %}
+      {# docs/TASKS_CITATION_VERIFICATION.md T14 point 3 — human review of one specific LLM
+         verdict, distinct from the blind sample at /verification/label (which never shows this
+         verdict at all). No JS: <details> discloses the optional correction, same pattern the
+         tracked-entity aliases list already uses.
+
+         Wrapped in its own <details> once a review already exists (found manually, 2026-09-29):
+         a plain POST/303 reloads the page looking identical, so without this a click looked like
+         it silently did nothing even though it was recorded. The <summary> itself shows what was
+         recorded, persistently across reloads — confirms the click worked AND doubles as the
+         "already reviewed" indicator, no separate flash message needed. #}
+      {% set my_label = my_review_labels.get(c.id) %}
+      <div class="mt-1 mb-2">
+        {% if my_label %}
+        <details>
+          <summary class="text-xs cursor-pointer select-none inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800">
+            <span>&check;</span>
+            <span>{{ t('run.review_recorded_prefix') }} {{ t('verification.human_verdict_' ~ my_label.verdict) if my_label.verdict else t('run.review_disagreed_no_correction') }}</span>
+            <span class="text-emerald-600 underline">{{ t('run.review_change_link') }}</span>
+          </summary>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+        {% endif %}
+        <form method="post" action="/runs/{{ run.id }}/citations/{{ c.id }}/review" class="inline">
+          <input type="hidden" name="agree" value="true">
+          <button type="submit" class="text-xs px-2 py-1 rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-50">{{ t('run.review_agree_button') }}</button>
+        </form>
+        <form method="post" action="/runs/{{ run.id }}/citations/{{ c.id }}/review" class="inline">
+          <input type="hidden" name="agree" value="false">
+          <button type="submit" class="text-xs px-2 py-1 rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-50">{{ t('run.review_disagree_button') }}</button>
+        </form>
+        <details class="w-full">
+          <summary class="text-xs text-stone-500 cursor-pointer select-none">{{ t('run.review_correct_verdict_label') }}</summary>
+          <form method="post" action="/runs/{{ run.id }}/citations/{{ c.id }}/review" class="mt-2 flex flex-wrap gap-2">
+            <input type="hidden" name="agree" value="false">
+            {% for v in human_verdicts %}
+            <button type="submit" name="verdict" value="{{ v }}" class="text-xs px-2 py-1 rounded-md border border-stone-300 bg-white text-stone-700 hover:bg-stone-50">{{ t('verification.human_verdict_' ~ v) }}</button>
+            {% endfor %}
+          </form>
+        </details>
+        {% if my_label %}
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
       <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words block">{{ c.source_title or c.source_url }}</a>
       <div class="text-xs text-stone-500 mt-1">{{ c.source_domain }}{% if c.citation_position is not none %} · #{{ c.citation_position }}{% endif %}</div>
       {% set claim = citation_claims.get(c.id) %}

@@ -180,9 +180,14 @@ class Evidence:
 
     does the t()/number formatting (this module never imports app.templating, same split as
     every other service in this app).
+
+    `verification_id` (T14) is the underlying `CitationVerification.id`, `None` while pending —
+    the run detail page's "Souhlasím / Nesouhlasím" control (app/routers/verification.py) needs
+    it to record exactly which verdict a human reviewed, not just its value.
     """
 
     citation_id: int
+    verification_id: int | None
     verdict: str | None
     reason: str | None
     tone: str
@@ -241,6 +246,7 @@ def build_evidence(
     if verification is None:
         return Evidence(
             citation_id=citation.id,
+            verification_id=None,
             verdict=None,
             reason=None,
             tone="stone",
@@ -272,6 +278,7 @@ def build_evidence(
     location: dict[str, Any] = verification.location or {}
     return Evidence(
         citation_id=citation.id,
+        verification_id=verification.id,
         verdict=verification.verdict,
         reason=verification.reason,
         tone=style.tone if style else "stone",

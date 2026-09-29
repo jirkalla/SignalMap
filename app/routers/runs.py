@@ -40,6 +40,7 @@ from app.models import (
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
+from app.models.verification import HUMAN_VERDICTS, VerificationLabel
 from app.services.claim_judge import LLM_JUDGE_PROVIDERS
 from app.services.claims import DerivedClaim, derive_claim
 from app.services.export import (
@@ -119,6 +120,28 @@ def _get_run_or_404(db: Session, request: Request, run_id: int) -> Run:
     if run is None:
         raise AppError("run_not_found", get_t(request)("errors.run_not_found"), status_code=404)
     return run
+
+
+def _my_latest_review_labels(db: Session, citation_ids: list[int], user_id: int) -> dict[int, VerificationLabel]:
+    """This user's own newest `mode='review'` label per citation (docs/TASKS_CITATION_
+
+    VERIFICATION.md T14) — found manually, 2026-09-29: without this, Agree/Disagree gave no
+    visible feedback at all (a plain POST/303 reloads the same-looking page), so a click looked
+    like it silently failed even though it was recorded. Showing what THIS user already recorded,
+    persistently across reloads, both confirms the click worked and stops them re-reviewing the
+    same citation without realizing they already have.
+    """
+    if not citation_ids:
+        return {}
+    rows = db.scalars(
+        select(VerificationLabel)
+        .where(VerificationLabel.citation_id.in_(citation_ids), VerificationLabel.user_id == user_id, VerificationLabel.mode == "review")
+        .order_by(VerificationLabel.citation_id, VerificationLabel.created_at.desc())
+    ).all()
+    latest: dict[int, VerificationLabel] = {}
+    for row in rows:
+        latest.setdefault(row.citation_id, row)
+    return latest
 
 
 def _highlight_matches(text: str, spans: list[list[int]]) -> Markup:
@@ -347,7 +370,7 @@ def verify_run_citations(request: Request, run_id: int, db: Session = Depends(ge
 
 
 @router.get("/runs/{run_id}")
-def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
+def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), user: User = Depends(current_active_user)):
     """Show one run: metadata, rendered answer (with citation-verification highlighting, T9),
 
     raw JSON, citations, and search queries (FR-14).
@@ -359,6 +382,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
         if raw_response
         else []
     )
+    my_review_labels = _my_latest_review_labels(db, [c.id for c in citations], user.id)
     search_queries = (
         db.scalars(
             select(SearchQuery).where(SearchQuery.raw_response_id == raw_response.id).order_by(SearchQuery.query_position)
@@ -455,6 +479,8 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "verdict_styles": VERDICT_STYLES,
             "tone_badge_classes": TONE_BADGE_CLASSES,
             "can_verify_citations": can_verify_citations,
+            "human_verdicts": HUMAN_VERDICTS,
+            "my_review_labels": my_review_labels,
             "search_queries": search_queries,
             "single_entity_analysis_results": single_entity_analysis_results,
             "competitive_result": competitive_result,

@@ -19,7 +19,7 @@ from app.models.schedule import RunQueueItem, RunSchedule
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
 from app.models.user import User
-from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob
+from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob, VerificationLabel
 
 __all__ = [
     "Base",
@@ -51,4 +51,5 @@ __all__ = [
     "SourceDocument",
     "VerificationJob",
     "CitationVerification",
+    "VerificationLabel",
 ]
