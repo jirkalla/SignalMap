@@ -183,6 +183,27 @@ def test_judge_citations_writes_unverifiable_for_a_failed_capture(db_session: Se
     # FakeAdapter beyond this test not crashing on FakeAdapter.judge_payload_to_return being unset.
 
 
+def test_judge_citations_writes_unverifiable_for_a_rate_limited_capture(db_session: Session, seed, sample_prompt: Prompt):
+    """Regression test for the 2026-09-29 incident: `error_reason="http_429"` used to be absent
+
+    from `UNVERIFIABLE_REASONS` (migration 0041 added it), so copying it across in
+    `judge_citations` hit `citation_verifications`' CHECK constraint on `commit()` — rolling back
+    every judgement for the response, including already-paid LLM calls for its other citations.
+    """
+    run = _make_run(db_session, seed, sample_prompt)
+    raw = _make_raw_response(db_session, run, rendered_text=_RENDERED_TEXT)
+    citation = _add_citation(db_session, raw, source_url="https://example.com/a", span=_CLAIM_SPAN, start=0, end=len(_CLAIM_SPAN))
+    _add_source_document(db_session, url=citation.source_url, error_reason="http_429")
+    judge_model = _judge_model(db_session, seed)
+
+    judge_citations(db_session, raw, judge_model=judge_model, now=NOW)
+
+    verification = db_session.scalar(select(CitationVerification).where(CitationVerification.citation_id == citation.id))
+    assert verification.verdict == "unverifiable"
+    assert verification.reason == "http_429"
+    assert verification.check_type == "llm"
+
+
 def test_judge_citations_skips_when_source_not_captured_yet(db_session: Session, seed, sample_prompt: Prompt):
     run = _make_run(db_session, seed, sample_prompt)
     raw = _make_raw_response(db_session, run, rendered_text=_RENDERED_TEXT)

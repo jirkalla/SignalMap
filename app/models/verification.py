@@ -76,10 +76,19 @@ VERDICTS = (
 # but nothing copied it across here until the archive.org fallback started treating 410 the same
 # as 404 — found while implementing T10, not a T10-only concern (a live 410 could always have hit
 # this CHECK, T10 was just the first thing to actually exercise the path).
+#
+# 'http_429' added in migration 0041: same gap, different status code — source_capture.py could
+# always produce error_reason="http_429" too, and nothing exercised that path until T15's real
+# retroactive-verify run against Knauf hit a rate-limited source. Unlike a missing/removed page,
+# this one rolled back an entire job's judgements (including already-paid LLM calls for that
+# response's other citations) on every retry, since claim_judge.judge_citations commits once at
+# the end of its loop over all of a response's citations — found and the stuck jobs manually
+# halted 2026-09-29.
 UNVERIFIABLE_REASONS = (
     "http_403",
     "http_404",
     "http_410",
+    "http_429",
     "http_5xx",
     "timeout",
     "bot_challenge",
