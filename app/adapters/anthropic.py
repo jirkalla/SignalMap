@@ -218,15 +218,19 @@ class AnthropicAdapter:
         """Run one tool-free judgement call (see ProviderAdapter.judge, app/adapters/base.py).
 
         Deliberately NOT `run()` with `tools` omitted: no `web_search` block at all is passed to
-        the API, `temperature=0` for deterministic judging (`run()` leaves Anthropic's own
-        default, appropriate for a creative grounded answer but not for a repeatable check), and
-        `max_tokens` is `_JUDGE_MAX_TOKENS`, not `_DEFAULT_MAX_TOKENS` — a judge reply is a
-        verdict, a one-sentence reason, and one quoted sentence, not a full answer.
+        the API, and `max_tokens` is `_JUDGE_MAX_TOKENS`, not `_DEFAULT_MAX_TOKENS` — a judge
+        reply is a verdict, a one-sentence reason, and one quoted sentence, not a full answer.
+
+        No `temperature` kwarg: found 2026-09-29 running this for real (docs/TASKS_CITATION_
+        VERIFICATION.md T12's manual runs 311/422) that the installed `anthropic==1.4.0` SDK's
+        `Messages.create()` has no `temperature` parameter at all (`TypeError: unexpected keyword
+        argument 'temperature'` — confirmed via `inspect.signature`, not guessed). Design decision
+        20 asks for temperature 0 for deterministic judging; this SDK version gives no way to set
+        it, the same constraint `run()` already lives with (it never passes `temperature` either).
         """
         response = self._client.messages.create(
             model=model_name,
             max_tokens=_JUDGE_MAX_TOKENS,
-            temperature=0,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
