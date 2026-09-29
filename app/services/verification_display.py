@@ -203,14 +203,22 @@ class Evidence:
 def _open_url(document: SourceDocument | None, verification: CitationVerification) -> str | None:
     """A link that jumps straight to the matched passage — a native browser text-fragment
 
-    (`#:~:text=`) for HTML, `#page=N` for a PDF. Always built on `document.requested_url`
-    (== the citation's own link), NEVER `document.final_url` — design decision 6 forbids
-    substituting Google's own grounding-redirect link with anything else as the clickable
-    target. `final_url` is surfaced separately, as plain text only, via `Evidence.resolved_url`.
+    (`#:~:text=`) for HTML, `#page=N` for a PDF.
+
+    For a live document, built on `document.requested_url` (== the citation's own link), NEVER
+    `document.final_url` — design decision 6 forbids substituting Google's own grounding-redirect
+    link with anything else as the clickable target. `final_url` is surfaced separately, as plain
+    text only, via `Evidence.resolved_url`.
+
+    For an archive.org-backed document (`method='archive'`, T10), `requested_url` is the original
+    live URL — exactly the page that's now gone or changed, not useful to link to at all — so
+    `final_url` (the human-viewable Wayback page app/services/citation_verification.py's
+    `_store_archive_document` stores there) is used instead. Design decision 6 doesn't apply
+    here: it protects a provider's own citation link, not an archive.org fallback page.
     """
     if document is None:
         return None
-    base = document.requested_url
+    base = document.final_url if document.method == "archive" and document.final_url else document.requested_url
     if verification.page_number is not None:
         return f"{base}#page={verification.page_number}"
     if verification.matched_text:
@@ -275,10 +283,17 @@ def build_evidence(
         collapsed_title=location.get("collapsed_title") if location.get("collapsed") else None,
         page_number=verification.page_number,
         open_url=_open_url(document, verification),
-        # Plain-text-only "expanded address" (design decision 6) — only set when capture actually
-        # followed a redirect to somewhere else, so a non-redirecting URL doesn't show a
-        # "resolves to" line pointing right back at the link already shown above it.
-        resolved_url=document.final_url if document and document.final_url and document.final_url != document.requested_url else None,
+        # Plain-text-only "expanded address" (design decision 6) — only for a LIVE document that
+        # actually followed a redirect somewhere else, so a non-redirecting URL doesn't show a
+        # "resolves to" line pointing right back at the link already shown above it. Excludes
+        # `method='archive'` (T10): there, `final_url` is the Wayback page _open_url already
+        # links to above — showing it a second time as "resolves to" would be a confusing
+        # duplicate of that link, not a Gemini-style redirect disclosure.
+        resolved_url=(
+            document.final_url
+            if document and document.method == "live" and document.final_url and document.final_url != document.requested_url
+            else None
+        ),
         http_status=document.http_status if document else None,
         chars=chars,
         duration_ms=document.duration_ms if document else None,

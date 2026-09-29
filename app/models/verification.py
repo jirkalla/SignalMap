@@ -70,9 +70,16 @@ VERDICTS = (
 # Only meaningful when verdict='unverifiable' — not enforced cross-column (design decision 28
 # only asks for a CHECK on the column's own values, same scope as domain_classifications' single-
 # column constraint, not a business rule spanning two columns).
+#
+# 'http_410' added in migration 0038 (T10, design decision 19): source_capture.py has always
+# been able to produce error_reason="http_410" on source_documents (that column is free-form),
+# but nothing copied it across here until the archive.org fallback started treating 410 the same
+# as 404 — found while implementing T10, not a T10-only concern (a live 410 could always have hit
+# this CHECK, T10 was just the first thing to actually exercise the path).
 UNVERIFIABLE_REASONS = (
     "http_403",
     "http_404",
+    "http_410",
     "http_5xx",
     "timeout",
     "bot_challenge",

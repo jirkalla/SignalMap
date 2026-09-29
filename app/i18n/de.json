@@ -394,6 +394,7 @@
   "run.verdict_pending": "Noch nicht geprüft",
   "run.reason_http_403": "Blockiert (403 Forbidden)",
   "run.reason_http_404": "Seite nicht gefunden (404)",
+  "run.reason_http_410": "Seite dauerhaft entfernt (410)",
   "run.reason_http_5xx": "Serverfehler",
   "run.reason_timeout": "Zeitüberschreitung",
   "run.reason_bot_challenge": "Durch Bot-Schutz blockiert",

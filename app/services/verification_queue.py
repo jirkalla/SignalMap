@@ -150,7 +150,11 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
       their own `SourceDocument` rows; they are not reasons to fail the JOB.
     - `deferred` with backoff, or `error` once `_MAX_ATTEMPTS` is exhausted — only for an
       UNEXPECTED exception (a DB error, a bug), never for an ordinary capture outcome (see
-      module docstring).
+      module docstring). `verify_citations_by_quote`'s archive.org fallback (T10, design
+      decision 19) deliberately reuses this exact path: `archive_lookup.ArchiveUnavailable`
+      (a 429/5xx/timeout/connection error from archive.org) is an ordinary `Exception` too, so a
+      rate-limited archive.org defers-and-retries the whole job here, same as any other
+      unexpected failure — never recorded as a verdict.
     """
     if job.kind != "capture":
         raise NotImplementedError(f"verification job {job.id}: kind={job.kind!r} has no processor yet")
@@ -174,7 +178,7 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
                 break
 
         raw_response = db.get(RawResponse, job.raw_response_id)
-        verify_citations_by_quote(db, raw_response, now=now)
+        verify_citations_by_quote(db, raw_response, now=now, client=client)
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
         logger.error("verification job %s failed: %s", job.id, exc, exc_info=True, extra={"extra_data": {"job_id": job.id}})
         db.rollback()
