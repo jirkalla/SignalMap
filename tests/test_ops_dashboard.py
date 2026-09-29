@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AIModel, AIModelPriceComponent, Client, Prompt, PromptSet, RawResponse, Run, User
 from app.models.run import Citation
-from app.models.verification import CitationVerification
+from app.models.verification import CitationVerification, SourceDocument, VerificationJob
 from app.services.cost import average_llm_judge_cost_per_citation, client_month_to_date_spend, estimate_run_cost, load_price_components, prices_at
 
 
@@ -929,3 +929,141 @@ def test_prompt_detail_honours_the_flag(authed_client: TestClient, two_clients_o
 
     body_with = authed_client.get(f"/ops/api/prompt-detail?range=30d&prompt_id={test_prompt.id}&include_test=1").json()
     assert len(body_with["recent_runs"]) == 1
+
+
+# --- Capture success by reason + verification queue (docs/TASKS_CITATION_VERIFICATION.md T16) ---
+
+
+def _add_citation(db_session: Session, run: Run, *, source_url: str) -> Citation:
+    raw_response = db_session.query(RawResponse).filter_by(run_id=run.id).one()
+    citation = Citation(raw_response_id=raw_response.id, source_url=source_url, source_domain="example.com", citation_position=0)
+    db_session.add(citation)
+    db_session.commit()
+    db_session.refresh(citation)
+    return citation
+
+
+def _add_source_document(
+    db_session: Session, *, url: str, fetched_at: datetime, error_reason: str | None = None, challenge_vendor: str | None = None
+) -> SourceDocument:
+    document = SourceDocument(requested_url=url, method="live", error_reason=error_reason, challenge_vendor=challenge_vendor, fetched_at=fetched_at, verifier_version="1.0")
+    db_session.add(document)
+    db_session.commit()
+    return document
+
+
+def test_capture_reasons_buckets_success_failure_and_not_captured(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/ok")
+    _add_source_document(db_session, url="https://a.example/ok", fetched_at=now - timedelta(hours=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/blocked")
+    _add_source_document(db_session, url="https://a.example/blocked", fetched_at=now - timedelta(hours=1), error_reason="http_403")
+
+    _add_citation(db_session, run, source_url="https://a.example/never-captured")
+    # No SourceDocument row at all for this one.
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+    by_reason = {(row["reason"], row["challenge_vendor"]): row["count"] for row in body}
+
+    assert by_reason[("success", None)] == 1
+    assert by_reason[("http_403", None)] == 1
+    assert by_reason[("not_captured", None)] == 1
+
+
+def test_capture_reasons_counts_a_url_once_regardless_of_citation_count(authed_client: TestClient, db_session: Session, seed: dict):
+    """The same URL cited twice (two citations) must count once — a capture outcome is a property
+    of the URL, not of how many citations happen to point at it.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/shared")
+    _add_citation(db_session, run, source_url="https://a.example/shared")
+    _add_source_document(db_session, url="https://a.example/shared", fetched_at=now - timedelta(hours=1))
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "success", "challenge_vendor": None, "count": 1}]
+
+
+def test_capture_reasons_uses_the_latest_fetch_per_url(authed_client: TestClient, db_session: Session, seed: dict):
+    """A URL captured twice (retry after a change) must be judged by its NEWEST fetch, matching
+    `idx_source_documents_url_fetched` — an old failure must not outrank a later success.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=2))
+
+    _add_citation(db_session, run, source_url="https://a.example/retried")
+    _add_source_document(db_session, url="https://a.example/retried", fetched_at=now - timedelta(days=1), error_reason="timeout")
+    _add_source_document(db_session, url="https://a.example/retried", fetched_at=now)
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "success", "challenge_vendor": None, "count": 1}]
+
+
+def test_capture_reasons_carries_the_bot_challenge_vendor(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/cf")
+    _add_source_document(db_session, url="https://a.example/cf", fetched_at=now, error_reason="bot_challenge", challenge_vendor="cloudflare")
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "bot_challenge", "challenge_vendor": "cloudflare", "count": 1}]
+
+
+def test_verification_queue_snapshot_counts_by_kind_and_status(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run_a = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+    run_b = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    db_session.add_all(
+        [
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_a.id).one().id, kind="capture", status="queued"),
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_a.id).one().id, kind="capture", status="queued"),
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_b.id).one().id, kind="judge", status="error"),
+        ]
+    )
+    db_session.commit()
+
+    body = authed_client.get("/ops/api/verification-queue?range=30d").json()
+    by_bucket = {(row["kind"], row["status"]): row["count"] for row in body}
+
+    assert by_bucket[("capture", "queued")] == 2
+    assert by_bucket[("judge", "error")] == 1
+
+
+def test_verification_queue_snapshot_ignores_client_and_range_filters(authed_client: TestClient, db_session: Session, seed: dict):
+    """Live global state (verification_queue_snapshot's own docstring) — a job tied to a run
+    outside the requested client/range still shows up, since the worker still has to process it
+    regardless of what the admin currently has the page filtered to.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    other_client, other_set = _client_with_prompt_set(db_session, "Other", "other")
+    prompt = _make_prompt(db_session, other_set, seed["market"].id, "Test prompt?")
+    old_run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=400),
+    )
+    db_session.add(VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=old_run.id).one().id, kind="capture", status="queued"))
+    db_session.commit()
+
+    body = authed_client.get(f"/ops/api/verification-queue?range=7d&client_id={client_row.id}").json()
+    by_bucket = {(row["kind"], row["status"]): row["count"] for row in body}
+
+    assert by_bucket.get(("capture", "queued")) == 1, "a job outside this client/range filter must still be counted"

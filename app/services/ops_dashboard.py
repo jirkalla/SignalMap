@@ -15,12 +15,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
 from app.models.run import Citation
-from app.models.verification import CitationVerification
+from app.models.verification import CitationVerification, SourceDocument, VerificationJob
 from app.services.cost import run_cost_sql_expr, run_token_sql_expr
 from app.services.date_ranges import day_starts, month_starts, week_starts
 
@@ -670,3 +670,76 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
             )
         )
     return result
+
+
+@dataclass
+class CaptureReasonRow:
+    """One row of the "capture success by reason" breakdown (docs/TASKS_CITATION_VERIFICATION.md
+    T16) — `reason='success'` means the latest fetch of that URL got usable text, `'not_captured'`
+    means no `SourceDocument` exists for it yet (still queued, or the run's capture job hasn't run),
+    and any other value is a `source_documents.error_reason` (open-ended, not the narrower
+    `UNVERIFIABLE_REASONS` CHECK-constrained enum — see app/models/verification.py's own note on
+    why those two lists differ). `challenge_vendor` is only ever set alongside `reason='bot_challenge'`.
+    """
+
+    reason: str
+    challenge_vendor: str | None
+    count: int
+
+
+def capture_success_by_reason(db: Session, run_ids_query: Select) -> list[CaptureReasonRow]:
+    """Source-capture outcome for every distinct citation URL in scope, counted once per URL (not
+    once per citation — several citations across different runs can point at the same URL, and a
+    capture success/failure is a property of the URL, not of any one citation of it), using the
+    LATEST fetch per URL (`idx_source_documents_url_fetched`, the same index
+    `app.services.claim_judge._latest_source_document` already relies on for "current" capture
+    state).
+
+    Outer-joined (not inner) so a URL with no `SourceDocument` row at all — still queued, or its
+    capture job hasn't run yet — is counted as its own `'not_captured'` bucket rather than silently
+    dropped, the same "explicit empty state" discipline the rest of this module follows.
+    """
+    latest_doc = (
+        select(SourceDocument).distinct(SourceDocument.requested_url).order_by(SourceDocument.requested_url, SourceDocument.fetched_at.desc())
+    ).subquery()
+
+    reason_expr = case(
+        (latest_doc.c.requested_url.is_(None), "not_captured"),
+        (latest_doc.c.error_reason.is_(None), "success"),
+        else_=latest_doc.c.error_reason,
+    ).label("reason")
+
+    rows = db.execute(
+        select(reason_expr, latest_doc.c.challenge_vendor, func.count(func.distinct(Citation.source_url)))
+        .select_from(Citation)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .outerjoin(latest_doc, latest_doc.c.requested_url == Citation.source_url)
+        .where(RawResponse.run_id.in_(run_ids_query), Citation.source_url.is_not(None))
+        .group_by(reason_expr, latest_doc.c.challenge_vendor)
+    ).all()
+
+    return sorted(
+        (CaptureReasonRow(reason=reason, challenge_vendor=vendor, count=count) for reason, vendor, count in rows),
+        key=lambda row: -row.count,
+    )
+
+
+@dataclass
+class VerificationQueueRow:
+    """One `(kind, status)` bucket of the `verification_jobs` table, counted right now."""
+
+    kind: str
+    status: str
+    count: int
+
+
+def verification_queue_snapshot(db: Session) -> list[VerificationQueueRow]:
+    """Live global snapshot of the verification job queue — current counts by kind/status.
+
+    Deliberately NOT scoped by the page's client/date filters (unlike every other query in this
+    module): a queue depth is current system state, not a metric over a time window — a job
+    queued yesterday for a run outside today's date filter is still sitting in the queue right
+    now, and filtering it out here would understate what the worker actually has left to do.
+    """
+    rows = db.execute(select(VerificationJob.kind, VerificationJob.status, func.count()).group_by(VerificationJob.kind, VerificationJob.status)).all()
+    return [VerificationQueueRow(kind=kind, status=status, count=count) for kind, status, count in rows]

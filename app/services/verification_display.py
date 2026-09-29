@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.models.run import Citation, RawResponse
@@ -69,6 +69,49 @@ TONE_UNDERLINE_CLASSES = {
 
 _CONTEXT_CHARS = 150
 _TEXT_FRAGMENT_CHARS = 80
+
+# docs/TASKS_CITATION_VERIFICATION.md T16 — the one place the 12-value verdict enum (design
+# decision 28) collapses into the 4 buckets the dashboard/`/ops` aggregations show ("unverifiable"
+# is deliberately its own bucket, never folded into "unsupported" — a page that failed to load
+# says nothing about whether the claim it would have supported is true or false). Adding a new
+# verdict without adding it here just makes it vanish from every T16 aggregate rather than error,
+# same trade-off `VERDICT_STYLES` above already accepts for the run detail page.
+VERDICT_BUCKETS: dict[str, str] = {
+    "verified_exact": "verified",
+    "verified_normalized": "verified",
+    "page_changed": "verified",
+    "archive_only": "verified",
+    "llm_supported": "verified",
+    "partially_found": "partial",
+    "llm_partial": "partial",
+    "not_found": "unsupported",
+    "llm_not_supported": "unsupported",
+    "llm_contradicted": "unsupported",
+    "unverifiable": "unverifiable",
+    # 'source_reachable' (xAI) deliberately absent — design decision 29 keeps it out of this
+    # bucketing entirely, aggregated on its own (app.services.dashboard.xai_reviewed_sources_count).
+}
+
+
+def latest_verification_query() -> Select:
+    """One row per citation — the newest `CitationVerification` (append-only, NFR-6) — via
+    Postgres `DISTINCT ON`, for aggregations across many citations at once
+    (app.services.dashboard/app.services.ops_dashboard, T16) where `latest_verifications`'s
+    per-response Python dict would mean fetching every historical row for a whole client's runs
+    just to throw all but the newest away.
+
+    Returns a bare, unscoped `Select` — callers `.join(Citation, ...).join(RawResponse, ...)
+    .where(RawResponse.run_id.in_(run_ids_query))` on top of this before wrapping it in
+    `.subquery()`, the same "shared base, caller adds its own scope" shape
+    `_mention_visibility_base_query` already uses. The scoping join/where MUST be added before
+    Postgres picks "latest" — DISTINCT ON operates on the already-filtered rows, so a client's
+    scope has to be part of the same statement, not applied afterwards.
+    """
+    return (
+        select(CitationVerification)
+        .distinct(CitationVerification.citation_id)
+        .order_by(CitationVerification.citation_id, CitationVerification.created_at.desc())
+    )
 
 
 def latest_verifications(db: Session, raw_response_id: int) -> dict[int, CitationVerification]:

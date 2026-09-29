@@ -197,6 +197,67 @@
         </table>
       </div>
     </div>
+
+    {# Verification job queue (docs/TASKS_CITATION_VERIFICATION.md T16) — live global state
+       (verification_queue_snapshot's own docstring), never filtered by the range/client controls
+       above, so this tile is deliberately the one number on the page that doesn't move when the
+       admin changes those. #}
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100">
+        <h2 class="text-sm font-semibold">{{ t('ops.verification_queue_title') }}</h2>
+        <p class="text-xs text-stone-400 mt-0.5">{{ t('ops.verification_queue_note') }}</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_kind') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.queue_status_queued') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.queue_status_leased') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.queue_status_deferred') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.queue_status_error') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.queue_status_done') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="kind in ['capture', 'judge']" :key="kind" class="border-t border-stone-100">
+              <td class="py-2 px-4 font-medium text-stone-800">[[ kind === 'capture' ? captureKindLabel : judgeKindLabel ]]</td>
+              <td class="py-2 px-4 text-right font-mono" :class="queueCount(kind, 'queued') > 0 ? 'text-amber-700' : ''">[[ fmtInt(queueCount(kind, 'queued')) ]]</td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(queueCount(kind, 'leased')) ]]</td>
+              <td class="py-2 px-4 text-right font-mono" :class="queueCount(kind, 'deferred') > 0 ? 'text-amber-700' : ''">[[ fmtInt(queueCount(kind, 'deferred')) ]]</td>
+              <td class="py-2 px-4 text-right font-mono" :class="queueCount(kind, 'error') > 0 ? 'text-rose-600' : ''">[[ fmtInt(queueCount(kind, 'error')) ]]</td>
+              <td class="py-2 px-4 text-right font-mono text-stone-400">[[ fmtInt(queueCount(kind, 'done')) ]]</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# Capture success by reason (T16) — one row per outcome (success, not yet captured, or a
+       source_documents.error_reason), scoped by the same range/client filters as the rest of this
+       view, ranked by URL count. bot_challenge rows carry their vendor in parentheses. #}
+    <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mb-4">
+      <div class="px-4 py-3 border-b border-stone-100"><h2 class="text-sm font-semibold">{{ t('ops.capture_reasons_title') }}</h2></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+            <tr>
+              <th class="py-2 px-4 font-medium">{{ t('ops.col_reason') }}</th>
+              <th class="py-2 px-4 font-medium text-right">{{ t('ops.col_urls') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in captureReasons" :key="row.reason + (row.challenge_vendor || '')" class="border-t border-stone-100">
+              <td class="py-2 px-4" :class="row.reason === 'success' ? 'text-emerald-700' : (row.reason === 'not_captured' ? 'text-stone-400' : 'text-stone-800')">
+                [[ captureReasonLabel(row) ]]
+              </td>
+              <td class="py-2 px-4 text-right font-mono">[[ fmtInt(row.count) ]]</td>
+            </tr>
+            <tr v-if="!loading && captureReasons.length === 0"><td colspan="2" class="py-6 px-4 text-center text-stone-400">{{ t('ops.table_empty') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </template>
 
   {# Prompt sets table — client level only. #}
@@ -391,6 +452,23 @@
   const statusOkLabel = {{ t('ops.status_ok') | tojson }};
   const statusSuccessLabel = {{ t('ops.status_success') | tojson }};
   const statusErrorLabel = {{ t('ops.status_error') | tojson }};
+  const captureKindLabel = {{ t('ops.capture_kind_label') | tojson }};
+  const judgeKindLabel = {{ t('ops.judge_kind_label') | tojson }};
+  const captureReasonLabels = {
+    success: {{ t('ops.capture_reason_success') | tojson }},
+    not_captured: {{ t('ops.capture_reason_not_captured') | tojson }},
+    http_403: {{ t('ops.capture_reason_http_403') | tojson }},
+    http_404: {{ t('ops.capture_reason_http_404') | tojson }},
+    http_410: {{ t('ops.capture_reason_http_410') | tojson }},
+    http_429: {{ t('ops.capture_reason_http_429') | tojson }},
+    http_5xx: {{ t('ops.capture_reason_http_5xx') | tojson }},
+    timeout: {{ t('ops.capture_reason_timeout') | tojson }},
+    bot_challenge: {{ t('ops.capture_reason_bot_challenge') | tojson }},
+    robots: {{ t('ops.capture_reason_robots') | tojson }},
+    too_large: {{ t('ops.capture_reason_too_large') | tojson }},
+    pdf_no_text: {{ t('ops.capture_reason_pdf_no_text') | tojson }},
+    no_checkable_text: {{ t('ops.capture_reason_no_checkable_text') | tojson }},
+  };
   const rangeLabels = {
     '7d': {{ t('ops.range_7d') | tojson }},
     '30d': {{ t('ops.range_30d') | tojson }},
@@ -431,6 +509,8 @@
       const prompts = ref([]);
       const promptDetail = ref(null);
       const userDetail = ref(null);
+      const captureReasons = ref([]);
+      const verificationQueue = ref([]);
 
       function baseParams() {
         const p = new URLSearchParams();
@@ -482,15 +562,20 @@
         try {
           if (drill.level === 'global') {
             const p = baseParams();
-            const [s, d, pr, c, u] = await Promise.all([
+            const [s, d, pr, c, u, cr, vq] = await Promise.all([
               fetchJson('/ops/api/summary', p),
               fetchJson('/ops/api/daily', p),
               fetchJson('/ops/api/providers', p),
               fetchJson('/ops/api/clients', p),
               fetchJson('/ops/api/users', p),
+              fetchJson('/ops/api/capture-reasons', p),
+              // Deliberately its own, unfiltered params — live global queue depth, never scoped by
+              // this page's range/client controls (see the queue tile's own template comment).
+              fetchJson('/ops/api/verification-queue', new URLSearchParams()),
             ]);
             if (generation !== fetchGeneration) return;
             summary.value = s; daily.value = d; providers.value = pr; clients.value = c; users.value = u;
+            captureReasons.value = cr; verificationQueue.value = vq;
           } else if (drill.level === 'client') {
             const p = baseParams(); p.set('client_id', drill.clientId);
             const [s, d, ps] = await Promise.all([
@@ -582,6 +667,18 @@
       }
       function truncate(text, n) { return text.length > n ? text.slice(0, n) + '…' : text; }
 
+      // T16 — 0 for a (kind, status) combination with no row in verificationQueue.value (e.g.
+      // 'judge'/'error' when nothing has ever failed), not undefined.
+      function queueCount(kind, status) {
+        const row = verificationQueue.value.find((r) => r.kind === kind && r.status === status);
+        return row ? row.count : 0;
+      }
+
+      function captureReasonLabel(row) {
+        const label = captureReasonLabels[row.reason] || row.reason;
+        return row.challenge_vendor ? label + ' (' + row.challenge_vendor + ')' : label;
+      }
+
       function statusLabel(errorCount) {
         return errorCount > 0
           ? '<span class="inline-flex items-center gap-1 text-rose-600 font-medium">' + errorCount + ' ' + errorCountSuffix + '</span>'
@@ -661,9 +758,10 @@
 
       return {
         ranges, filters, drill, loading, loadError, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
-        noData, errorCountSuffix, successRateOkLabel,
+        captureReasons, verificationQueue,
+        noData, errorCountSuffix, successRateOkLabel, captureKindLabel, judgeKindLabel,
         goGlobal, goClient, goSet, goPrompt, goUser,
-        fmtInt, fmtCost, fmtTokens, fmtMs, fmtDate, truncate,
+        fmtInt, fmtCost, fmtTokens, fmtMs, fmtDate, truncate, queueCount, captureReasonLabel,
         statusLabel, runStatusLabel, userRowLabel, triggeredByLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH, providerBarPadL,
         dailyBars, dailyXLabels, providerChartH, providerBars,

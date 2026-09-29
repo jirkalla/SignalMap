@@ -222,6 +222,94 @@
       </table>
     </div>
   </div>
+
+  {# Citation verification rates (docs/TASKS_CITATION_VERIFICATION.md T16) — latest verdict per
+     citation, bucketed verified/partial/unsupported/unverifiable, by provider and by cited
+     domain. Same emerald/amber/red/stone tone vocabulary as the run detail page's verdict badges
+     (app/services/verification_display.py's TONE_BADGE_CLASSES), so "amber = partial" reads the
+     same everywhere in the app. xAI has no claim to bucket (design decision 29) — shown as its
+     own "reviewed sources" note instead, DeepSeek has no citations at all and isn't shown. #}
+  <div class="bg-white border border-stone-200 rounded-lg overflow-hidden mt-4">
+    <div class="px-4 py-3 border-b border-stone-100">
+      <h2 class="text-sm font-semibold">{{ t('dashboard.verification_table_title') }}</h2>
+      <p v-if="xaiNote" class="text-xs text-stone-400 mt-0.5">[[ xaiNote ]]</p>
+    </div>
+
+    <div class="px-4 pt-3">
+      <h3 class="text-xs font-semibold text-stone-500 uppercase tracking-wide">{{ t('dashboard.verification_by_provider') }}</h3>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+          <tr>
+            <th class="py-2 px-4 font-medium">{{ t('dashboard.table_provider') }}</th>
+            <th class="py-2 px-4 font-medium">{{ t('dashboard.verification_bar') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('dashboard.table_citations') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in (citationVerification ? citationVerification.by_provider : [])" :key="row.provider_code" class="border-t border-stone-100 hover:bg-stone-50">
+            <td class="py-2 px-4 text-xs">[[ row.provider_name ]]</td>
+            <td class="py-2 px-4">
+              <div class="flex h-2.5 w-full max-w-xs rounded-full overflow-hidden bg-stone-100">
+                <span class="bg-emerald-500 block h-full" :style="{ width: bucketPct(row, 'verified') + '%' }"></span>
+                <span class="bg-amber-500 block h-full" :style="{ width: bucketPct(row, 'partial') + '%' }"></span>
+                <span class="bg-red-500 block h-full" :style="{ width: bucketPct(row, 'unsupported') + '%' }"></span>
+                <span class="bg-stone-400 block h-full" :style="{ width: bucketPct(row, 'unverifiable') + '%' }"></span>
+              </div>
+            </td>
+            <td class="py-2 px-4 text-right font-mono">[[ row.total ]]</td>
+          </tr>
+          <tr v-if="citationVerification && citationVerification.by_provider.length === 0">
+            <td colspan="3" class="py-6 px-4 text-center text-stone-400">{{ t('dashboard.verification_table_empty') }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="px-4 pt-4">
+      <h3 class="text-xs font-semibold text-stone-500 uppercase tracking-wide">{{ t('dashboard.verification_by_domain') }}</h3>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+          <tr>
+            <th class="py-2 px-4 font-medium">{{ t('dashboard.table_domain') }}</th>
+            <th class="py-2 px-4 font-medium">{{ t('dashboard.verification_bar') }}</th>
+            <th class="py-2 px-4 font-medium text-right">{{ t('dashboard.table_citations') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in (citationVerification ? citationVerification.by_domain : [])" :key="row.domain" class="border-t border-stone-100 hover:bg-stone-50">
+            <td class="py-2 px-4 font-mono text-xs">
+              [[ row.domain ]]
+              <span v-if="row.is_own_domain" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">{{ t('dashboard.own_domain_badge') }}</span>
+              <span v-if="row.domain_type" class="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-600">[[ domainTypeLabel(row.domain_type) ]]</span>
+            </td>
+            <td class="py-2 px-4">
+              <div class="flex h-2.5 w-full max-w-xs rounded-full overflow-hidden bg-stone-100">
+                <span class="bg-emerald-500 block h-full" :style="{ width: bucketPct(row, 'verified') + '%' }"></span>
+                <span class="bg-amber-500 block h-full" :style="{ width: bucketPct(row, 'partial') + '%' }"></span>
+                <span class="bg-red-500 block h-full" :style="{ width: bucketPct(row, 'unsupported') + '%' }"></span>
+                <span class="bg-stone-400 block h-full" :style="{ width: bucketPct(row, 'unverifiable') + '%' }"></span>
+              </div>
+            </td>
+            <td class="py-2 px-4 text-right font-mono">[[ row.total ]]</td>
+          </tr>
+          <tr v-if="citationVerification && citationVerification.by_domain.length === 0">
+            <td colspan="3" class="py-6 px-4 text-center text-stone-400">{{ t('dashboard.verification_table_empty') }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex flex-wrap gap-3 px-4 py-3 text-xs text-stone-500">
+      <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>{{ t('dashboard.verification_legend_verified') }}</span>
+      <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>{{ t('dashboard.verification_legend_partial') }}</span>
+      <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>{{ t('dashboard.verification_legend_unsupported') }}</span>
+      <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-stone-400 inline-block"></span>{{ t('dashboard.verification_legend_unverifiable') }}</span>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.global.prod.js"></script>
@@ -248,6 +336,7 @@
   const ownClientBadgeLabel = {{ t('analysis.own_client_badge') | tojson }};
   const competitorBadgeLabel = {{ t('analysis.competitor_badge') | tojson }};
   const commonNoneLabel = {{ t('common.none') | tojson }};
+  const xaiReviewedSourcesTemplate = {{ t('dashboard.verification_xai_note') | tojson }};
 
   const chartW = 560, chartH = 200, padL = 34, padR = 8, padT = 10, padB = 20;
   const plotW = chartW - padL - padR, plotH = chartH - padT - padB;
@@ -285,6 +374,7 @@
       const domains = ref([]);
       const entities = ref([]);
       const timeseries = ref({ weeks: [] });
+      const citationVerification = ref(null);
       const loading = ref(false);
 
       function baseParams() {
@@ -303,16 +393,18 @@
           const params = baseParams();
           const tsParams = new URLSearchParams(params);
           tsParams.set('metric', metric.value);
-          const [summaryRes, domainsRes, entitiesRes, tsRes] = await Promise.all([
+          const [summaryRes, domainsRes, entitiesRes, tsRes, cvRes] = await Promise.all([
             fetch('/dashboard/api/summary?' + params.toString()).then((r) => r.json()),
             fetch('/dashboard/api/domains?' + params.toString() + '&limit=10').then((r) => r.json()),
             fetch('/dashboard/api/entities?' + params.toString()).then((r) => r.json()),
             fetch('/dashboard/api/timeseries?' + tsParams.toString()).then((r) => r.json()),
+            fetch('/dashboard/api/citation-verification?' + params.toString() + '&limit=10').then((r) => r.json()),
           ]);
           summary.value = summaryRes;
           domains.value = domainsRes;
           entities.value = entitiesRes;
           timeseries.value = tsRes;
+          citationVerification.value = cvRes;
         } finally {
           loading.value = false;
         }
@@ -443,6 +535,21 @@
         return domainTypeLabels[type] || type;
       }
 
+      // T16 — width (%) of one verdict bucket within a citation-verification row's stacked bar.
+      // 0 for a row with total=0 rather than NaN (0/0), same "explicit empty state" instinct
+      // shareWidth already follows above.
+      function bucketPct(row, bucket) {
+        return row.total ? Math.round((row[bucket] / row.total) * 100) : 0;
+      }
+
+      const xaiNote = computed(() => {
+        const xai = citationVerification.value ? citationVerification.value.xai : null;
+        if (!xai || !xai.total_citations) return '';
+        return xaiReviewedSourcesTemplate
+          .replace('{reviewed}', xai.reviewed_count)
+          .replace('{total}', xai.total_citations);
+      });
+
       // P5-T2 — classify one league-table domain. Mutates the row in place (domains.value
       // entries are reactive, per ref()'s deep-reactivity default) instead of refetching the
       // whole league table for a one-field change.
@@ -463,13 +570,14 @@
 
       return {
         clients, markets, providers, filters, metric, summary, domains, entities, timeseries, loading,
+        citationVerification, xaiNote,
         selectedClient, hasTrackedEntities, clientDomainMissingLabel, noAnalyzedRunsLabel, trendNoDataLabel,
         domainTypes, classifyPlaceholderLabel, noTrackedEntitiesLabel, ownClientBadgeLabel, competitorBadgeLabel,
         commonNoneLabel,
         chartW, chartH, padL, padR, padT, padB, plotW, plotH,
         points, linePath, areaPath, xLabels, gridLines, hover,
         onChartMove, onChartLeave, formatWeekLabel, shareWidth, deltaClass, formatDeltaPct, formatDeltaPp,
-        domainTypeLabel, classifyDomain,
+        domainTypeLabel, classifyDomain, bucketPct,
       };
     },
   });
