@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list, local_time %}
+{% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list, local_time, button %}
 {% from "partials/verification.html" import verification_summary_card, verification_evidence_blocks, verification_evidence_placeholder, verification_assets with context %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
@@ -79,6 +79,15 @@
 
 {% if raw_response %}
 {{ verification_summary_card(verification_display, verdict_styles, tone_badge_classes, citations) }}
+{% if can_verify_citations and can_edit(current_user) %}
+{# docs/TASKS_CITATION_VERIFICATION.md T13 point 2 — HTMX POST with an HX-Redirect fallback,
+   same dual-path pattern as the run-trigger form (AI_INSTRUCTIONS.md §5); the server repeats this
+   same eligibility check itself (app/routers/runs.py's verify_run_citations), so this button
+   showing is UX only, not the real enforcement. #}
+<form method="post" action="/runs/{{ run.id }}/verify-citations" hx-post="/runs/{{ run.id }}/verify-citations" class="-mt-4 mb-6">
+  {{ button(t('run.verify_citations_button'), variant='secondary') }}
+</form>
+{% endif %}
 {{ verification_assets() }}
 
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">

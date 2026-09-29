@@ -19,6 +19,8 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
+from app.models.run import Citation
+from app.models.verification import CitationVerification
 from app.services.cost import run_cost_sql_expr, run_token_sql_expr
 from app.services.date_ranges import day_starts, month_starts, week_starts
 
@@ -134,6 +136,12 @@ class OpsSummary:
     row at all; a run that has one but reports zero of a given axis counts as 0, not `None` — see
     `app.services.cost.run_token_sql_expr`'s docstring for how that distinction is preserved
     through `SUM()`.
+
+    `total_verification_cost_usd` (docs/TASKS_CITATION_VERIFICATION.md T13, design decision 26)
+    is its own separate figure, never folded into `total_cost_usd` — a run's own cost and what it
+    later cost to verify its citations answer different questions, so they're shown as two
+    numbers, the same "alongside, never instead of" principle `total_*_tokens` already follows
+    for cost itself.
     """
 
     runs_count: int
@@ -141,6 +149,7 @@ class OpsSummary:
     error_count: int
     success_rate_pct: float | None
     total_cost_usd: float | None
+    total_verification_cost_usd: float | None
     avg_latency_ms: float | None
     total_input_tokens: int | None
     total_output_tokens: int | None
@@ -161,6 +170,12 @@ def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
     values on its own, same relied-on Postgres behavior `avg_share_of_voice`
     (app/services/dashboard.py) already documents — no extra `IS NOT NULL` filter needed to get a
     correct average.
+
+    `total_verification_cost_usd` is a SECOND, separate query, not folded into the round trip
+    above: joining `CitationVerification` into the same `SELECT` would fan out over however many
+    citations/verifications each run has, silently multiplying every other SUM/COUNT/AVG in this
+    query by that fan-out factor — the same reason `app.services.cost.client_month_to_date_spend`
+    keeps its own two cost sources in separate queries.
     """
     (
         success_count,
@@ -189,12 +204,21 @@ def ops_summary(db: Session, run_ids_query: Select) -> OpsSummary:
     ).one()
     runs_count = success_count + error_count
 
+    total_verification_cost = db.scalar(
+        select(func.sum(CitationVerification.cost_usd))
+        .select_from(CitationVerification)
+        .join(Citation, CitationVerification.citation_id == Citation.id)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .where(RawResponse.run_id.in_(run_ids_query))
+    )
+
     return OpsSummary(
         runs_count=runs_count,
         success_count=success_count,
         error_count=error_count,
         success_rate_pct=round(100 * success_count / runs_count, 1) if runs_count else None,
         total_cost_usd=float(total_cost) if total_cost is not None else None,
+        total_verification_cost_usd=float(total_verification_cost) if total_verification_cost is not None else None,
         avg_latency_ms=round(float(avg_latency), 1) if avg_latency is not None else None,
         total_input_tokens=int(total_input) if total_input is not None else None,
         total_output_tokens=int(total_output) if total_output is not None else None,

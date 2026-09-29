@@ -16,6 +16,8 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import AIModel, AIModelPriceComponent, Prompt, PromptSet, RawResponse, Run
 from app.models.provider import COMPONENT_TYPES
+from app.models.run import Citation
+from app.models.verification import CitationVerification
 from app.utils import prompt_lineage_ids
 
 
@@ -583,16 +585,26 @@ def average_historical_cost(db: Session, *, root_prompt_id: int, model_id: int) 
 
 
 def client_month_to_date_spend(db: Session, *, client_id: int, month_start: datetime) -> float | None:
-    """Total cost of `client_id`'s runs from `month_start` onward (docs/TASKS_SCHEDULER.md T8,
+    """Total cost of `client_id`'s runs AND citation verifications from `month_start` onward
 
-    design decision 33's monthly budget warning) — SQL-side `SUM()`, not a Python loop over `Run`
-    rows, since a month of a client's runs can be large (same discipline as
-    app/services/ops_dashboard.py's own cost aggregations). `None` when the client has no runs
-    with a computable cost this month yet — never a silent 0, so "no spend" and "unknown spend"
-    stay distinguishable, same as every other cost total in this app.
+    (docs/TASKS_SCHEDULER.md T8 design decision 33's monthly budget warning; docs/TASKS_CITATION_
+    VERIFICATION.md T13 design decision 26 folds verification cost into the same total) — SQL-side
+    `SUM()`s, not a Python loop, since a month of a client's runs/verifications can be large (same
+    discipline as app/services/ops_dashboard.py's own cost aggregations).
+
+    Two separate queries, not one join: a `Run` can have citations across many `Citation` rows,
+    so joining both cost sources in one query would multiply every run's own cost by however many
+    citations it has (or however many CitationVerification rows exist per citation) — `SUM()`ing a
+    fan-out join like that silently overcounts run cost, not just adds unnecessary rows.
+
+    `None` only when BOTH totals are `None` — no run and no verification with a computable cost
+    this month at all — never a silent 0, so "no spend" and "unknown spend" stay distinguishable,
+    same as every other cost total in this app. One side being real while the other is `None`
+    (e.g. runs happened but no citation was ever judged) still returns a real number, treating the
+    unknown side as 0 rather than making the whole total `None` on a technicality.
     """
     cost_expr = run_cost_sql_expr(RawResponse.token_usage, Run.model_id, Run.started_at, AIModel.is_free)
-    total = db.scalar(
+    run_total = db.scalar(
         select(func.sum(cost_expr))
         .select_from(Run)
         .join(Prompt, Run.prompt_id == Prompt.id)
@@ -601,4 +613,33 @@ def client_month_to_date_spend(db: Session, *, client_id: int, month_start: date
         .outerjoin(RawResponse, RawResponse.run_id == Run.id)
         .where(PromptSet.client_id == client_id, Run.started_at >= month_start, Run.status != "pending")
     )
-    return float(total) if total is not None else None
+    verification_total = db.scalar(
+        select(func.sum(CitationVerification.cost_usd))
+        .select_from(CitationVerification)
+        .join(Citation, CitationVerification.citation_id == Citation.id)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .where(PromptSet.client_id == client_id, CitationVerification.created_at >= month_start)
+    )
+    if run_total is None and verification_total is None:
+        return None
+    return float(run_total or 0) + float(verification_total or 0)
+
+
+def average_llm_judge_cost_per_citation(db: Session) -> float | None:
+    """Average `cost_usd` of every past `check_type='llm'` `CitationVerification` with a
+
+    computable cost, across all clients — the estimate a bulk-verify preview multiplies by a
+    citation count (docs/TASKS_CITATION_VERIFICATION.md T13), same "average of real past costs,
+    never a fabricated number" discipline as `average_historical_cost` above. `None` before any
+    LLM judgement has ever run at all — the preview shows "estimate unavailable" rather than a
+    fabricated $0.00 in that case.
+    """
+    average = db.scalar(
+        select(func.avg(CitationVerification.cost_usd)).where(
+            CitationVerification.check_type == "llm", CitationVerification.cost_usd.is_not(None)
+        )
+    )
+    return float(average) if average is not None else None

@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, AIModelPriceComponent, Client, Prompt, PromptSet, RawResponse, Run, User
-from app.services.cost import estimate_run_cost, load_price_components, prices_at
+from app.models.run import Citation
+from app.models.verification import CitationVerification
+from app.services.cost import average_llm_judge_cost_per_citation, client_month_to_date_spend, estimate_run_cost, load_price_components, prices_at
 
 
 def _client_with_prompt_set(db_session: Session, name: str, slug: str) -> tuple[Client, PromptSet]:
@@ -189,6 +191,122 @@ def test_summary_cost_is_none_without_a_model_price(authed_client: TestClient, d
     body = resp.json()
     assert body["runs_count"] == 1  # real data either side of the missing price — not a blanket failure
     assert body["total_cost_usd"] is None
+
+
+# --- Citation verification cost (docs/TASKS_CITATION_VERIFICATION.md T13) ----------------------
+
+
+def _add_citation_verification(db_session: Session, run: Run, *, cost_usd: float, check_type: str = "llm") -> CitationVerification:
+    """A minimal Citation + CitationVerification pair on `run`'s own RawResponse, for the cost
+
+    aggregation tests below — the verdict/claim fields don't matter to any of these, only that
+    `cost_usd`/`check_type`/`created_at` are set the way `client_month_to_date_spend`/`ops_summary`
+    read them.
+    """
+    raw_response = db_session.query(RawResponse).filter_by(run_id=run.id).one()
+    citation = Citation(raw_response_id=raw_response.id, source_url="https://example.com/a", source_domain="example.com", citation_position=0)
+    db_session.add(citation)
+    db_session.flush()
+    verification = CitationVerification(
+        citation_id=citation.id, check_type=check_type, verdict="llm_supported", cost_usd=Decimal(str(cost_usd)),
+        verifier_version="1.0", created_at=run.started_at,
+    )
+    db_session.add(verification)
+    db_session.commit()
+    return verification
+
+
+def test_summary_includes_verification_cost_as_its_own_field(authed_client: TestClient, db_session: Session, seed: dict):
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=now - timedelta(days=1), input_tokens=1000, output_tokens=500,
+    )
+    _add_citation_verification(db_session, run, cost_usd=0.0086)
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}")
+    body = resp.json()
+    # run cost (0.001+0.001) unaffected by the verification cost — the two are separate fields.
+    assert body["total_cost_usd"] == pytest.approx(0.002, abs=1e-9)
+    assert body["total_verification_cost_usd"] == pytest.approx(0.0086, abs=1e-9)
+
+
+def test_summary_verification_cost_is_none_with_no_citation_verifications(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}")
+    assert resp.json()["total_verification_cost_usd"] is None
+
+
+def test_client_month_to_date_spend_includes_citation_verification_cost(db_session: Session, seed: dict):
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    month_start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=month_start + timedelta(days=2), input_tokens=1000, output_tokens=500,
+    )
+    _add_citation_verification(db_session, run, cost_usd=0.05)
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=month_start)
+
+    assert spend == pytest.approx(0.002 + 0.05, abs=1e-9)
+
+
+def test_client_month_to_date_spend_treats_a_missing_side_as_zero_not_none(db_session: Session, seed: dict):
+    """A client with real run cost but no citation verification yet must still get a real total,
+
+    not `None` — only BOTH sides being unknown should produce `None` (design decision 26).
+    """
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    month_start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=month_start + timedelta(days=2), input_tokens=1000, output_tokens=500,
+    )
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=month_start)
+
+    assert spend == pytest.approx(0.002, abs=1e-9)
+
+
+def test_client_month_to_date_spend_is_none_with_nothing_at_all(db_session: Session, seed: dict):
+    client_row, _ = _client_with_prompt_set(db_session, "Acme", "acme")
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+    assert spend is None
+
+
+def test_average_llm_judge_cost_per_citation_averages_past_llm_verifications(db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run1 = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+    run2 = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=2))
+    _add_citation_verification(db_session, run1, cost_usd=0.01)
+    _add_citation_verification(db_session, run2, cost_usd=0.03)
+    # A quote-check verification must not count toward the LLM-judge average.
+    _add_citation_verification(db_session, run1, cost_usd=100.0, check_type="quote")
+
+    average = average_llm_judge_cost_per_citation(db_session)
+
+    assert average == pytest.approx((0.01 + 0.03) / 2, abs=1e-9)
+
+
+def test_average_llm_judge_cost_per_citation_is_none_without_any_history(db_session: Session, seed: dict):
+    assert average_llm_judge_cost_per_citation(db_session) is None
 
 
 def test_daily_fills_gap_days_and_matches_range_granularity(authed_client: TestClient, db_session: Session, seed: dict):

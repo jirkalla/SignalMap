@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.adapters.base import AdapterCitation, RawResponsePayload
 from app.models import AIModel, AnalysisResult, Citation, Persona, Prompt, RawResponse, Run, SearchQuery
 from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob
+from tests.conftest import TEST_USER_PASSWORD
 from tests.fake_adapter import FakeAdapter
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
@@ -1137,3 +1138,106 @@ def test_verification_shows_verdicts_with_no_capture_job_row_at_all(
     assert "haven't been captured yet" not in body
     assert 'id="verdict-filters"' in body
     assert "1 captured" in body
+
+
+# --- "Ověřit citace" button (docs/TASKS_CITATION_VERIFICATION.md T13 point 2) -------------------
+
+
+def test_verify_citations_button_shown_on_an_eligible_run(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+
+    assert f'action="/runs/{run_id}/verify-citations"' in detail_response.text
+
+
+def test_verify_citations_button_hidden_for_a_provider_with_no_llm_judge_path(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """Anthropic already gets the free quote check (T8) — the button only makes sense for
+
+    OpenAI/Gemini citations, which have no source text to check without an LLM.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"content": [{"type": "text", "text": "Acme is reliable.", "citations": [{"url": "https://example.com/a", "title": "A", "cited_text": "..."}]}]},
+        rendered_text="Acme is reliable.",
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a", source_title="A", source_domain="example.com",
+                citation_position=0, source_passage="Acme has been rated highly for reliability.",
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["anthropic_model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+
+    assert f'action="/runs/{run_id}/verify-citations"' not in detail_response.text
+
+
+def test_verify_run_citations_htmx_request_returns_hx_redirect(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+
+    response = authed_client.post(f"/runs/{run_id}/verify-citations", headers={"HX-Request": "true"}, follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.headers["HX-Redirect"] == f"/runs/{run_id}"
+
+
+def test_verify_run_citations_plain_post_redirects(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+
+    response = authed_client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/runs/{run_id}"
+
+
+def test_verify_run_citations_enqueues_a_judge_job_requested_by_the_user(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+
+    authed_client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False)
+
+    job = db_session.scalar(
+        select(VerificationJob).where(VerificationJob.raw_response_id == raw_response.id, VerificationJob.kind == "judge")
+    )
+    assert job is not None
+    assert job.requested_by_user_id is not None
+
+
+def test_verify_run_citations_409s_for_a_run_with_no_citations(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "No sources here."}, rendered_text="No sources here.", has_citations=False, citations=[],
+        token_usage={"input_tokens": 5, "output_tokens": 3},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    assert authed_client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False).status_code == 409
+
+
+def test_verify_run_citations_is_forbidden_for_a_viewer(client: TestClient, editor_user, viewer_user, db_session: Session, seed, sample_prompt: Prompt):
+    """`viewer_client`/`authed_client` together share one underlying session (both log into the
+
+    same `client` fixture) and end up authenticated as whichever is resolved last by pytest —
+    editor, given this file's own parameter order elsewhere, which wouldn't actually prove
+    anything about a viewer against an editor-or-admin route. Logging in explicitly, in the order
+    this test actually needs, avoids that trap (same fix as tests/test_clients.py's equivalent).
+    """
+    client.post("/auth/login", data={"username": editor_user.email, "password": TEST_USER_PASSWORD})
+    run_id, _, _ = _trigger_citation_run(client, seed, sample_prompt)
+    client.post("/auth/login", data={"username": viewer_user.email, "password": TEST_USER_PASSWORD})
+
+    assert client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False).status_code == 403

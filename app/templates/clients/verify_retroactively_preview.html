@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import button, card %}
+{% block title %}{{ t('client.verify_retroactively_preview_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<div class="text-sm text-stone-500 mb-1">
+  <a href="/clients/{{ client.id }}" class="hover:underline">{{ client.name }}</a>
+</div>
+<h1 class="text-xl font-semibold mb-6">{{ t('client.verify_retroactively_preview_title') }}</h1>
+
+{% call card() %}
+<dl class="space-y-2 text-sm max-w-md">
+  <div class="flex justify-between">
+    <dt class="text-stone-500">{{ t('client.verify_retroactively_runs_label') }}</dt>
+    <dd class="font-mono">{{ raw_response_count }}</dd>
+  </div>
+  <div class="flex justify-between">
+    <dt class="text-stone-500">{{ t('client.verify_retroactively_citations_label') }}</dt>
+    <dd class="font-mono">{{ citation_count }}</dd>
+  </div>
+  <div class="flex justify-between">
+    <dt class="text-stone-500">{{ t('client.verify_retroactively_estimated_cost_label') }}</dt>
+    <dd class="font-mono">
+      {% if estimated_cost_usd is not none %}${{ "%.2f"|format(estimated_cost_usd) }}{% else %}{{ t('client.verify_retroactively_estimate_unknown') }}{% endif %}
+    </dd>
+  </div>
+</dl>
+{% endcall %}
+
+{% if raw_response_count == 0 %}
+<p class="text-stone-500 text-sm">{{ t('client.verify_retroactively_empty_state') }}</p>
+{% else %}
+<form method="post" action="/clients/{{ client.id }}/verify-retroactively/confirm" class="flex flex-wrap items-center gap-3">
+  <input type="hidden" name="date_from" value="{{ date_from }}">
+  <input type="hidden" name="date_to" value="{{ date_to }}">
+  {{ button(t('client.verify_retroactively_confirm_button')) }}
+  <a href="/clients/{{ client.id }}" class="text-sm text-stone-600 hover:underline">{{ t('common.cancel') }}</a>
+</form>
+{% endif %}
+{% endblock %}

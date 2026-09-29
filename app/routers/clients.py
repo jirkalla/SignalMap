@@ -4,6 +4,7 @@ Strategy/reputation fields are explicitly out of scope for phase 1 — see
 the skill's "Build sequencing" section.
 """
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -12,11 +13,15 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import require_role
+from app.auth import current_active_user, require_role
 from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
-from app.models import Client, ClientAlias, Prompt, PromptSet, Run, TrackedEntity, TrackedEntityAlias
+from app.models import AIModel, Citation, Client, ClientAlias, Prompt, PromptSet, Provider, RawResponse, Run, TrackedEntity, TrackedEntityAlias, User
+from app.models.verification import CitationVerification
+from app.services.claim_judge import LLM_JUDGE_PROVIDERS
+from app.services.cost import average_llm_judge_cost_per_citation
+from app.services.verification_queue import enqueue_judge
 from app.templating import get_t, render
 from app.utils import unique_slugify
 
@@ -113,6 +118,64 @@ def _client_run_count(db: Session, client_id: int) -> int:
         )
         or 0
     )
+
+
+def _parse_verify_date_range(t, date_from: str, date_to: str) -> tuple[datetime, datetime]:
+    """`(date_from, date_to)` form strings ("YYYY-MM-DD") into an inclusive UTC datetime range —
+
+    docs/TASKS_CITATION_VERIFICATION.md T13's retroactive bulk-verify. `date_to` is widened to
+    the END of that day (23:59:59.999999), not its midnight start, so a run that happened at
+    14:00 on the last day of the range is actually included, not silently excluded by an
+    off-by-one against a `<=` comparison against midnight.
+    """
+    try:
+        start = datetime.strptime(date_from.strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end = datetime.strptime(date_to.strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1) - timedelta(microseconds=1)
+    except ValueError:
+        raise AppError("invalid_date_range", t("errors.invalid_date_range"), status_code=400) from None
+    if start > end:
+        raise AppError("invalid_date_range", t("errors.invalid_date_range"), status_code=400)
+    return start, end
+
+
+def _bulk_verify_candidate_raw_response_ids(db: Session, client_id: int, start: datetime, end: datetime) -> list[int]:
+    """Raw responses eligible for a retroactive bulk LLM-judge run (docs/TASKS_CITATION_
+
+    VERIFICATION.md T13): this client's, in `[start, end]`, from a provider `judge_citations` can
+    do anything with (design decision 4 — Anthropic/Perplexity already get the free quote check,
+    T8; xAI/DeepSeek have no claim to judge), with at least one citation, and NOT already judged —
+    a response with any `check_type='llm'` verification is excluded so re-running this doesn't pay
+    to re-judge citations that already have a verdict (a human can still re-check one citation at
+    a time via the run detail page's own button if they specifically want a fresh judgement).
+    """
+    already_judged = (
+        select(Citation.raw_response_id)
+        .join(CitationVerification, CitationVerification.citation_id == Citation.id)
+        .where(CitationVerification.check_type == "llm")
+    )
+    query = (
+        select(RawResponse.id)
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .join(Provider, AIModel.provider_id == Provider.id)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .where(
+            PromptSet.client_id == client_id,
+            Provider.code.in_(LLM_JUDGE_PROVIDERS),
+            RawResponse.has_citations.is_(True),
+            Run.started_at >= start,
+            Run.started_at <= end,
+            RawResponse.id.not_in(already_judged),
+        )
+    )
+    return list(db.scalars(query).all())
+
+
+def _citation_count(db: Session, raw_response_ids: list[int]) -> int:
+    if not raw_response_ids:
+        return 0
+    return db.scalar(select(func.count(Citation.id)).where(Citation.raw_response_id.in_(raw_response_ids))) or 0
 
 
 @router.get("")
@@ -301,6 +364,95 @@ def toggle_client_test(request: Request, client_id: int, db: Session = Depends(g
     client = _get_client_or_404(db, request, client_id)
     client.is_test = not client.is_test
     db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/toggle-auto-verify-citations", dependencies=_editor_or_admin)
+def toggle_client_auto_verify_citations(request: Request, client_id: int, db: Session = Depends(get_db)):
+    """Flip a client's `auto_verify_citations` flag (docs/TASKS_CITATION_VERIFICATION.md T13,
+
+    design decision 25) — whether a NEW run's OpenAI/Gemini citations get the paid LLM paraphrase
+    check automatically, right after their sources are captured.
+
+    Editor-or-admin, not admin-only like `toggle_client_test` above: unlike that flag, this one
+    doesn't retroactively rewrite any historical `/ops` figures — it only affects runs from now
+    on, and editors already manage every other operational client setting via the main form.
+    Its own route rather than a checkbox on that form for the same reason `is_test` has one: an
+    unchecked HTML checkbox is never submitted at all, so a field hidden from nobody but still
+    easy to overlook could get silently reset the next time the client is saved for an unrelated
+    edit (docs/TASKS_PRE_SCHEDULER.md design decision 14).
+    """
+    client = _get_client_or_404(db, request, client_id)
+    client.auto_verify_citations = not client.auto_verify_citations
+    db.commit()
+    return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
+
+
+@router.post("/{client_id}/verify-retroactively/preview", dependencies=_editor_or_admin)
+def verify_retroactively_preview(
+    request: Request,
+    client_id: int,
+    date_from: str = Form(..., description="Start of the date range (YYYY-MM-DD), inclusive."),
+    date_to: str = Form(..., description="End of the date range (YYYY-MM-DD), inclusive."),
+    db: Session = Depends(get_db),
+):
+    """Preview a retroactive bulk LLM-judge run over `[date_from, date_to]` (docs/TASKS_CITATION_
+
+    VERIFICATION.md T13 point 3) — count of eligible responses/citations and an estimated cost,
+    written nowhere: only the separate confirm step below actually enqueues anything. The estimate
+    is the average of past real `check_type='llm'` verification costs times the citation count in
+    range (`app.services.cost.average_llm_judge_cost_per_citation`) — shown as "unknown" rather
+    than a fabricated number when no LLM judgement has ever run yet to average.
+    """
+    t = get_t(request)
+    client = _get_client_or_404(db, request, client_id)
+    start, end = _parse_verify_date_range(t, date_from, date_to)
+
+    raw_response_ids = _bulk_verify_candidate_raw_response_ids(db, client_id, start, end)
+    citation_count = _citation_count(db, raw_response_ids)
+    average_cost = average_llm_judge_cost_per_citation(db)
+
+    return render(
+        request,
+        "clients/verify_retroactively_preview.html",
+        {
+            "client": client,
+            "date_from": date_from,
+            "date_to": date_to,
+            "raw_response_count": len(raw_response_ids),
+            "citation_count": citation_count,
+            "estimated_cost_usd": average_cost * citation_count if average_cost is not None else None,
+        },
+    )
+
+
+@router.post("/{client_id}/verify-retroactively/confirm", dependencies=_editor_or_admin)
+def verify_retroactively_confirm(
+    request: Request,
+    client_id: int,
+    date_from: str = Form(..., description="Start of the date range (YYYY-MM-DD), inclusive — re-validated, never trusted from the preview page."),
+    date_to: str = Form(..., description="End of the date range (YYYY-MM-DD), inclusive — re-validated, never trusted from the preview page."),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
+    """Enqueue a 'judge' `VerificationJob` for every response the SAME query the preview used
+
+    still finds eligible (docs/TASKS_CITATION_VERIFICATION.md T13 point 3) — the date range is
+    re-parsed and re-queried against the database here, never trusting the preview page's own
+    displayed counts, the same discipline app/routers/prompt_sets.py's bulk-import confirm step
+    already follows for its preview (re-resolves everything itself rather than trusting the
+    round-tripped form). Something judged in the meantime, or a response that stopped being
+    eligible, is simply not counted again — this can only enqueue fewer jobs than the preview
+    showed, never more.
+    """
+    t = get_t(request)
+    client = _get_client_or_404(db, request, client_id)
+    start, end = _parse_verify_date_range(t, date_from, date_to)
+
+    raw_response_ids = _bulk_verify_candidate_raw_response_ids(db, client_id, start, end)
+    now = datetime.now(timezone.utc)
+    for raw_response_id in raw_response_ids:
+        enqueue_judge(db, raw_response_id, now=now, requested_by_user_id=user.id)
     return RedirectResponse(url=f"/clients/{client_id}", status_code=303)
 
 

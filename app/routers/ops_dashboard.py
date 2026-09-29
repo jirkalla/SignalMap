@@ -151,6 +151,9 @@ class OpsSummaryResponse(BaseModel):
     error_count: int
     success_rate_pct: float | None = Field(..., description="0-100. None when runs_count is 0.")
     total_cost_usd: float | None = Field(..., description="None when no run in scope has a computable cost.")
+    total_verification_cost_usd: float | None = Field(
+        ..., description="Separate from total_cost_usd — the cost of judging citations, not of the runs themselves. None when no citation in scope has a computable verification cost."
+    )
     avg_latency_ms: float | None = Field(..., description="None when no finished run in scope has a recorded latency.")
     total_input_tokens: int | None = Field(
         ..., description="Raw input tokens reported across scope, as the provider reported them. None only when no run in scope has a raw_responses row."

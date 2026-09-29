@@ -40,6 +40,7 @@ from app.models import (
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.routers.clients import _get_client_or_404
 from app.routers.prompts import _get_prompt_or_404
+from app.services.claim_judge import LLM_JUDGE_PROVIDERS
 from app.services.claims import DerivedClaim, derive_claim
 from app.services.export import (
     ExportContent,
@@ -59,6 +60,7 @@ from app.services.verification_display import (
     ClaimGroup,
     build_verification_display,
 )
+from app.services.verification_queue import enqueue_judge
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -311,6 +313,39 @@ def trigger_run(
     return RedirectResponse(url=target_url, status_code=303)
 
 
+@router.post("/runs/{run_id}/verify-citations", dependencies=_editor_or_admin)
+def verify_run_citations(request: Request, run_id: int, db: Session = Depends(get_db), user: User = Depends(current_active_user)):
+    """Queue an on-demand LLM paraphrase check for this run's citations (docs/TASKS_CITATION_
+
+    VERIFICATION.md T13 point 2, design decision 25's "Ověřit citace" button) — independent of the
+    client's `auto_verify_citations` setting, the same way triggering a run is independent of any
+    scheduler config. Same dual HTMX/plain-POST redirect shape as `trigger_run` above
+    (AI_INSTRUCTIONS.md §5's reference implementation).
+
+    409s when there is nothing this could possibly do anything with: no successful response yet,
+    or a provider `judge_citations` has no path for (design decision 4 — Anthropic/Perplexity
+    already get the free quote check, xAI/DeepSeek have no claim to judge at all). The template
+    only ever shows this button when that check already passes, so reaching this 409 means the
+    request bypassed the UI (a stale tab, a direct POST) rather than a normal click.
+    """
+    t = get_t(request)
+    run = _get_run_or_404(db, request, run_id)
+    raw_response = db.scalars(select(RawResponse).where(RawResponse.run_id == run_id)).first()
+    if raw_response is None or not raw_response.has_citations or run.model.provider.code not in LLM_JUDGE_PROVIDERS:
+        raise AppError(
+            "citation_verification_not_supported", t("errors.citation_verification_not_supported"), status_code=409
+        )
+
+    enqueue_judge(db, raw_response.id, now=datetime.now(timezone.utc), requested_by_user_id=user.id)
+
+    target_url = f"/runs/{run_id}"
+    if request.headers.get("HX-Request") == "true":
+        response = Response(status_code=200)
+        response.headers["HX-Redirect"] = target_url
+        return response
+    return RedirectResponse(url=target_url, status_code=303)
+
+
 @router.get("/runs/{run_id}")
 def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     """Show one run: metadata, rendered answer (with citation-verification highlighting, T9),
@@ -383,6 +418,10 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
     # nothing configured to compare against", so the template can show an explanatory empty
     # state instead of a technically-correct-but-misleading number (docs/TASKS_PHASE5.md P5-T6).
     tracked_entities_configured = bool(run.prompt.prompt_set.client.tracked_entities)
+    # docs/TASKS_CITATION_VERIFICATION.md T13 — the "Ověřit citace" button only shows when
+    # verify_run_citations could actually do something; the route's own 409 guard repeats this
+    # exact check server-side rather than trusting a hidden/disabled button never gets bypassed.
+    can_verify_citations = bool(raw_response and raw_response.has_citations and run.model.provider.code in LLM_JUDGE_PROVIDERS)
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
@@ -415,6 +454,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "verification_display": verification_display,
             "verdict_styles": VERDICT_STYLES,
             "tone_badge_classes": TONE_BADGE_CLASSES,
+            "can_verify_citations": can_verify_citations,
             "search_queries": search_queries,
             "single_entity_analysis_results": single_entity_analysis_results,
             "competitive_result": competitive_result,

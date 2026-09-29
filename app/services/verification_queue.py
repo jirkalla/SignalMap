@@ -18,9 +18,11 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.provider import AIModel, Provider
 from app.models.run import Citation, RawResponse
 from app.models.verification import VerificationJob
 from app.services.citation_verification import verify_citations_by_quote
+from app.services.claim_judge import DEFAULT_JUDGE_MODEL_NAME, DEFAULT_JUDGE_PROVIDER_CODE, LLM_JUDGE_PROVIDERS, judge_citations
 from app.services.source_capture import capture_url
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,50 @@ def enqueue_capture(db: Session, raw_response_id: int, *, now: datetime) -> None
         )
     )
     db.commit()
+
+
+def enqueue_judge(db: Session, raw_response_id: int, *, now: datetime, requested_by_user_id: int | None = None) -> None:
+    """Queue a 'judge' job for `raw_response_id` (docs/TASKS_CITATION_VERIFICATION.md T13) — the
+
+    explicit-trigger counterpart to `enqueue_capture` above: the automatic case (a client with
+    `auto_verify_citations` on) never calls this at all, it rides along inside the capture job
+    itself instead (see `process_verification_job`'s own docstring for why). This is only ever
+    used for the two one-off human-triggered paths — the "Ověřit citace" button on a run and a
+    client's retroactive bulk-verify — both of which set `requested_by_user_id`, unlike the
+    automatic capture job's own `None` (`VerificationJob`'s docstring, T5).
+    """
+    db.add(
+        VerificationJob(
+            raw_response_id=raw_response_id,
+            kind="judge",
+            status="queued",
+            priority=0,
+            scheduled_for=now,
+            requested_by_user_id=requested_by_user_id,
+        )
+    )
+    db.commit()
+
+
+def _default_judge_model(db: Session) -> AIModel:
+    """The judge model design decision 20 names as the default — resolved by a fixed (provider,
+
+    model_name) lookup, not a Settings field (see claim_judge.py's own constants for why). Raises
+    clearly rather than silently doing nothing when it's missing: that only happens if a database
+    was never seeded with this model row at all, a setup bug worth failing loudly on, not a
+    routine "nothing to judge with" outcome to swallow.
+    """
+    model = db.scalar(
+        select(AIModel)
+        .join(Provider, AIModel.provider_id == Provider.id)
+        .where(Provider.code == DEFAULT_JUDGE_PROVIDER_CODE, AIModel.model_name == DEFAULT_JUDGE_MODEL_NAME)
+    )
+    if model is None:
+        raise RuntimeError(
+            f"No ai_models row for provider={DEFAULT_JUDGE_PROVIDER_CODE!r} model_name={DEFAULT_JUDGE_MODEL_NAME!r} "
+            "— the default citation-verification judge model (design decision 20) must be seeded."
+        )
+    return model
 
 
 def claim_next_job(db: Session, *, worker_name: str, now: datetime, lease_minutes: int) -> VerificationJob | None:
@@ -137,13 +183,41 @@ def _citation_urls(db: Session, raw_response_id: int) -> list[str]:
     return seen
 
 
-def process_verification_job(db: Session, job: VerificationJob, *, now: datetime, client: httpx.Client) -> None:
-    """Execute one already-`leased` capture job: `capture_url` every distinct citation URL on its
+def _maybe_auto_judge(db: Session, raw_response: RawResponse, *, now: datetime) -> None:
+    """Run the LLM paraphrase check inline, right after the capture job's own free quote check,
 
-    response, then the free literal-quote check for whichever of those citations have one to run
-    (docs/TASKS_CITATION_VERIFICATION.md T8, design decision 1 — "the literal check is free and
-    always runs" is exactly what makes it safe to do inline here, in the same job, rather than
-    queuing a separate 'judge' one). Always ends this pass with exactly one outcome:
+    when the response's client has `auto_verify_citations` on (docs/TASKS_CITATION_VERIFICATION.md
+    T13, design decision 25) and its provider is one `judge_citations` can do anything with.
+
+    Deliberately NOT a separately-enqueued 'judge' job: the worker claims queued jobs one at a
+    time in priority/scheduled_for order (`claim_next_job`), with no guarantee a 'judge' job
+    enqueued alongside a 'capture' job would be processed AFTER it — a 'judge' job claimed first
+    would find no captured `SourceDocument` for any citation yet, run `judge_citations` to a
+    no-op, and never automatically get retried once capture actually finishes (there is no
+    "come back later" mechanism for a `done` job). Riding along inside the SAME already-in-
+    progress capture job sidesteps that ordering race entirely — the same reasoning design
+    decision 1 already gives for running T8's free quote check inline here instead of as its own
+    job.
+    """
+    provider_code = raw_response.run.model.provider.code
+    if provider_code not in LLM_JUDGE_PROVIDERS:
+        return
+    client_row = raw_response.run.prompt.prompt_set.client
+    if not client_row.auto_verify_citations:
+        return
+    judge_citations(db, raw_response, judge_model=_default_judge_model(db), now=now)
+
+
+def process_verification_job(db: Session, job: VerificationJob, *, now: datetime, client: httpx.Client) -> None:
+    """Execute one already-`leased` verification job — 'capture' or 'judge' (docs/TASKS_CITATION_
+
+    VERIFICATION.md T5/T13). A 'capture' job fetches every distinct citation URL on its response,
+    runs the free literal-quote check (T8, design decision 1 — "the literal check is free and
+    always runs" is what makes it safe to do inline here rather than queuing a separate job for
+    it), and then `_maybe_auto_judge`s it (T13) if the client has opted in. A 'judge' job (T13)
+    only ever comes from an explicit human trigger (the "Ověřit citace" button, or a client's
+    retroactive bulk-verify) — see `enqueue_judge`'s own docstring for why the automatic case
+    never creates one of these. Always ends this pass with exactly one outcome:
 
     - `done` — even when some or all individual URLs failed to capture (403, a bot challenge,
       whatever) or the job's time budget cut the list short. Those are recorded as evidence on
@@ -156,29 +230,34 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
       rate-limited archive.org defers-and-retries the whole job here, same as any other
       unexpected failure — never recorded as a verdict.
     """
-    if job.kind != "capture":
+    if job.kind not in ("capture", "judge"):
         raise NotImplementedError(f"verification job {job.id}: kind={job.kind!r} has no processor yet")
 
     # No "raw_response no longer exists" guard here: `raw_response_id` is `ondelete="CASCADE"`
     # (app/models/verification.py) — a deleted RawResponse takes its VerificationJob rows down
     # with it, so a job that's still claimable always still points at a real response.
     try:
-        urls = _citation_urls(db, job.raw_response_id)
-        started = time.monotonic()
-        for index, url in enumerate(urls):
-            capture_url(db, url, now=now, client=client)
-            if time.monotonic() - started > MAX_JOB_SECONDS:
-                logger.info(
-                    "verification job %s: hit its %ss budget after %d/%d URLs — finishing the rest on a later pass",
-                    job.id,
-                    MAX_JOB_SECONDS,
-                    index + 1,
-                    len(urls),
-                )
-                break
+        if job.kind == "capture":
+            urls = _citation_urls(db, job.raw_response_id)
+            started = time.monotonic()
+            for index, url in enumerate(urls):
+                capture_url(db, url, now=now, client=client)
+                if time.monotonic() - started > MAX_JOB_SECONDS:
+                    logger.info(
+                        "verification job %s: hit its %ss budget after %d/%d URLs — finishing the rest on a later pass",
+                        job.id,
+                        MAX_JOB_SECONDS,
+                        index + 1,
+                        len(urls),
+                    )
+                    break
 
-        raw_response = db.get(RawResponse, job.raw_response_id)
-        verify_citations_by_quote(db, raw_response, now=now, client=client)
+            raw_response = db.get(RawResponse, job.raw_response_id)
+            verify_citations_by_quote(db, raw_response, now=now, client=client)
+            _maybe_auto_judge(db, raw_response, now=now)
+        else:
+            raw_response = db.get(RawResponse, job.raw_response_id)
+            judge_citations(db, raw_response, judge_model=_default_judge_model(db), now=now)
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
         logger.error("verification job %s failed: %s", job.id, exc, exc_info=True, extra={"extra_data": {"job_id": job.id}})
         db.rollback()

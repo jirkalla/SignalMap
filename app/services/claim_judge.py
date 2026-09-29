@@ -6,9 +6,13 @@ decision 4): OpenAI/Gemini expose the ANSWER side of a citation (a claim), never
 the source, so the only way to verify them is to ask an LLM whether the captured page supports
 that claim.
 
-Not wired into app/services/verification_queue.py yet — T13 is what adds the 'judge' job kind,
-the per-client auto_verify_citations toggle, and the "Ověřit citace" button; `judge_citations` is
-a plain function any of those can call, the same way `verify_citations_by_quote` (T8) already is.
+Wired into app/services/verification_queue.py (T13): `process_verification_job` calls
+`judge_citations` inline, right after `verify_citations_by_quote`, whenever the response's
+client has `auto_verify_citations` on — see that module's own docstring for why this rides
+along on the capture job rather than a separately-enqueued 'judge' job. The 'judge' `kind` on
+`VerificationJob` itself is reserved for the two explicit, one-off paths that don't have a
+freshly-captured source to piggyback on: the "Ověřit citace" button and a client's retroactive
+bulk-verify run (both `app/routers/runs.py`/`app/routers/clients.py`, T13).
 """
 
 import json
@@ -36,8 +40,18 @@ VERIFIER_VERSION = "1.0"
 
 # design decision 4's routing table: OpenAI/Gemini give the answer-side claim, no source passage
 # to run a literal-quote check against (Anthropic/Perplexity, T8) — an LLM judgement against the
-# captured page is the only way to check them at all.
-_LLM_JUDGE_PROVIDERS = ("openai", "google_gemini")
+# captured page is the only way to check them at all. Public (no leading underscore, T13): both
+# this module and app/routers/runs.py (to decide whether to show the "Ověřit citace" button) and
+# app/routers/clients.py (the bulk-verify preview/confirm) need to ask the same question.
+LLM_JUDGE_PROVIDERS = ("openai", "google_gemini")
+
+# design decision 20's stated default — a fixed lookup rather than a new Settings field or admin
+# UI: T13 doesn't ask for a way to configure a different judge model, and "the model is a row in
+# ai_models" (decision 20) is satisfied by resolving this well-known (provider, model_name) pair
+# to its row at call time (`_default_judge_model` in app/services/verification_queue.py), not by
+# inventing new configuration surface for a choice nobody has asked to make yet.
+DEFAULT_JUDGE_PROVIDER_CODE = "anthropic"
+DEFAULT_JUDGE_MODEL_NAME = "claude-haiku-4-5-20251001"
 
 # Same threshold quote_match.py's own `_MIN_CHUNK_LENGTH` uses (design decision 16) — kept as its
 # own local constant rather than importing that private module constant: a 3-character "quote"
@@ -168,7 +182,7 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
     goes missing versus "not checked yet".
     """
     provider_code = raw_response.run.model.provider.code
-    if provider_code not in _LLM_JUDGE_PROVIDERS:
+    if provider_code not in LLM_JUDGE_PROVIDERS:
         return
 
     judge_adapter = get_adapter(judge_model.provider.code)

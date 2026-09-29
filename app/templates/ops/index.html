@@ -86,6 +86,11 @@
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_cost') }}</div>
       <div class="text-2xl font-semibold font-mono">[[ summary ? fmtCost(summary.total_cost_usd) : noData ]]</div>
       <div class="text-xs text-stone-400 mt-1">{{ t('ops.kpi_cost_sub') }}</div>
+      {# Citation verification cost is a separate figure from the run cost above it, never folded
+         in (docs/TASKS_CITATION_VERIFICATION.md T13, design decision 26) — shown as its own line
+         within the same tile rather than a 6th tile, mirroring how the Tokens tile already puts
+         two related-but-distinct numbers on one line. #}
+      <div class="text-xs text-stone-400 mt-0.5">{{ t('ops.kpi_verification_cost_sub') }}: [[ summary ? fmtCost(summary.total_verification_cost_usd) : noData ]]</div>
     </div>
     <div class="bg-white border border-stone-200 rounded-lg p-4">
       <div class="text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">{{ t('ops.kpi_tokens') }}</div>
