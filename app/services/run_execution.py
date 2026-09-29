@@ -36,6 +36,7 @@ from app.models import (
     SystemInstructionTemplate,
 )
 from app.routers.settings import DEFAULT_SYSTEM_INSTRUCTION_TEMPLATE
+from app.services.verification_queue import enqueue_capture
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,19 @@ def execute_run(
         except Exception as exc:  # analysis is a best-effort derived layer — never fail the run over it
             logger.error(
                 "Analysis skills failed for run %s: %s",
+                run.id,
+                exc,
+                exc_info=True,
+                extra={"extra_data": {"run_id": run.id}},
+            )
+
+        try:
+            enqueue_capture(db, raw_response_id, now=datetime.now(timezone.utc))
+        except Exception as exc:  # queueing is best-effort too (docs/TASKS_CITATION_VERIFICATION.md
+            # design decision 3) — the actual fetch never runs here or in any request, only in
+            # app/worker.py, so a failure at this INSERT must never fail the run over it either.
+            logger.error(
+                "Citation capture enqueue failed for run %s: %s",
                 run.id,
                 exc,
                 exc_info=True,

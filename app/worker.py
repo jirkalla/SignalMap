@@ -14,13 +14,21 @@ Loop, once per iteration:
   3b. Notification checks (`check_expiring_schedules`, `check_budget_thresholds`, T8) — same
      once-a-minute cadence; both are pure state observation (nothing about them ties to a single
      queue item), so they ride the ticker interval rather than getting a schedule of their own.
+  3c. Verification lease reconciliation (`release_expired_job_leases`,
+     docs/TASKS_CITATION_VERIFICATION.md T5) — same once-a-minute cadence, same idea as 3 but for
+     `verification_jobs` instead of `run_queue`.
   4. `claim_next` + `process_claimed_item` — at most one item per iteration; a terminal failure
      here also fires a `schedule.run_failed` notification (T8), only on the FINAL attempt, never
      on a transport retry that might still recover.
+  4b. Only when 4 claimed nothing: `claim_next_job` + `process_verification_job`
+     (docs/TASKS_CITATION_VERIFICATION.md design decision 3) — citation-source capture never
+     competes with a run for this iteration's one turn, it only gets a turn run_queue didn't want.
   5. Sleep 5 seconds.
 
-`process_claimed_item` is the one piece worth unit testing directly (tests/test_worker_queue.py)
-— everything else here is process/IO plumbing around it and app/services/queue.py's functions.
+`process_claimed_item` and `process_verification_job` are the pieces worth unit testing directly
+(tests/test_worker_queue.py, tests/test_verification_queue.py) — everything else here is
+process/IO plumbing around them and app/services/queue.py's / app/services/verification_queue.py's
+functions.
 """
 
 import logging
@@ -48,6 +56,13 @@ from app.models.schedule import RunQueueItem
 from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_quota_exceeded
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
 from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
+from app.services.source_capture import build_capture_client
+from app.services.verification_queue import (
+    DEFAULT_LEASE_MINUTES,
+    claim_next_job,
+    process_verification_job,
+    release_expired_job_leases,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -303,38 +318,52 @@ def run_forever() -> None:
     with SessionLocal() as db:
         reconcile_interrupted_runs(db, now=datetime.now(timezone.utc))
 
-    while not stop_requested:
-        now = datetime.now(timezone.utc)
-        with SessionLocal() as db:
-            write_heartbeat(db, worker_name=settings.worker_name, dry_run=settings.scheduler_dry_run, now=now)
+    # One client for the whole process lifetime (docs/TASKS_CITATION_VERIFICATION.md T4/T5) —
+    # connection reuse across however many capture jobs this worker processes, not a fresh
+    # client (and fresh connections) per job.
+    with build_capture_client() as capture_client:
+        while not stop_requested:
+            now = datetime.now(timezone.utc)
+            with SessionLocal() as db:
+                write_heartbeat(db, worker_name=settings.worker_name, dry_run=settings.scheduler_dry_run, now=now)
 
-            if now - last_ticker_run >= _TICKER_INTERVAL:
-                if settings.scheduler_enabled:
-                    enqueue_due_schedules(
+                if now - last_ticker_run >= _TICKER_INTERVAL:
+                    if settings.scheduler_enabled:
+                        enqueue_due_schedules(
+                            db,
+                            now=now,
+                            grace_period_minutes=settings.scheduler_grace_period_minutes,
+                            max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
+                        )
+                    release_expired_leases(db, now=now)
+                    release_expired_job_leases(db, now=now)
+                    reconcile_interrupted_runs(db, now=now)
+                    check_expiring_schedules(db, now=now)
+                    check_budget_thresholds(db, now=now)
+                    last_ticker_run = now
+
+                item = claim_next(db, worker_name=settings.worker_name, now=now, lease_minutes=settings.scheduler_lease_minutes)
+                if item is not None:
+                    process_claimed_item(
                         db,
+                        item,
                         now=now,
+                        dry_run=settings.scheduler_dry_run,
                         grace_period_minutes=settings.scheduler_grace_period_minutes,
-                        max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
+                        default_daily_run_limit=settings.scheduler_default_daily_run_limit,
                     )
-                release_expired_leases(db, now=now)
-                reconcile_interrupted_runs(db, now=now)
-                check_expiring_schedules(db, now=now)
-                check_budget_thresholds(db, now=now)
-                last_ticker_run = now
+                else:
+                    # Citation verification only ever gets a turn when run_queue had nothing due
+                    # this iteration (docs/TASKS_CITATION_VERIFICATION.md design decision 3) — a
+                    # run must never wait on it.
+                    job = claim_next_job(
+                        db, worker_name=settings.worker_name, now=now, lease_minutes=DEFAULT_LEASE_MINUTES
+                    )
+                    if job is not None:
+                        process_verification_job(db, job, now=now, client=capture_client)
 
-            item = claim_next(db, worker_name=settings.worker_name, now=now, lease_minutes=settings.scheduler_lease_minutes)
-            if item is not None:
-                process_claimed_item(
-                    db,
-                    item,
-                    now=now,
-                    dry_run=settings.scheduler_dry_run,
-                    grace_period_minutes=settings.scheduler_grace_period_minutes,
-                    default_daily_run_limit=settings.scheduler_default_daily_run_limit,
-                )
-
-        if not stop_requested:
-            time.sleep(_ITEM_POLL_INTERVAL_SECONDS)
+            if not stop_requested:
+                time.sleep(_ITEM_POLL_INTERVAL_SECONDS)
 
     with SessionLocal() as db:
         deregister_heartbeat(db, worker_name=settings.worker_name)
