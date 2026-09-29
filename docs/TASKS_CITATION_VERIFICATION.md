@@ -110,6 +110,28 @@ u 26 z 28 posudků.
    větě). Parsování musí být odolné, nebo strukturovaný výstup.
 8. **archive.org je pomalý a rate-limitovaný** (429, 504, „Temporarily
    Offline“ během jednoho odpoledne). Jen záloha s opakováním.
+9. **Gemini přesměrování si blokuje robots.txt sám Google.** Ověřeno
+   2026-09-28 na reálném runu (CV-5, prompt #7 „Leichtbau“, Knauf,
+   gemini-3.1-flash-lite): všech 19 unikátních
+   `vertexaisearch.cloud.google.com/grounding-api-redirect/…` odkazů
+   skončilo s `error_reason='robots'`. `curl
+   https://vertexaisearch.cloud.google.com/robots.txt`:
+   ```
+   User-agent: *
+   Disallow: /grounding-api-redirect
+   Disallow: /grounding-redirect
+   ```
+   Design decision 6 počítala s „rozbalit přesměrování v rámci
+   stažení“, ale přesně tuhle cestu Google sám zakazuje crawlerům —
+   **nejde o ochranu proti botům** (design decision 8), je to
+   deklarovaná politika stránky, kterou design decision 7 říká
+   respektovat. Důsledek: bez dalšího kroku se **žádná Gemini citace
+   přes tento mechanismus nikdy neověří** (`unverifiable/robots`
+   natrvalo, ne dočasně). **Otevřená otázka pro T7/T9** (rozhoduje
+   uživatel): buď to tak necháme (Gemini citace budou vždy
+   „unverifiable“, UI to musí odlišit od ostatních důvodů), nebo se
+   najde jiný, robots.txt respektující způsob rozbalení přesměrování
+   (např. Google k tomu má sankcionované API/SDK) — nezkoumáno.
 
 ### Velikost snímků (80 náhodných zdrojů)
 
