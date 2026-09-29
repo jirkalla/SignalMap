@@ -18,8 +18,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.run import Citation
+from app.models.run import Citation, RawResponse
 from app.models.verification import VerificationJob
+from app.services.citation_verification import verify_citations_by_quote
 from app.services.source_capture import capture_url
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,10 @@ def _citation_urls(db: Session, raw_response_id: int) -> list[str]:
 def process_verification_job(db: Session, job: VerificationJob, *, now: datetime, client: httpx.Client) -> None:
     """Execute one already-`leased` capture job: `capture_url` every distinct citation URL on its
 
-    response. Always ends this pass with exactly one outcome:
+    response, then the free literal-quote check for whichever of those citations have one to run
+    (docs/TASKS_CITATION_VERIFICATION.md T8, design decision 1 — "the literal check is free and
+    always runs" is exactly what makes it safe to do inline here, in the same job, rather than
+    queuing a separate 'judge' one). Always ends this pass with exactly one outcome:
 
     - `done` — even when some or all individual URLs failed to capture (403, a bot challenge,
       whatever) or the job's time budget cut the list short. Those are recorded as evidence on
@@ -168,6 +172,9 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
                     len(urls),
                 )
                 break
+
+        raw_response = db.get(RawResponse, job.raw_response_id)
+        verify_citations_by_quote(db, raw_response, now=now)
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
         logger.error("verification job %s failed: %s", job.id, exc, exc_info=True, extra={"extra_data": {"job_id": job.id}})
         db.rollback()
