@@ -1,0 +1,190 @@
+{# Citation verification: summary card + evidence panel (docs/TASKS_CITATION_VERIFICATION.md T9).
+
+   Three macros, always used together from runs/detail.html:
+   - verification_summary_card(): the top "Citation verification" card — filter chips + summary line.
+   - verification_evidence_blocks(): one hidden block per citation, shown/hidden by the tiny
+     script at the bottom of this file when its claim/citation number is clicked.
+   - verification_evidence_placeholder(): the panel's resting state, before anything is clicked.
+
+   Colour/label vocabulary (tone -> Tailwind classes, verdict -> i18n key) lives in ONE place,
+   app/services/verification_display.py's VERDICT_STYLES/TONE_BADGE_CLASSES — this template only
+   ever looks values up in those maps, it never hardcodes a verdict's colour or text itself, so a
+   new verdict (T10/T11/T12) needs a change there, not here.
+
+   Unlike partials/macros.html's macros (which never call t() themselves — callers translate and
+   pass plain strings in, see status_badge), these macros DO call t() directly, because they loop
+   internally over citations/verdicts and building every translated string in runs/detail.html
+   first would mean duplicating those loops there too. runs/detail.html imports this file
+   `with context` so `t` is in scope here. #}
+
+{% macro verification_summary_card(verification_display, verdict_styles, tone_badge_classes, citations) %}
+<div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.verification_title') }}</h2>
+  {% if not citations %}
+  <p class="text-stone-500 text-sm">{{ t('run.verification_no_citations') }}</p>
+  {% elif verification_display.capture_pending %}
+  <p class="text-stone-500 text-sm">{{ t('run.verification_pending') }}</p>
+  {% else %}
+  <div class="flex flex-wrap gap-2 mb-3" role="group" aria-label="{{ t('run.verification_filter_group_label') }}" id="verdict-filters">
+    {% for verdict, count in verification_display.verdict_counts.items() %}
+    {% set style = verdict_styles.get(verdict) %}
+    {% if style %}
+    <button type="button"
+            class="chip inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium {{ tone_badge_classes[style.tone] }}"
+            data-filter-tone="{{ style.tone }}" aria-pressed="false">
+      <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+      {{ count }} {{ t(style.label_key) }}
+    </button>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <p class="text-sm text-stone-600">
+    {{ t('run.verification_summary').format(citations=citations|length, urls=verification_display.unique_url_count, captured=verification_display.checked_count) }}
+  </p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro _evidence_status_line(ev) %}
+{# Only ever called when ev.verdict is not none (see the caller's guard below) — the "pending"
+   case is covered by the badge above instead, so it's not duplicated here too. #}
+{% if ev.reason %}
+{{ t('run.evidence_status_error').format(reason=t('run.reason_' ~ ev.reason)) }}
+{% elif ev.http_status %}
+{{ t('run.evidence_status_ok').format(status=ev.http_status, chars=(ev.chars if ev.chars is not none else '—'), ms=(ev.duration_ms if ev.duration_ms is not none else '—')) }}
+{% endif %}
+{% endmacro %}
+
+{% macro _evidence_card(citation, ev, tone_badge_classes) %}
+<div class="flex flex-wrap items-center gap-2 mb-1">
+  {% if ev.verdict %}
+  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium {{ tone_badge_classes[ev.tone] }}">{{ t(ev.label_key) }}</span>
+  {% if ev.similarity is not none and ev.similarity < 1 %}
+  <span class="text-xs text-stone-400">{{ t('run.evidence_similarity').format(value=(ev.similarity * 100) | round | int ~ '%') }}</span>
+  {% endif %}
+  {% else %}
+  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-stone-100 text-stone-600">{{ t('run.verdict_pending') }}</span>
+  {% endif %}
+</div>
+<a href="{{ citation.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words text-sm">{{ citation.source_title or citation.source_url }}</a>
+{% if ev.resolved_url %}
+<div class="text-xs text-stone-500 mt-0.5 break-all">{{ t('run.gemini_resolves_to') }} <span class="font-mono">{{ ev.resolved_url }}</span></div>
+{% endif %}
+{% if ev.claim_text %}
+<div class="mt-2">
+  <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide">{{ t('run.citation_claim_label') }}</div>
+  <div class="text-sm text-stone-600 italic break-words">&ldquo;{{ ev.claim_text }}&rdquo;</div>
+</div>
+{% endif %}
+{% if ev.context %}
+<div class="mt-2">
+  <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-1">{{ t('run.evidence_found_on_source') }}</div>
+  <div class="text-sm text-stone-600 leading-6 border-l-2 border-stone-300 pl-2.5">&hellip;{{ ev.context.before }}<mark class="bg-amber-200 rounded px-0.5">{{ ev.context.matched }}</mark>{{ ev.context.after }}&hellip;</div>
+</div>
+{% endif %}
+{% if ev.location_path or ev.page_number or ev.open_url or ev.collapsed_title %}
+<div class="text-xs text-stone-600 mt-1.5 space-y-1">
+  {% if ev.page_number %}
+  <div><b>{{ t('run.evidence_location_label') }}:</b> {{ t('run.evidence_open_pdf_link').format(page=ev.page_number) }}
+    {% if ev.open_url %} · <a href="{{ ev.open_url }}" target="_blank" rel="noopener noreferrer" class="underline">{{ t('run.evidence_open_link') }}</a>{% endif %}</div>
+  {% else %}
+  {% if ev.location_path %}<div><b>{{ t('run.evidence_location_label') }}:</b> {{ ev.location_path | join(' › ') }}</div>{% endif %}
+  {% if ev.open_url %}<div><a href="{{ ev.open_url }}" target="_blank" rel="noopener noreferrer" class="underline">{{ t('run.evidence_open_link') }}</a></div>{% endif %}
+  {% endif %}
+  {% if ev.collapsed_title %}
+  <div class="px-2 py-1.5 rounded bg-amber-50 text-amber-900 border border-amber-200">{{ t('run.evidence_collapsed_warning').format(title=ev.collapsed_title) }}</div>
+  {% endif %}
+</div>
+{% endif %}
+{% if ev.verdict is not none %}
+<div class="text-xs text-stone-500 mt-2">{{ _evidence_status_line(ev) }}</div>
+{% endif %}
+{% endmacro %}
+
+{% macro verification_evidence_blocks(citations, verification_display, tone_badge_classes) %}
+{% for citation in citations %}
+<div id="evidence-{{ citation.id }}" data-evidence="{{ citation.id }}" hidden
+     class="border-t border-stone-100 pt-3 mt-3 first:border-t-0 first:pt-0 first:mt-0">
+  {{ _evidence_card(citation, verification_display.evidence[citation.id], tone_badge_classes) }}
+</div>
+{% endfor %}
+{% endmacro %}
+
+{% macro verification_evidence_placeholder() %}
+<p id="evidence-placeholder" class="text-sm text-stone-500">{{ t('run.evidence_select_prompt') }}</p>
+{% endmacro %}
+
+{% macro verification_assets() %}
+{# `{% from ... import %}` (as runs/detail.html uses for the three macros above) only pulls in
+   macros — it never renders a template's top-level body, so this style/script has to be its own
+   macro too, explicitly called once from detail.html, or it silently never reaches the page at
+   all (found manually, 2026-09-29: citation-number clicks did nothing because this block, written
+   as plain top-level HTML, was never being output). #}
+
+{# .dim/.active are pure CSS state, kept co-located with the JS that toggles them rather than in
+   base.html's shared stylesheet — this is the only place either class is used. #}
+<style>
+  .claim.dim { opacity: .35; }
+  .claim.active, .cite.active { outline: 2px solid currentColor; outline-offset: 1px; }
+</style>
+
+{# Small vanilla JS (no framework, per T9) — click a claim or citation-number button, show the
+   evidence block(s) it names (data-claim is a comma-separated list of citation ids), hide the
+   rest. Filter chips dim non-matching claims and hide non-matching citation-list rows.
+
+   Delegated on `document` (matching base.html's own delete-confirm listener) rather than binding
+   to each `.claim`/`.cite`/`.chip` element individually — this macro is called near the TOP of
+   the card, before the claims/citations/filter-chip elements further down the page even exist in
+   the DOM yet, so `querySelectorAll(...).forEach(el => el.addEventListener(...))` would silently
+   attach to nothing (found manually, 2026-09-29: citation-number clicks did nothing because of
+   this). Delegation only needs `document` to exist, so it works regardless of where in the page
+   this macro is called relative to the elements it reacts to. #}
+<script>
+(function () {
+  function showEvidence(key) {
+    const panel = document.getElementById("evidence-panel");
+    if (!panel) return;
+    const ids = key.split(",");
+    panel.querySelectorAll("[data-evidence]").forEach(function (block) {
+      block.hidden = ids.indexOf(block.dataset.evidence) === -1;
+    });
+    const placeholder = document.getElementById("evidence-placeholder");
+    if (placeholder) placeholder.hidden = true;
+    document.querySelectorAll(".claim, .cite").forEach(function (el) {
+      el.classList.toggle("active", el.dataset.claim === key);
+    });
+    if (window.matchMedia && window.matchMedia("(max-width: 1023px)").matches) {
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  function applyFilter(chip) {
+    const turningOn = chip.getAttribute("aria-pressed") !== "true";
+    document.querySelectorAll("#verdict-filters .chip").forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
+    chip.setAttribute("aria-pressed", turningOn ? "true" : "false");
+    const tone = chip.dataset.filterTone;
+    document.querySelectorAll(".claim[data-tone]").forEach(function (el) {
+      el.classList.toggle("dim", turningOn && el.dataset.tone !== tone);
+    });
+    document.querySelectorAll("#citations-list [data-tone]").forEach(function (li) {
+      li.hidden = turningOn && li.dataset.tone !== tone;
+    });
+  }
+
+  document.addEventListener("click", function (ev) {
+    const claimOrCite = ev.target.closest(".claim, .cite");
+    if (claimOrCite) { showEvidence(claimOrCite.dataset.claim); return; }
+    const chip = ev.target.closest("#verdict-filters .chip");
+    if (chip) applyFilter(chip);
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const claimOrCite = ev.target.closest(".claim, .cite");
+    if (!claimOrCite) return;
+    ev.preventDefault();
+    showEvidence(claimOrCite.dataset.claim);
+  });
+})();
+</script>
+{% endmacro %}

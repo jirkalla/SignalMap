@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/macros.html" import status_badge, export_button_group, pill_badge, labeled_list, local_time %}
+{% from "partials/verification.html" import verification_summary_card, verification_evidence_blocks, verification_evidence_placeholder, verification_assets with context %}
 {% block title %}{{ t('run.detail_title') }} #{{ run.id }} · {{ t('app.title') }}{% endblock %}
 {% block content %}
 <div class="text-sm text-stone-500 mb-1">
@@ -77,9 +78,29 @@
 {% endif %}
 
 {% if raw_response %}
+{{ verification_summary_card(verification_display, verdict_styles, tone_badge_classes, citations) }}
+{{ verification_assets() }}
+
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
+  {% if verification_display and verification_display.groups %}
+  {# Desktop/tablet: text and evidence side by side. Mobile (below lg): a single column, panel
+     BELOW the text — the grid simply collapses to one column under the lg breakpoint, so no
+     separate mobile markup is needed (T9's own "panel pod textem" requirement). #}
+  <div class="grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-6">
+    <div>
+      <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.rendered_answer_label') }}</h2>
+      <p class="whitespace-pre-line text-stone-900 leading-7">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
+    </div>
+    <aside id="evidence-panel" class="lg:border-l lg:border-stone-200 lg:pl-6 border-t lg:border-t-0 border-stone-200 pt-4 lg:pt-0" aria-live="polite">
+      <h3 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-2">{{ t('run.evidence_title') }}</h3>
+      {{ verification_evidence_placeholder() }}
+      {{ verification_evidence_blocks(citations, verification_display, tone_badge_classes) }}
+    </aside>
+  </div>
+  {% else %}
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.rendered_answer_label') }}</h2>
   <p class="whitespace-pre-line text-stone-900">{{ rendered_text_html if raw_response.rendered_text else t('common.none') }}</p>
+  {% endif %}
 </div>
 
 {% if single_entity_analysis_results %}
@@ -153,10 +174,14 @@
 <div class="bg-white border border-stone-200 rounded-lg p-4 mb-6">
   <h2 class="text-sm font-semibold text-stone-500 uppercase tracking-wide mb-3">{{ t('run.citations_label') }}{% if citations %} <span class="font-normal text-stone-400">({{ citations|length }})</span>{% endif %}</h2>
   {% if citations %}
-  <ul class="space-y-3">
+  <ul class="space-y-3" id="citations-list">
     {% for c in citations %}
-    <li class="border-t border-stone-100 pt-3 first:border-t-0 first:pt-0">
-      <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words">{{ c.source_title or c.source_url }}</a>
+    {% set ev = verification_display.evidence.get(c.id) if verification_display else none %}
+    <li class="border-t border-stone-100 pt-3 first:border-t-0 first:pt-0" {% if ev %}data-tone="{{ ev.tone }}"{% endif %}>
+      {% if ev and ev.verdict %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium mb-1 {{ tone_badge_classes[ev.tone] }}">{{ t(ev.label_key) }}</span>
+      {% endif %}
+      <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer" class="font-medium text-stone-900 hover:underline break-words block">{{ c.source_title or c.source_url }}</a>
       <div class="text-xs text-stone-500 mt-1">{{ c.source_domain }}{% if c.citation_position is not none %} · #{{ c.citation_position }}{% endif %}</div>
       {% set claim = citation_claims.get(c.id) %}
       {% if claim %}

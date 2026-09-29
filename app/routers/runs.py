@@ -52,6 +52,13 @@ from app.services.export import (
     runs_for_run,
 )
 from app.services.run_execution import QuotaExceededError, check_daily_quota, execute_run
+from app.services.verification_display import (
+    TONE_BADGE_CLASSES,
+    TONE_UNDERLINE_CLASSES,
+    VERDICT_STYLES,
+    ClaimGroup,
+    build_verification_display,
+)
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -126,6 +133,50 @@ def _highlight_matches(text: str, spans: list[list[int]]) -> Markup:
         parts.append(escape(text[cursor:start]))
         parts.append(Markup("<mark class=\"bg-amber-200 rounded px-0.5\">") + escape(text[start:end]) + Markup("</mark>"))
         cursor = end
+    parts.append(escape(text[cursor:]))
+    return Markup("").join(parts)
+
+
+def _highlight_claims(text: str, groups: list[ClaimGroup], citation_positions: dict[int, int | None]) -> Markup:
+    """Wrap each claim group (app/services/verification_display.py) in a `<span class="claim">`
+
+    plus one `<button class="cite">` per citation — same safe escape-and-splice pattern as
+    `_highlight_matches` above, extended to also emit the small interactive markup T9's vanilla
+    JS (runs/detail.html) hooks into. `data-claim` carries the group's FULL comma-separated list
+    of citation ids on every element in it (the span and every one of its buttons alike), so a
+    click anywhere in the group shows the same set of evidence panels — a claim backed by three
+    sources shows all three, not just whichever button was clicked (design decision 18). The
+    citation number shown on each button is `citation_position + 1` — the same number the
+    citation list below already labels that citation with, via `citation_positions`
+    (citation.id -> citation_position).
+    """
+    if not groups:
+        return escape(text)
+    parts: list[Markup] = []
+    cursor = 0
+    for group in groups:
+        parts.append(escape(text[cursor : group.start]))
+        group_key = ",".join(str(cid) for cid in group.citation_ids)
+        parts.append(
+            Markup(
+                f'<span class="claim underline decoration-2 underline-offset-4 cursor-pointer rounded '
+                f'{TONE_UNDERLINE_CLASSES[group.tone]}" tabindex="0" data-claim="{group_key}" data-tone="{group.tone}">'
+            )
+            + escape(text[group.start : group.end])
+            + Markup("</span>")
+        )
+        for citation_id in group.citation_ids:
+            position = citation_positions.get(citation_id)
+            number = position + 1 if position is not None else "?"
+            parts.append(
+                Markup(
+                    f'<button type="button" class="cite {TONE_BADGE_CLASSES[group.tone]} rounded px-1 text-[10px] '
+                    f'font-medium align-super ml-0.5" data-claim="{group_key}" aria-label="Citation {number}">'
+                )
+                + str(number)
+                + Markup("</button>")
+            )
+        cursor = group.end
     parts.append(escape(text[cursor:]))
     return Markup("").join(parts)
 
@@ -262,7 +313,10 @@ def trigger_run(
 
 @router.get("/runs/{run_id}")
 def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
-    """Show one run: metadata, rendered answer, raw JSON, citations, and search queries (FR-14)."""
+    """Show one run: metadata, rendered answer (with citation-verification highlighting, T9),
+
+    raw JSON, citations, and search queries (FR-14).
+    """
     run = _get_run_or_404(db, request, run_id)
     raw_response = db.scalars(select(RawResponse).where(RawResponse.run_id == run_id)).first()
     citations = (
@@ -296,13 +350,26 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             citation.id: derive_claim(provider_code, citation, raw_response.rendered_text, raw_response.raw_payload)
             for citation in citations
         }
+    # docs/TASKS_CITATION_VERIFICATION.md T9 — built whenever there's a raw response, regardless
+    # of whether any verification has actually run yet (build_verification_display's own
+    # capture_pending flag is what the template uses to show a "waiting" state instead).
+    verification_display = build_verification_display(db, raw_response, citations, citation_claims) if raw_response else None
+
     rendered_text_html = None
     if raw_response and raw_response.rendered_text:
-        match_spans = next(
-            (r.output.get("match_spans") for r in analysis_results if r.analysis_skill.key == "mention_visibility"),
-            None,
-        )
-        rendered_text_html = _highlight_matches(raw_response.rendered_text, match_spans or [])
+        if verification_display and verification_display.groups:
+            # Claim-span highlighting takes over from mention highlighting when there's any
+            # (design decision 18) — merging both into one span-aware pass was not asked for by
+            # T9 and would be real added complexity for two features that, in practice, rarely
+            # both have something to show on the exact same run.
+            citation_positions = {citation.id: citation.citation_position for citation in citations}
+            rendered_text_html = _highlight_claims(raw_response.rendered_text, verification_display.groups, citation_positions)
+        else:
+            match_spans = next(
+                (r.output.get("match_spans") for r in analysis_results if r.analysis_skill.key == "mention_visibility"),
+                None,
+            )
+            rendered_text_html = _highlight_matches(raw_response.rendered_text, match_spans or [])
     competitive_result = next(
         (r for r in analysis_results if r.analysis_skill.key == "competitive_visibility"), None
     )
@@ -345,6 +412,9 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db)):
             "rendered_text_html": rendered_text_html,
             "citations": citations,
             "citation_claims": citation_claims,
+            "verification_display": verification_display,
+            "verdict_styles": VERDICT_STYLES,
+            "tone_badge_classes": TONE_BADGE_CLASSES,
             "search_queries": search_queries,
             "single_entity_analysis_results": single_entity_analysis_results,
             "competitive_result": competitive_result,

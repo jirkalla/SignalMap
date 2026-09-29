@@ -1,5 +1,8 @@
 """Run trigger flow (docs/REQUIREMENTS.md FR-7..FR-16), against FakeAdapter — never the real Gemini API."""
 
+import hashlib
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.adapters.base import AdapterCitation, RawResponsePayload
 from app.models import AIModel, AnalysisResult, Citation, Persona, Prompt, RawResponse, Run, SearchQuery
+from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob
 from tests.fake_adapter import FakeAdapter
+
+NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
 
 
 def test_trigger_run_rejected_for_inactive_prompt(
@@ -893,3 +899,241 @@ def test_viewer_cannot_export_a_run(viewer_client: TestClient):
     response = viewer_client.get("/runs/999999/export")
 
     assert response.status_code == 403
+
+
+# --- T9: citation verification UI (docs/TASKS_CITATION_VERIFICATION.md) ------------------------
+
+
+def _trigger_citation_run(authed_client: TestClient, seed, sample_prompt: Prompt) -> tuple[int, RawResponse, Citation]:
+    """A run with one citation shaped for derive_claim's offset-based method (same payload shape
+
+    as test_successful_run_stores_and_displays_the_cited_claim_with_its_offsets above) — every T9
+    test below needs a highlighted claim to check, not just a bare citation.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme is known for reliability."},
+        rendered_text="Acme is known for reliability.",
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a",
+                source_title="A",
+                source_domain="example.com",
+                citation_position=0,
+                cited_answer_span="Acme is known for reliability.",
+                answer_span_start=0,
+                answer_span_end=30,
+            )
+        ],
+        token_usage={"input_tokens": 10, "output_tokens": 5},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    return run_id, response, None  # citation/raw_response looked up by the caller, needs db_session
+
+
+def test_verification_summary_shows_pending_state_before_capture(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CITATION_VERIFICATION.md T9 — a fresh run's capture job (queued by run_execution,
+
+    T5) hasn't been processed yet, so the summary card must show the "waiting for capture" message
+    instead of verdict filter chips that would all be empty/misleading.
+    """
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Sources for this run haven&#39;t been captured yet" in detail_response.text or "haven't been captured yet" in detail_response.text
+    assert 'id="verdict-filters"' not in detail_response.text
+
+
+def test_verification_no_citations_shows_empty_state(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    """No citations at all (e.g. a model with no web search) — the summary card must say so
+
+    rather than showing an empty filter row or a misleading "0 captured" line.
+    """
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "No sources here."}, rendered_text="No sources here.", has_citations=False, citations=[],
+        token_usage={"input_tokens": 5, "output_tokens": 3},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Nothing to verify: this run has no citations." in detail_response.text
+
+
+def test_verification_shows_verdict_badge_claim_highlight_and_evidence_after_capture(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """Once a CitationVerification row exists and the capture job is done, the detail page must
+
+    show: the verdict badge (summary chip + citation-list badge), the claim underlined with a
+    citation-number button (data-claim/data-tone), and an evidence block with the matched context,
+    location, and an HTTP status line.
+    """
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+
+    capture_job = db_session.scalar(
+        select(VerificationJob).where(VerificationJob.raw_response_id == raw_response.id, VerificationJob.kind == "capture")
+    )
+    capture_job.status = "done"
+    capture_job.finished_at = NOW
+
+    source_text = "On our review page: Acme has been rated highly for reliability since 2019. Read more."
+    text_sha256 = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+    db_session.add(SourceText(sha256=text_sha256, text=source_text, chars=len(source_text)))
+    document = SourceDocument(
+        requested_url=citation.source_url, method="live", http_status=200, text_sha256=text_sha256,
+        duration_ms=120, fetched_at=NOW, verifier_version="1.0",
+    )
+    db_session.add(document)
+    db_session.flush()
+
+    matched = "Acme has been rated highly for reliability since 2019."
+    match_start = source_text.index(matched)
+    db_session.add(
+        CitationVerification(
+            citation_id=citation.id, source_document_id=document.id, claim_text="Acme is known for reliability.",
+            claim_method="position", check_type="quote", verdict="verified_exact", similarity=1,
+            matched_text=matched, match_start=match_start, match_end=match_start + len(matched),
+            location={"headings": ["Reviews"]}, verifier_version="1.0",
+        )
+    )
+    db_session.commit()
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    body = detail_response.text
+    assert "Verified &middot; exact" in body or "Verified · exact" in body or "Verified" in body
+    assert f'data-evidence="{citation.id}"' in body
+    assert f'data-tone="emerald"' in body
+    assert "data-claim=" in body
+    assert "Reviews" in body
+    assert "1 citations" in body and "1 URLs" in body and "1 captured" in body
+    assert "HTTP 200" in body
+    # Regression guard (found manually, 2026-09-29): partials/verification.html's click-to-show-
+    # evidence script is defined as its own macro (verification_assets) precisely so it actually
+    # gets rendered — `{% from ... import %}` alone never emits a template's top-level body.
+    assert "function showEvidence" in body
+
+
+def test_verification_resolved_url_shown_as_plain_text_not_a_link(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CITATION_VERIFICATION.md design decision 6 — Gemini's own redirect link must
+
+    stay the clickable "source_url" link; the address it resolves to may only ever appear as plain
+    text, never as a second, competing link (Google's terms forbid modifying/substituting it).
+    """
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    capture_job = db_session.scalar(
+        select(VerificationJob).where(VerificationJob.raw_response_id == raw_response.id, VerificationJob.kind == "capture")
+    )
+    capture_job.status = "done"
+
+    resolved = "https://reviews.example.com/acme-reliability"
+    document = SourceDocument(
+        requested_url=citation.source_url, final_url=resolved, method="live", http_status=200,
+        fetched_at=NOW, verifier_version="1.0",
+    )
+    db_session.add(document)
+    db_session.flush()
+    db_session.add(
+        CitationVerification(
+            citation_id=citation.id, source_document_id=document.id, claim_text="Acme is known for reliability.",
+            check_type="quote", verdict="unverifiable", reason="no_checkable_text", verifier_version="1.0",
+        )
+    )
+    db_session.commit()
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    body = detail_response.text
+    assert "Resolves to:" in body
+    assert resolved in body
+    assert f'href="{resolved}"' not in body
+
+
+def test_verification_collapsed_section_shows_ctrl_f_warning(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """A match found inside a collapsed `<details>`/accordion section must warn that the browser's
+
+    own text search won't find it while collapsed — otherwise a user trying to verify by hand with
+    Ctrl+F would wrongly conclude the citation is wrong.
+    """
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    capture_job = db_session.scalar(
+        select(VerificationJob).where(VerificationJob.raw_response_id == raw_response.id, VerificationJob.kind == "capture")
+    )
+    capture_job.status = "done"
+
+    document = SourceDocument(requested_url=citation.source_url, method="live", http_status=200, fetched_at=NOW, verifier_version="1.0")
+    db_session.add(document)
+    db_session.flush()
+    db_session.add(
+        CitationVerification(
+            citation_id=citation.id, source_document_id=document.id, claim_text="Acme is known for reliability.",
+            check_type="quote", verdict="verified_exact", similarity=1,
+            location={"collapsed": True, "collapsed_title": "Customer reviews"}, verifier_version="1.0",
+        )
+    )
+    db_session.commit()
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    assert "Customer reviews" in detail_response.text
+    assert "won&#39;t find it while it&#39;s collapsed" in detail_response.text or "won't find it while it's collapsed" in detail_response.text
+
+
+def test_verification_shows_verdicts_with_no_capture_job_row_at_all(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """A handful of pre-T5 runs have citation_verifications but no verification_jobs row at all
+
+    (backfilled/verified before the automatic post-run capture enqueue existed). The page must
+    still show their verdicts — not the "check back in a minute" pending message, which for these
+    runs would never resolve (found manually, 2026-09-29, walking through run 108).
+    """
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    # No VerificationJob at all — delete the one the run's own trigger flow enqueued, simulating a
+    # pre-T5 run where that enqueue never happened.
+    for job in db_session.scalars(select(VerificationJob).where(VerificationJob.raw_response_id == raw_response.id)).all():
+        db_session.delete(job)
+
+    document = SourceDocument(requested_url=citation.source_url, method="live", http_status=200, fetched_at=NOW, verifier_version="1.0")
+    db_session.add(document)
+    db_session.flush()
+    db_session.add(
+        CitationVerification(
+            citation_id=citation.id, source_document_id=document.id, claim_text="Acme is known for reliability.",
+            check_type="quote", verdict="verified_exact", similarity=1, verifier_version="1.0",
+        )
+    )
+    db_session.commit()
+
+    detail_response = authed_client.get(f"/runs/{run_id}")
+    assert detail_response.status_code == 200
+    body = detail_response.text
+    assert "haven't been captured yet" not in body
+    assert 'id="verdict-filters"' in body
+    assert "1 captured" in body
