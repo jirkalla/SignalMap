@@ -36,6 +36,7 @@ from app.routers import (
     schedules,
     settings,
     users,
+    verification,
 )
 from app.templating import get_t, render
 
@@ -138,6 +139,7 @@ app.include_router(markets.router, dependencies=_login_required)
 app.include_router(personas.router, dependencies=_login_required)
 app.include_router(schedules.router, dependencies=_login_required)
 app.include_router(dashboard.router, dependencies=_login_required)
+app.include_router(verification.router, dependencies=_login_required)
 app.include_router(locale.router)
 
 # Guide and Findings are hidden from viewer (docs/ROADMAP.md §1 follow-up) — not a

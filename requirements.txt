@@ -12,3 +12,5 @@ anthropic==1.4.0
 openai==3.13.0
 openpyxl==3.1.5
 fastapi-users[sqlalchemy]==15.0.5
+httpx==0.28.1
+pypdf==6.19.0

@@ -136,6 +136,54 @@ class TimeseriesResponse(BaseModel):
     weeks: list[WeekPoint]
 
 
+class VerdictBucketFields(BaseModel):
+    """The 4 T16 verdict buckets (`app.services.verification_display.VERDICT_BUCKETS`), shared by
+    the per-provider and per-domain citation-verification rows below.
+    """
+
+    verified: int
+    partial: int
+    unsupported: int
+    unverifiable: int
+    total: int = Field(..., description="verified + partial + unsupported + unverifiable.")
+
+
+class ProviderVerificationRow(VerdictBucketFields):
+    """One provider's citation-verification breakdown (docs/TASKS_CITATION_VERIFICATION.md T16)."""
+
+    provider_code: str
+    provider_name: str
+
+
+class DomainVerificationRow(VerdictBucketFields):
+    """One cited domain's citation-verification breakdown, ranked by checked-citation count."""
+
+    domain: str
+    is_own_domain: bool
+    domain_type: str | None = Field(..., description="Manual editorial classification, or None if unclassified.")
+
+
+class XaiReviewedSourcesResponse(BaseModel):
+    """xAI's citations aren't checked against a claim (design decision 29) — only whether the
+    source was reachable, a check nothing has implemented yet, so `reviewed_count` is 0 until it
+    does (see `app.services.dashboard.XaiReviewedSources`'s own docstring).
+    """
+
+    total_citations: int
+    reviewed_count: int
+
+
+class CitationVerificationResponse(BaseModel):
+    """Backs the dashboard's citation-verification section (docs/TASKS_CITATION_VERIFICATION.md
+    T16): verified/partial/unsupported/unverifiable rates by provider and by cited domain, plus
+    xAI's separate "reviewed sources" count (design decision 29).
+    """
+
+    by_provider: list[ProviderVerificationRow]
+    by_domain: list[DomainVerificationRow]
+    xai: XaiReviewedSourcesResponse
+
+
 @dataclass
 class DashboardScope:
     """The resolved client + filters shared by every JSON endpoint below, built once via the
@@ -348,3 +396,29 @@ def dashboard_timeseries(
     weeks = dashboard_service.resolve_week_range(db, scope.run_ids_query, scope.date_from, scope.date_to)
     values = dashboard_service.weekly_values(db, scope.run_ids_query, metric)
     return TimeseriesResponse(weeks=[WeekPoint(week_start=w, value=values.get(w, 0.0)) for w in weeks])
+
+
+@router.get("/api/citation-verification", response_model=CitationVerificationResponse)
+def dashboard_citation_verification(
+    scope: DashboardScope = Depends(_dashboard_scope),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of domains to return, ranked by checked citations."),
+    db: Session = Depends(get_db),
+) -> CitationVerificationResponse:
+    """Citation-verification rates for one client (docs/TASKS_CITATION_VERIFICATION.md T16):
+
+    the latest verdict per citation (append-only table, design decision 2), bucketed into
+    verified/partial/unsupported/unverifiable and broken down by provider and by cited domain.
+    xAI is never in either breakdown — design decision 29 keeps it as its own "reviewed sources"
+    count instead, since a reachability check has no claim to bucket. DeepSeek has no citations at
+    all and is likewise excluded.
+    """
+    by_provider = dashboard_service.citation_verification_rates_by_provider(db, scope.run_ids_query)
+    by_domain = dashboard_service.citation_verification_rates_by_domain(db, scope.client, scope.run_ids_query, limit)
+    xai = dashboard_service.xai_reviewed_sources_count(db, scope.run_ids_query)
+    # `row.total` is a computed @property (VerdictBucketCounts), not a dataclass field — vars(row)
+    # alone wouldn't include it, so it's added explicitly rather than silently omitted.
+    return CitationVerificationResponse(
+        by_provider=[ProviderVerificationRow(**vars(row), total=row.total) for row in by_provider],
+        by_domain=[DomainVerificationRow(**vars(row), total=row.total) for row in by_domain],
+        xai=XaiReviewedSourcesResponse(total_citations=xai.total_citations, reviewed_count=xai.reviewed_count),
+    )

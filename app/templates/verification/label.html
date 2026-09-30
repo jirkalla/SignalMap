@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import card %}
+{% block title %}{{ t('verification.label_title') }} · {{ t('app.title') }}{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">{{ t('verification.label_title') }}</h1>
+
+{% if citation is none %}
+<p class="text-stone-500 text-sm">{{ t('verification.label_empty_state') }}</p>
+{% else %}
+{# Blind: no verdict/reason/quote from the LLM anywhere on this page (design decision 27) — only
+   the claim, the same nearest-passage evidence the judge itself saw (app/services/passages.py),
+   and a link. #}
+{% call card() %}
+  <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-1">{{ t('verification.label_claim_label') }}</div>
+  <p class="text-stone-900 mb-4 break-words">{{ claim_text or t('common.none') }}</p>
+
+  <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide mb-1">{{ t('verification.label_source_label') }}</div>
+  {% if passages %}
+  <div class="space-y-2 mb-3">
+    {% for passage in passages %}
+    <p class="text-sm text-stone-600 leading-6 border-l-2 border-stone-300 pl-2.5 break-words">{{ passage }}</p>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-sm text-stone-500 mb-3">{{ t('verification.label_no_passages') }}</p>
+  {% endif %}
+  <a href="{{ citation.source_url }}" target="_blank" rel="noopener noreferrer" class="text-sm text-stone-600 hover:underline break-words">{{ citation.source_title or citation.source_url }}</a>
+{% endcall %}
+
+<form method="post" action="/verification/label" class="mt-6">
+  <input type="hidden" name="citation_id" value="{{ citation.id }}">
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+    {% for v in human_verdicts %}
+    <button type="submit" name="verdict" value="{{ v }}" class="w-full px-4 py-4 rounded-md text-sm font-medium bg-white text-stone-700 border border-stone-300 hover:bg-stone-50 active:bg-stone-100 transition">
+      {{ t('verification.human_verdict_' ~ v) }}
+    </button>
+    {% endfor %}
+  </div>
+  <div>
+    <label for="note" class="block text-sm font-medium text-stone-700 mb-1">{{ t('verification.label_note_label') }}</label>
+    <textarea id="note" name="note" rows="2" class="w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-stone-500"></textarea>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

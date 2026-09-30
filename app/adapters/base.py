@@ -71,6 +71,19 @@ class AdapterCitation:
 
 
 @dataclass
+class JudgePayload:
+    """The canonical result of one `judge()` call (docs/TASKS_CITATION_VERIFICATION.md T11,
+
+    design decision 20) — the LLM paraphrase check (T12) parses `text` for a verdict, a
+    one-sentence reason, and the source sentence it relied on; this dataclass itself stays
+    provider-agnostic and doesn't know that shape.
+    """
+
+    text: str
+    token_usage: dict[str, Any] | None = None
+
+
+@dataclass
 class RawResponsePayload:
     """The canonical result of running one prompt against one AI model.
 
@@ -128,5 +141,23 @@ class ProviderAdapter(Protocol):
 
         Raises on transport/API failure — callers are responsible for
         catching that and recording it as a Run with status='error'.
+        """
+        ...
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Run one tool-free judgement call — T12's claim-vs-passage check (docs/TASKS_
+
+        CITATION_VERIFICATION.md T11, design decision 20). No web search or any other tool
+        (unlike `run()`): the judge only ever reasons over the passages `user` already contains,
+        never fetches anything itself. `model_name` is a row in `ai_models` (default
+        `claude-haiku-4-5-20251001`, per design decision 20) — the same "model is data, not a
+        hardcoded provider list" rule `run()` already follows.
+
+        Every adapter must implement this explicitly (see `supports_geo_targeting` above for the
+        same convention) — an adapter with nothing to judge with yet raises `NotImplementedError`
+        with a clear message rather than silently inheriting a Protocol default. Only Anthropic
+        implements it for real as of T11; the rest raise until their own task lands.
+
+        Raises on transport/API failure, same as `run()`.
         """
         ...

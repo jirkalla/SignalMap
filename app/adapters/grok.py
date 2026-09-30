@@ -38,7 +38,7 @@ where citations live:
 
 import openai
 
-from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 
@@ -149,4 +149,15 @@ class GrokAdapter:
             citations=citations,
             search_queries=search_queries,
             token_usage=token_usage,
+        )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Not implemented, and not expected to be: xAI's citations are "sources it looked at",
+
+        not a claim tied to a source (design decision 29) — there is no claim/source pair to
+        judge, only a `source_reachable` reachability check, which is not this method's job.
+        """
+        raise NotImplementedError(
+            "GrokAdapter.judge() is not implemented and is not planned — xAI's citations have no "
+            "claim to judge against (design decision 29: 'sources reviewed', not citations)."
         )

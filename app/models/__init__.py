@@ -14,11 +14,13 @@ from app.models.notification import NotificationOutbox, WorkerHeartbeat
 from app.models.persona import Persona
 from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, AIModelPriceComponent, Provider
+from app.models.rate_limit import ThrottleState
 from app.models.run import Citation, RawResponse, Run, SearchQuery
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.models.settings import SystemInstructionTemplate
 from app.models.tracked_entity import TrackedEntity, TrackedEntityAlias
 from app.models.user import User
+from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob, VerificationLabel
 
 __all__ = [
     "Base",
@@ -46,4 +48,10 @@ __all__ = [
     "TrackedEntity",
     "TrackedEntityAlias",
     "User",
+    "SourceText",
+    "SourceDocument",
+    "VerificationJob",
+    "CitationVerification",
+    "VerificationLabel",
+    "ThrottleState",
 ]

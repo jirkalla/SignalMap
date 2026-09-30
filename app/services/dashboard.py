@@ -25,14 +25,17 @@ from app.models import (
     AnalysisResult,
     AnalysisSkill,
     Citation,
+    CitationVerification,
     Client,
     DomainClassification,
     Prompt,
     PromptSet,
+    Provider,
     RawResponse,
     Run,
 )
 from app.services.date_ranges import DashboardRange, range_bounds, week_starts
+from app.services.verification_display import VERDICT_BUCKETS, latest_verification_query
 from app.utils import is_own_domain, normalized_domain_sql
 
 __all__ = ["DashboardRange", "range_bounds"]  # re-exported: app/routers/dashboard.py imports both from here
@@ -439,3 +442,179 @@ def entity_league_rows(db: Session, run_ids_query: Select) -> list[EntityLeagueR
         )
         for rank, row in enumerate(rows, start=1)
     ]
+
+
+# docs/TASKS_CITATION_VERIFICATION.md T16, design decision 29 — xAI has no claim to check a
+# citation against (only "was the source reachable", not wired up yet, see
+# `xai_reviewed_sources_count`) and DeepSeek has no citations at all (no web search): neither
+# belongs in the verified/partial/unsupported/unverifiable breakdown below.
+_VERIFICATION_EXCLUDED_PROVIDER_CODES = ("xai", "deepseek")
+
+
+@dataclass
+class VerdictBucketCounts:
+    """One row's tally across the 4 T16 buckets (`VERDICT_BUCKETS`) — shared shape for both the
+    per-provider and per-domain breakdowns below, so the router/template format both identically.
+    """
+
+    verified: int = 0
+    partial: int = 0
+    unsupported: int = 0
+    unverifiable: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.verified + self.partial + self.unsupported + self.unverifiable
+
+
+def _bucketed_verdict_counts(rows: list) -> dict[str, VerdictBucketCounts]:
+    """Turn `[(key, verdict, count), ...]` rows into `{key: VerdictBucketCounts}`, dropping any
+    verdict `VERDICT_BUCKETS` doesn't recognize (see that dict's own docstring for why that's a
+    silent drop, not an error).
+    """
+    by_key: dict[str, VerdictBucketCounts] = {}
+    for key, verdict, count in rows:
+        bucket = VERDICT_BUCKETS.get(verdict)
+        if bucket is None:
+            continue
+        counts = by_key.setdefault(key, VerdictBucketCounts())
+        setattr(counts, bucket, getattr(counts, bucket) + count)
+    return by_key
+
+
+def _latest_verification_subquery(run_ids_query: Select):
+    """The scoped "latest verdict per citation" subquery every T16 breakdown below builds on —
+    see `latest_verification_query`'s own docstring for why the scoping join has to happen inside
+    this statement, before Postgres' DISTINCT ON picks the newest row per citation.
+    """
+    return (
+        latest_verification_query()
+        .join(Citation, Citation.id == CitationVerification.citation_id)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .where(RawResponse.run_id.in_(run_ids_query))
+    ).subquery()
+
+
+@dataclass
+class ProviderVerificationRow(VerdictBucketCounts):
+    provider_code: str = ""
+    provider_name: str = ""
+
+
+def citation_verification_rates_by_provider(db: Session, run_ids_query: Select) -> list[ProviderVerificationRow]:
+    """Verdict-bucket breakdown of a client's citations, one row per provider — ranked by total
+    checked citations descending. xAI/DeepSeek excluded (see `_VERIFICATION_EXCLUDED_PROVIDER_CODES`).
+    """
+    latest = _latest_verification_subquery(run_ids_query)
+    rows = db.execute(
+        select(Provider.code, Provider.name, latest.c.verdict, func.count())
+        .select_from(latest)
+        .join(Citation, Citation.id == latest.c.citation_id)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .join(Provider, AIModel.provider_id == Provider.id)
+        .where(Provider.code.not_in(_VERIFICATION_EXCLUDED_PROVIDER_CODES))
+        .group_by(Provider.code, Provider.name, latest.c.verdict)
+    ).all()
+
+    names = {code: name for code, name, _verdict, _count in rows}
+    by_code = _bucketed_verdict_counts([(code, verdict, count) for code, _name, verdict, count in rows])
+
+    return sorted(
+        (
+            ProviderVerificationRow(provider_code=code, provider_name=names[code], **vars(counts))
+            for code, counts in by_code.items()
+        ),
+        key=lambda row: -row.total,
+    )
+
+
+@dataclass
+class DomainVerificationRow(VerdictBucketCounts):
+    domain: str = ""
+    is_own_domain: bool = False
+    domain_type: str | None = None
+
+
+def citation_verification_rates_by_domain(db: Session, client: Client, run_ids_query: Select, limit: int) -> list[DomainVerificationRow]:
+    """Verdict-bucket breakdown of a client's citations, one row per (normalized) cited domain —
+    ranked by total checked citations descending, capped at `limit`. The client's own domain is
+    flagged, never split into a separate table (design decision 6's "own domain, not own query"
+    precedent — `domain_league_rows` already follows this). xAI/DeepSeek excluded, same reason as
+    the per-provider breakdown.
+    """
+    latest = _latest_verification_subquery(run_ids_query)
+    normalized_domain = normalized_domain_sql(Citation.source_domain).label("domain")
+    rows = db.execute(
+        select(normalized_domain, latest.c.verdict, func.count())
+        .select_from(latest)
+        .join(Citation, Citation.id == latest.c.citation_id)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .join(Provider, AIModel.provider_id == Provider.id)
+        .where(Provider.code.not_in(_VERIFICATION_EXCLUDED_PROVIDER_CODES), Citation.source_domain.is_not(None))
+        .group_by(normalized_domain, latest.c.verdict)
+    ).all()
+
+    by_domain = _bucketed_verdict_counts(rows)
+    top_domains = sorted(by_domain.items(), key=lambda item: -item[1].total)[:limit]
+
+    classifications = (
+        {
+            c.domain: c.domain_type
+            for c in db.scalars(select(DomainClassification).where(DomainClassification.domain.in_({d for d, _ in top_domains}))).all()
+        }
+        if top_domains
+        else {}
+    )
+
+    return [
+        DomainVerificationRow(
+            domain=domain,
+            is_own_domain=is_own_domain(domain, client.domain),
+            domain_type=classifications.get(domain),
+            **vars(counts),
+        )
+        for domain, counts in top_domains
+    ]
+
+
+@dataclass
+class XaiReviewedSources:
+    """xAI citations aren't checked against a claim like every other provider's — the only thing
+    a check against them can conclude is whether the source URL was reachable at all (design
+    decision 28's `source_reachable` verdict, `check_type='reachability'`). No task builds that
+    check yet (docs/TASKS_CITATION_VERIFICATION.md T8's own docstring: "has no task wired up for
+    it yet") — `reviewed_count` is therefore expected to be 0 today, shown honestly rather than
+    hidden, not a bug in this query.
+    """
+
+    total_citations: int
+    reviewed_count: int
+
+
+def xai_reviewed_sources_count(db: Session, run_ids_query: Select) -> XaiReviewedSources:
+    total = (
+        db.scalar(
+            select(func.count(Citation.id))
+            .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+            .join(Run, RawResponse.run_id == Run.id)
+            .join(AIModel, Run.model_id == AIModel.id)
+            .join(Provider, AIModel.provider_id == Provider.id)
+            .where(Provider.code == "xai", RawResponse.run_id.in_(run_ids_query))
+        )
+        or 0
+    )
+    reviewed = (
+        db.scalar(
+            select(func.count(func.distinct(CitationVerification.citation_id)))
+            .select_from(CitationVerification)
+            .join(Citation, Citation.id == CitationVerification.citation_id)
+            .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+            .where(CitationVerification.check_type == "reachability", RawResponse.run_id.in_(run_ids_query))
+        )
+        or 0
+    )
+    return XaiReviewedSources(total_citations=total, reviewed_count=reviewed)

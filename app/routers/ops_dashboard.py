@@ -151,6 +151,9 @@ class OpsSummaryResponse(BaseModel):
     error_count: int
     success_rate_pct: float | None = Field(..., description="0-100. None when runs_count is 0.")
     total_cost_usd: float | None = Field(..., description="None when no run in scope has a computable cost.")
+    total_verification_cost_usd: float | None = Field(
+        ..., description="Separate from total_cost_usd — the cost of judging citations, not of the runs themselves. None when no citation in scope has a computable verification cost."
+    )
     avg_latency_ms: float | None = Field(..., description="None when no finished run in scope has a recorded latency.")
     total_input_tokens: int | None = Field(
         ..., description="Raw input tokens reported across scope, as the provider reported them. None only when no run in scope has a raw_responses row."
@@ -240,6 +243,36 @@ def ops_clients(scope: OpsScope = Depends(_ops_scope), db: Session = Depends(get
     filters this same array client-side when the analyst searches.
     """
     return [OpsClientRow(**vars(row)) for row in ops_service.client_ops_rows(db, scope.run_ids_query)]
+
+
+class OpsCaptureReasonRow(BaseModel):
+    reason: str = Field(..., description="'success', 'not_captured' (no SourceDocument yet), or a source_documents.error_reason.")
+    challenge_vendor: str | None = Field(..., description="Set only alongside reason='bot_challenge'.")
+    count: int = Field(..., description="Distinct citation URLs in scope with this outcome — a URL counts once, not once per citation.")
+
+
+@router.get("/api/capture-reasons", response_model=list[OpsCaptureReasonRow])
+def ops_capture_reasons(scope: OpsScope = Depends(_ops_scope), db: Session = Depends(get_db)) -> list[OpsCaptureReasonRow]:
+    """Source-capture success/failure breakdown for the resolved filter set (docs/TASKS_CITATION_
+    VERIFICATION.md T16) — one row per outcome, ranked by URL count.
+    """
+    return [OpsCaptureReasonRow(**vars(row)) for row in ops_service.capture_success_by_reason(db, scope.run_ids_query)]
+
+
+class OpsVerificationQueueRow(BaseModel):
+    kind: str = Field(..., description="'capture' or 'judge'.")
+    status: str = Field(..., description="'queued', 'leased', 'done', 'error', or 'deferred'.")
+    count: int
+
+
+@router.get("/api/verification-queue", response_model=list[OpsVerificationQueueRow])
+def ops_verification_queue(db: Session = Depends(get_db)) -> list[OpsVerificationQueueRow]:
+    """Live global verification-job queue depth (docs/TASKS_CITATION_VERIFICATION.md T16) — current
+    counts by kind/status, right now. Deliberately ignores every other filter on this page (range,
+    client, ...): a queue depth is current system state, not a metric over the selected window —
+    see `app.services.ops_dashboard.verification_queue_snapshot`'s own docstring.
+    """
+    return [OpsVerificationQueueRow(**vars(row)) for row in ops_service.verification_queue_snapshot(db)]
 
 
 class OpsUserRow(BaseModel):

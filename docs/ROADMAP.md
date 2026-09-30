@@ -550,8 +550,27 @@ z každé strany vazby jinou polovinu a musí s tím počítat od návrhu:
   **znaky** (71/71). Přenositelné je hledat `cited_answer_span` jako text,
   ne slicovat podle offsetu.
 - Závisí na #11 (hotovo — bez opravy extrakce by skill ztrácel 59 % vazeb).
-- Vlastní `docs/TASKS_QUOTE_VERIFICATION.md`/`docs/PROMPTS_QUOTE_VERIFICATION.md`,
-  až se na to dojde.
+- ~~Vlastní `docs/TASKS_QUOTE_VERIFICATION.md`/`docs/PROMPTS_QUOTE_VERIFICATION.md`,
+  až se na to dojde.~~
+
+**Rozšířeno a naplánováno 2026-09-28** →
+`docs/TASKS_CITATION_VERIFICATION.md` + `docs/PROMPTS_CITATION_VERIFICATION.md`
+(větev `feature/signalmap-citation-verification`, prefix CV). Oproti
+původní položce: (1) reálné stažení a snímek každého zdroje, ne jen
+porovnání s tím, co vrátil provider; (2) vlastní tabulka
+`citation_verifications` místo `AnalysisSkill`/`analysis_results`
+(verdikt je per citace a agreguje se); (3) záloha přes archive.org;
+(4) LLM posouzení jen pro parafráze (OpenAI, Gemini) a za přepínačem
+u klienta; (5) brána z ruční slepé sady před zapnutím LLM. Měření a
+prototypy na datech z produkce jsou ve „Výchozím stavu“ toho dokumentu.
+
+**T1–T16 implementováno na branch `feature/signalmap-citation-verification`
+(2026-09-29), čeká na merge** — capture/snímky zdrojů (vč. archive.org
+zálohy), deterministické ověření citátu (Anthropic/Perplexity), LLM
+posouzení parafráze (OpenAI/Gemini) za přepínačem u klienta s odhadem ceny
+před spuštěním, ruční i hromadné ověření, lidské hodnocení verdiktů (slepá
+sada i souhlas/nesouhlas), agregace na dashboardu a v `/ops`. Zbývá T17
+(tahle dokumentace) a T18 (nasazení, backfill na produkci, konec větve).
 
 ## 13. Project/Brand entita
 
@@ -791,7 +810,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 9 | Nové UI | Přehodnoceno 2026-09-18 — hotový je jen screenshot a nápad, ne design systém; nejde o kosmetiku, ale o rozhraní ovladatelné na mobilu/tabletu, tedy velkou položku. Potvrzeno žádný přechod na SPA (2026-09-15) |
 | 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
 | 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo, smergnuto ([PR #15](https://github.com/jirkalla/SignalMap/pull/15)) a nasazeno 2026-09-18 — lokálně 551 → 1 354 vazeb, na produkci 565 → 820; historie přepočítaná migrací `0028` |
-| 12 | LLM quote-verification skill | Navrženo 2026-09-15; #11 hotové, takže odblokované — vstupní předpoklady ale změněné, viz #12 |
+| 12 | LLM quote-verification skill | Navrženo 2026-09-15; **rozšířeno a naplánováno 2026-09-28** jako ověřování citací proti staženým zdrojům — `docs/TASKS_CITATION_VERIFICATION.md` (CV-T1…T18). **T1–T16 hotové na branch `feature/signalmap-citation-verification` (2026-09-29), čeká na merge** — zbývá T17 (dokumentace) a T18 (nasazení) |
 | 13 | Project/Brand entita | Navrženo 2026-09-15 |
 | 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15; #2, #3, #4 a #5 splněné, zbývá čekat na 10 |
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |

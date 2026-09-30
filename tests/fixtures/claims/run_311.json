@@ -1,0 +1,372 @@
+{
+  "run_id": 311,
+  "provider_code": "openai",
+  "rendered_text": "Leichtbau wird für die Weiterentwicklung des Bauens in Deutschland **nicht nur als „leichteres Material“**, sondern als **materialeffiziente, funktionsintegrierte und möglichst kreislauffähige Bauweise** wichtig: Tragwerke sollen mit weniger Primärrohstoffen auskommen, Bauteile sollen vorgefertigt, transportierbar, rückbaubar und im Betrieb leistungsfähig sein. Der Bund sieht darin eine Schlüsseltechnologie für Klimaschutz, Rohstoffsicherung und Innovation – ausdrücklich auch für leichte Aufstockungen und Nachverdichtung in dicht bebauten Städten. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n## Welche Rolle spielt Leichtbau konkret?\n\n1. **Nachverdichtung im Bestand**\n   Viele deutsche Städte brauchen Wohnraum, haben aber wenig freie Flächen. Leichte Dachaufstockungen in Holz-, Stahl- oder Hybridbauweise können bestehende Fundamente und Tragwerke eher weiter nutzen, statt Abriss und Neubau auszulösen. Das ist besonders für Quartiere in Berlin, Hamburg, München oder dem Rhein-Ruhr-Gebiet relevant. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n2. **Weniger Material, weniger Transporte, schnellere Baustellen**\n   Holz- und Holz-Hybrid-Elemente, modulare Fassaden oder Fertigteile werden weitgehend im Werk produziert. Das verkürzt Bauzeiten, verringert Transporte und reduziert Lasten beim Heben und bei der Montage. Unternehmen wie Brüninghoff setzen dabei auf industrialisierte Vorfertigung in Holz, Beton, Stahl und hybriden Systemen. ([brueninghoff.de](https://www.brueninghoff.de/?utm_source=openai))\n\n3. **Erhalt und Sanierung statt Ersatzneubau**\n   Besonders großes Potenzial liegt in der Infrastruktur und im Gebäudebestand: Dünne, hochtragfähige Verstärkungsschichten aus Textil- oder Carbonbeton können Betonbauwerke ertüchtigen, ohne sie massiv zu vergrößern oder abzureißen. Carbonbewehrung korrodiert nicht wie Stahl; dadurch können Bauteile schlanker ausfallen. ([carbocon.de](https://www.carbocon.de/carbonbeton/?utm_source=openai))\n\n4. **Neue Tragwerks- und Architekturmöglichkeiten**\n   Leichte Konstruktionen ermöglichen größere Spannweiten, filigranere Dächer, flexible Grundrisse und temporäre oder leicht rückbaubare Gebäude. Entscheidend ist dabei der **Systemleichtbau**: Materialwahl, Geometrie, Verbindungstechnik, digitale Planung und Nutzung müssen zusammenpassen – nicht bloß das Gewicht eines einzelnen Bauteils. ([materials.fraunhofer.de](https://www.materials.fraunhofer.de/de/strategische-initativen/leichtbau-im-fraunhofer-verbund-materials-.html?utm_source=openai))\n\n5. **Kreislaufwirtschaft als Bewährungsprobe**\n   Leichtbau ist nur dann wirklich nachhaltig, wenn die gesamte Lebensdauer stimmt: langlebige Konstruktion, reparierbare Verbindungen, sortenreiner Rückbau, Wiederverwendung und belastbare Ökobilanz. Gerade bei Verbundwerkstoffen und Kunststoffen bleiben Recycling, Zulassungen und wirtschaftliche Rücknahmewege Herausforderungen. Der aktuelle Ansatz der Bundesregierung verbindet Leichtbau deshalb ausdrücklich mit Ressourceneffizienz und Kreislaufdenken. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n## Unternehmen und Akteure, die den Bereich prägen\n\nEine vollständige Rangliste gibt es nicht – die Branche ist stark mittelständisch und regional. Prägend sind aber insbesondere diese Gruppen:\n\n| Feld | Beispiele | Beitrag |\n|---|---|---|\n| **Holz- und Hybridbau** | **ZÜBLIN Timber** (Aichach), **Brüninghoff Group** (Heiden), **Rubner Ingenieurholzbau** | Mehrgeschossiger Holzbau, Holz-Hybrid-Tragwerke, Vorfertigung und serielle/modulare Bauweisen. ZÜBLIN Timber bietet Entwicklung, Produktion und Montage aus einer Hand; Brüninghoff verbindet Holz, Beton, Metall und Hybridbau; Rubner zählt sich zu den führenden Ingenieurholzbauunternehmen Europas. ([zueblin-timber.com](https://www.zueblin-timber.com/de/zueblin-timber?utm_source=openai)) |\n| **Carbon-, Textil- und Faserverbundbeton** | **CARBOCON** (Dresden), **solidian** (Albstadt) | CARBOCON überführt Carbonbeton in Planung, Sanierung und Fertigteilbau; solidian entwickelt und liefert nichtmetallische Bewehrungen aus Carbon-, Glas- und weiteren Fasern für den Betonbau. ([carbocon.de](https://www.carbocon.de/dienstleistungen/?utm_source=openai)) |\n| **Geokunststoffe und leichte Infrastruktur** | **HUESKER** (Gescher) | Geogitter und andere Geokunststoffe stabilisieren Böschungen, Erdbauwerke und Verkehrsflächen mit weniger konventionellem Material und können leichte Füllstoffe in geotechnischen Systemen ermöglichen. ([huesker.de](https://www.huesker.de/geokunststoffe/produkte/geosysteme/fortrac-heavy-load/?utm_source=openai)) |\n| **Forschung und Transfer** | **Fraunhofer-Verbund Materials**, Fraunhofer-Forschungsfeld Leichtbau, **TU Dresden**, **Universität Stuttgart/ILEK** | Sie entwickeln Werkstoffe, Simulation, Fertigungsverfahren, Monitoring und Bewertungsmethoden – und bringen diese mit Industriepartnern in die Baupraxis. Im Fraunhofer-Forschungsfeld arbeiten dafür 16 Institute zusammen. ([leichtbau.fraunhofer.de](https://www.leichtbau.fraunhofer.de/?utm_source=openai)) |\n\n## Einordnung\n\nFür Deutschland ist Leichtbau daher weniger ein einzelner Markt als ein **Bauprinzip für die Bauwende**:\n\n- **Holz- und Hybridbau** hilft bei schnellem, vorgefertigtem Neubau und Aufstockungen.\n- **Carbon- und Textilbeton** ist besonders interessant für schlanke Bauteile sowie die Sanierung von Brücken und Bestandsbauten.\n- **Modulares und digitales Bauen** macht diese Lösungen reproduzierbar und wirtschaftlicher.\n- Der größte Hebel liegt oft nicht im spektakulären Neubau, sondern darin, **Bestand länger zu nutzen, gezielt zu verstärken und mit geringem Materialeinsatz umzubauen**.\n\nOb sich Leichtbau flächendeckend durchsetzt, hängt jedoch von vereinfachten Zulassungen, Planungswissen, verlässlichen Ökobilanzen, Brandschutz- und Schallschutzkonzepten sowie funktionierenden Rückbau- und Recyclingketten ab.",
+  "raw_payload": {
+    "id": "resp_04d7126a7a329746006ab648515c4887d1adefd08fcf2a7701",
+    "text": {
+      "format": {
+        "type": "text"
+      },
+      "verbosity": "medium"
+    },
+    "user": null,
+    "error": null,
+    "model": "gpt-5.6-terra",
+    "store": true,
+    "tools": [
+      {
+        "type": "web_search",
+        "filters": null,
+        "user_location": {
+          "city": null,
+          "type": "approximate",
+          "region": null,
+          "country": "DE",
+          "timezone": null
+        },
+        "external_web_access": null,
+        "return_token_budget": "default",
+        "search_context_size": "medium",
+        "search_content_types": [
+          "text"
+        ]
+      }
+    ],
+    "top_p": 0.98,
+    "usage": {
+      "input_tokens": 29372,
+      "total_tokens": 31352,
+      "output_tokens": 1980,
+      "input_tokens_details": {
+        "cached_tokens": 4405,
+        "cache_write_tokens": 28
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 569
+      }
+    },
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_04d7126a7a329746006ab64852355c87d1a072d477cb7759df",
+        "type": "reasoning",
+        "status": null,
+        "content": [],
+        "summary": []
+      },
+      {
+        "id": "ws_04d7126a7a329746006ab64852b3d087d19599ab9bd15552c8",
+        "type": "web_search_call",
+        "action": {
+          "type": "search",
+          "query": "Deutschland Leichtbau Bauwesen Rolle nachhaltiges Bauen Bundesministerium",
+          "queries": [
+            "Deutschland Leichtbau Bauwesen Rolle nachhaltiges Bauen Bundesministerium",
+            "Leichtbau Bauwesen Deutschland Unternehmen Holzbau Textilbeton Carbonbeton",
+            "Leichtbauatlas Deutschland Bauwesen Unternehmen Leichtbau offizielles Portal",
+            "Fraunhofer Leichtbau Bauwesen Deutschland ressourceneffizientes Bauen"
+          ],
+          "sources": null
+        },
+        "status": "completed"
+      },
+      {
+        "id": "rs_04d7126a7a329746006ab6485656b487d1a54de23e48a6b247",
+        "type": "reasoning",
+        "status": null,
+        "content": [],
+        "summary": []
+      },
+      {
+        "id": "ws_04d7126a7a329746006ab6485725a087d1993eef9ac291c3db",
+        "type": "web_search_call",
+        "action": {
+          "type": "search",
+          "query": "site:solidian.com Carbonbeton Bauwesen Deutschland Unternehmen Bewehrung",
+          "queries": [
+            "site:solidian.com Carbonbeton Bauwesen Deutschland Unternehmen Bewehrung",
+            "site:carbocon.de Carbonbeton Unternehmen Bau Deutschland",
+            "site:huesker.de Bauwesen Geokunststoffe Leichtbau",
+            "site:hightexworld.com Leichtbau Architektur Membran Deutschland"
+          ],
+          "sources": null
+        },
+        "status": "completed"
+      },
+      {
+        "id": "rs_04d7126a7a329746006ab6485a7ac087d19dd162d4cef712d8",
+        "type": "reasoning",
+        "status": null,
+        "content": [],
+        "summary": []
+      },
+      {
+        "id": "ws_04d7126a7a329746006ab6485a8e5487d1ab91ced11bfa8c83",
+        "type": "web_search_call",
+        "action": {
+          "type": "search",
+          "query": "Deutschland führende Holzbau Unternehmen mehrgeschossiger Holzbau ZÜBLIN Timber Brüninghoff Rubner offizielle Website",
+          "queries": [
+            "Deutschland führende Holzbau Unternehmen mehrgeschossiger Holzbau ZÜBLIN Timber Brüninghoff Rubner offizielle Website",
+            "site:zueblin.de timber Holzbau modulare Bauweise Deutschland",
+            "site:brueninghoff.de Holz Hybrid Bauweise ressourcenschonend",
+            "site:rubner.com Deutschland Holzbau mehrgeschossig"
+          ],
+          "sources": null
+        },
+        "status": "completed"
+      },
+      {
+        "id": "rs_04d7126a7a329746006ab6485fe9c887d182eaae2bcee13c8d",
+        "type": "reasoning",
+        "status": null,
+        "content": [],
+        "summary": []
+      },
+      {
+        "id": "msg_04d7126a7a329746006ab6486111b087d19e1cef34001d44af",
+        "role": "assistant",
+        "type": "message",
+        "phase": "final_answer",
+        "status": "completed",
+        "content": [
+          {
+            "text": "Leichtbau wird für die Weiterentwicklung des Bauens in Deutschland **nicht nur als „leichteres Material“**, sondern als **materialeffiziente, funktionsintegrierte und möglichst kreislauffähige Bauweise** wichtig: Tragwerke sollen mit weniger Primärrohstoffen auskommen, Bauteile sollen vorgefertigt, transportierbar, rückbaubar und im Betrieb leistungsfähig sein. Der Bund sieht darin eine Schlüsseltechnologie für Klimaschutz, Rohstoffsicherung und Innovation – ausdrücklich auch für leichte Aufstockungen und Nachverdichtung in dicht bebauten Städten. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n## Welche Rolle spielt Leichtbau konkret?\n\n1. **Nachverdichtung im Bestand**\n   Viele deutsche Städte brauchen Wohnraum, haben aber wenig freie Flächen. Leichte Dachaufstockungen in Holz-, Stahl- oder Hybridbauweise können bestehende Fundamente und Tragwerke eher weiter nutzen, statt Abriss und Neubau auszulösen. Das ist besonders für Quartiere in Berlin, Hamburg, München oder dem Rhein-Ruhr-Gebiet relevant. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n2. **Weniger Material, weniger Transporte, schnellere Baustellen**\n   Holz- und Holz-Hybrid-Elemente, modulare Fassaden oder Fertigteile werden weitgehend im Werk produziert. Das verkürzt Bauzeiten, verringert Transporte und reduziert Lasten beim Heben und bei der Montage. Unternehmen wie Brüninghoff setzen dabei auf industrialisierte Vorfertigung in Holz, Beton, Stahl und hybriden Systemen. ([brueninghoff.de](https://www.brueninghoff.de/?utm_source=openai))\n\n3. **Erhalt und Sanierung statt Ersatzneubau**\n   Besonders großes Potenzial liegt in der Infrastruktur und im Gebäudebestand: Dünne, hochtragfähige Verstärkungsschichten aus Textil- oder Carbonbeton können Betonbauwerke ertüchtigen, ohne sie massiv zu vergrößern oder abzureißen. Carbonbewehrung korrodiert nicht wie Stahl; dadurch können Bauteile schlanker ausfallen. ([carbocon.de](https://www.carbocon.de/carbonbeton/?utm_source=openai))\n\n4. **Neue Tragwerks- und Architekturmöglichkeiten**\n   Leichte Konstruktionen ermöglichen größere Spannweiten, filigranere Dächer, flexible Grundrisse und temporäre oder leicht rückbaubare Gebäude. Entscheidend ist dabei der **Systemleichtbau**: Materialwahl, Geometrie, Verbindungstechnik, digitale Planung und Nutzung müssen zusammenpassen – nicht bloß das Gewicht eines einzelnen Bauteils. ([materials.fraunhofer.de](https://www.materials.fraunhofer.de/de/strategische-initativen/leichtbau-im-fraunhofer-verbund-materials-.html?utm_source=openai))\n\n5. **Kreislaufwirtschaft als Bewährungsprobe**\n   Leichtbau ist nur dann wirklich nachhaltig, wenn die gesamte Lebensdauer stimmt: langlebige Konstruktion, reparierbare Verbindungen, sortenreiner Rückbau, Wiederverwendung und belastbare Ökobilanz. Gerade bei Verbundwerkstoffen und Kunststoffen bleiben Recycling, Zulassungen und wirtschaftliche Rücknahmewege Herausforderungen. Der aktuelle Ansatz der Bundesregierung verbindet Leichtbau deshalb ausdrücklich mit Ressourceneffizienz und Kreislaufdenken. ([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))\n\n## Unternehmen und Akteure, die den Bereich prägen\n\nEine vollständige Rangliste gibt es nicht – die Branche ist stark mittelständisch und regional. Prägend sind aber insbesondere diese Gruppen:\n\n| Feld | Beispiele | Beitrag |\n|---|---|---|\n| **Holz- und Hybridbau** | **ZÜBLIN Timber** (Aichach), **Brüninghoff Group** (Heiden), **Rubner Ingenieurholzbau** | Mehrgeschossiger Holzbau, Holz-Hybrid-Tragwerke, Vorfertigung und serielle/modulare Bauweisen. ZÜBLIN Timber bietet Entwicklung, Produktion und Montage aus einer Hand; Brüninghoff verbindet Holz, Beton, Metall und Hybridbau; Rubner zählt sich zu den führenden Ingenieurholzbauunternehmen Europas. ([zueblin-timber.com](https://www.zueblin-timber.com/de/zueblin-timber?utm_source=openai)) |\n| **Carbon-, Textil- und Faserverbundbeton** | **CARBOCON** (Dresden), **solidian** (Albstadt) | CARBOCON überführt Carbonbeton in Planung, Sanierung und Fertigteilbau; solidian entwickelt und liefert nichtmetallische Bewehrungen aus Carbon-, Glas- und weiteren Fasern für den Betonbau. ([carbocon.de](https://www.carbocon.de/dienstleistungen/?utm_source=openai)) |\n| **Geokunststoffe und leichte Infrastruktur** | **HUESKER** (Gescher) | Geogitter und andere Geokunststoffe stabilisieren Böschungen, Erdbauwerke und Verkehrsflächen mit weniger konventionellem Material und können leichte Füllstoffe in geotechnischen Systemen ermöglichen. ([huesker.de](https://www.huesker.de/geokunststoffe/produkte/geosysteme/fortrac-heavy-load/?utm_source=openai)) |\n| **Forschung und Transfer** | **Fraunhofer-Verbund Materials**, Fraunhofer-Forschungsfeld Leichtbau, **TU Dresden**, **Universität Stuttgart/ILEK** | Sie entwickeln Werkstoffe, Simulation, Fertigungsverfahren, Monitoring und Bewertungsmethoden – und bringen diese mit Industriepartnern in die Baupraxis. Im Fraunhofer-Forschungsfeld arbeiten dafür 16 Institute zusammen. ([leichtbau.fraunhofer.de](https://www.leichtbau.fraunhofer.de/?utm_source=openai)) |\n\n## Einordnung\n\nFür Deutschland ist Leichtbau daher weniger ein einzelner Markt als ein **Bauprinzip für die Bauwende**:\n\n- **Holz- und Hybridbau** hilft bei schnellem, vorgefertigtem Neubau und Aufstockungen.\n- **Carbon- und Textilbeton** ist besonders interessant für schlanke Bauteile sowie die Sanierung von Brücken und Bestandsbauten.\n- **Modulares und digitales Bauen** macht diese Lösungen reproduzierbar und wirtschaftlicher.\n- Der größte Hebel liegt oft nicht im spektakulären Neubau, sondern darin, **Bestand länger zu nutzen, gezielt zu verstärken und mit geringem Materialeinsatz umzubauen**.\n\nOb sich Leichtbau flächendeckend durchsetzt, hängt jedoch von vereinfachten Zulassungen, Planungswissen, verlässlichen Ökobilanzen, Brandschutz- und Schallschutzkonzepten sowie funktionierenden Rückbau- und Recyclingketten ab.",
+            "type": "output_text",
+            "logprobs": [],
+            "annotations": [
+              {
+                "url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+                "type": "url_citation",
+                "title": "Leichtbau | BMWE",
+                "end_index": 688,
+                "start_index": 554
+              },
+              {
+                "url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+                "type": "url_citation",
+                "title": "Leichtbau | BMWE",
+                "end_index": 1236,
+                "start_index": 1102
+              },
+              {
+                "url": "https://www.brueninghoff.de/?utm_source=openai",
+                "type": "url_citation",
+                "title": "Brüninghoff — Intelligent Bauen. Seit 1974. - Brüninghoff Group",
+                "end_index": 1700,
+                "start_index": 1633
+              },
+              {
+                "url": "https://www.carbocon.de/carbonbeton/?utm_source=openai",
+                "type": "url_citation",
+                "title": "CARBOCON: Carbonbeton",
+                "end_index": 2143,
+                "start_index": 2072
+              },
+              {
+                "url": "https://www.materials.fraunhofer.de/de/strategische-initativen/leichtbau-im-fraunhofer-verbund-materials-.html?utm_source=openai",
+                "type": "url_citation",
+                "title": "Leichtbau im Fraunhofer-Verbund Materials",
+                "end_index": 2695,
+                "start_index": 2538
+              },
+              {
+                "url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+                "type": "url_citation",
+                "title": "Leichtbau | BMWE",
+                "end_index": 3336,
+                "start_index": 3202
+              },
+              {
+                "url": "https://www.zueblin-timber.com/de/zueblin-timber?utm_source=openai",
+                "type": "url_citation",
+                "title": "ZÜBLIN Timber | ZÜBLIN Timber",
+                "end_index": 4084,
+                "start_index": 3994
+              },
+              {
+                "url": "https://www.carbocon.de/dienstleistungen/?utm_source=openai",
+                "type": "url_citation",
+                "title": "CARBOCON: Dienstleistungen",
+                "end_index": 4450,
+                "start_index": 4374
+              },
+              {
+                "url": "https://www.huesker.de/geokunststoffe/produkte/geosysteme/fortrac-heavy-load/?utm_source=openai",
+                "type": "url_citation",
+                "title": "Fortrac Heavy Load",
+                "end_index": 4838,
+                "start_index": 4727
+              },
+              {
+                "url": "https://www.leichtbau.fraunhofer.de/?utm_source=openai",
+                "type": "url_citation",
+                "title": "Forschungsfeld Leichtbau",
+                "end_index": 5296,
+                "start_index": 5213
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "prompt": null,
+    "status": "completed",
+    "billing": {
+      "payer": "developer"
+    },
+    "metadata": {},
+    "reasoning": {
+      "mode": "standard",
+      "effort": "medium",
+      "context": "all_turns",
+      "summary": null,
+      "generate_summary": null
+    },
+    "background": false,
+    "created_at": 1790330961.0,
+    "moderation": null,
+    "tool_usage": {
+      "image_gen": {
+        "input_tokens": 0,
+        "total_tokens": 0,
+        "output_tokens": 0,
+        "input_tokens_details": {
+          "text_tokens": 0,
+          "image_tokens": 0
+        },
+        "output_tokens_details": {
+          "text_tokens": 0,
+          "image_tokens": 0
+        }
+      },
+      "web_search": {
+        "num_requests": 3
+      }
+    },
+    "truncation": "disabled",
+    "temperature": 1.0,
+    "tool_choice": "auto",
+    "completed_at": 1790331000.0,
+    "conversation": null,
+    "instructions": "The person asking this question is located in German (Germany) and writing in de. Answer in de, using regional context and examples relevant there where applicable.",
+    "service_tier": "default",
+    "top_logprobs": 0,
+    "max_tool_calls": null,
+    "access_programs": null,
+    "presence_penalty": 0.0,
+    "prompt_cache_key": null,
+    "frequency_penalty": 0.0,
+    "max_output_tokens": null,
+    "safety_identifier": null,
+    "incomplete_details": null,
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "prompt_cache_options": null,
+    "prompt_cache_retention": "24h",
+    "prompt_cache_diagnostics": null
+  },
+  "citations": [
+    {
+      "citation_position": 0,
+      "source_url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+      "source_title": "Leichtbau | BMWE",
+      "source_domain": "www.bundeswirtschaftsministerium.de",
+      "cited_answer_span": "([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))",
+      "answer_span_start": 554,
+      "answer_span_end": 688,
+      "source_passage": null
+    },
+    {
+      "citation_position": 1,
+      "source_url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+      "source_title": "Leichtbau | BMWE",
+      "source_domain": "www.bundeswirtschaftsministerium.de",
+      "cited_answer_span": "([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))",
+      "answer_span_start": 1102,
+      "answer_span_end": 1236,
+      "source_passage": null
+    },
+    {
+      "citation_position": 2,
+      "source_url": "https://www.brueninghoff.de/?utm_source=openai",
+      "source_title": "Brüninghoff — Intelligent Bauen. Seit 1974. - Brüninghoff Group",
+      "source_domain": "www.brueninghoff.de",
+      "cited_answer_span": "([brueninghoff.de](https://www.brueninghoff.de/?utm_source=openai))",
+      "answer_span_start": 1633,
+      "answer_span_end": 1700,
+      "source_passage": null
+    },
+    {
+      "citation_position": 3,
+      "source_url": "https://www.carbocon.de/carbonbeton/?utm_source=openai",
+      "source_title": "CARBOCON: Carbonbeton",
+      "source_domain": "www.carbocon.de",
+      "cited_answer_span": "([carbocon.de](https://www.carbocon.de/carbonbeton/?utm_source=openai))",
+      "answer_span_start": 2072,
+      "answer_span_end": 2143,
+      "source_passage": null
+    },
+    {
+      "citation_position": 4,
+      "source_url": "https://www.materials.fraunhofer.de/de/strategische-initativen/leichtbau-im-fraunhofer-verbund-materials-.html?utm_source=openai",
+      "source_title": "Leichtbau im Fraunhofer-Verbund Materials",
+      "source_domain": "www.materials.fraunhofer.de",
+      "cited_answer_span": "([materials.fraunhofer.de](https://www.materials.fraunhofer.de/de/strategische-initativen/leichtbau-im-fraunhofer-verbund-materials-.html?utm_source=openai))",
+      "answer_span_start": 2538,
+      "answer_span_end": 2695,
+      "source_passage": null
+    },
+    {
+      "citation_position": 5,
+      "source_url": "https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai",
+      "source_title": "Leichtbau | BMWE",
+      "source_domain": "www.bundeswirtschaftsministerium.de",
+      "cited_answer_span": "([bundeswirtschaftsministerium.de](https://www.bundeswirtschaftsministerium.de/Redaktion/DE/Dossier/leichtbau.html?utm_source=openai))",
+      "answer_span_start": 3202,
+      "answer_span_end": 3336,
+      "source_passage": null
+    },
+    {
+      "citation_position": 6,
+      "source_url": "https://www.zueblin-timber.com/de/zueblin-timber?utm_source=openai",
+      "source_title": "ZÜBLIN Timber | ZÜBLIN Timber",
+      "source_domain": "www.zueblin-timber.com",
+      "cited_answer_span": "([zueblin-timber.com](https://www.zueblin-timber.com/de/zueblin-timber?utm_source=openai))",
+      "answer_span_start": 3994,
+      "answer_span_end": 4084,
+      "source_passage": null
+    },
+    {
+      "citation_position": 7,
+      "source_url": "https://www.carbocon.de/dienstleistungen/?utm_source=openai",
+      "source_title": "CARBOCON: Dienstleistungen",
+      "source_domain": "www.carbocon.de",
+      "cited_answer_span": "([carbocon.de](https://www.carbocon.de/dienstleistungen/?utm_source=openai))",
+      "answer_span_start": 4374,
+      "answer_span_end": 4450,
+      "source_passage": null
+    },
+    {
+      "citation_position": 8,
+      "source_url": "https://www.huesker.de/geokunststoffe/produkte/geosysteme/fortrac-heavy-load/?utm_source=openai",
+      "source_title": "Fortrac Heavy Load",
+      "source_domain": "www.huesker.de",
+      "cited_answer_span": "([huesker.de](https://www.huesker.de/geokunststoffe/produkte/geosysteme/fortrac-heavy-load/?utm_source=openai))",
+      "answer_span_start": 4727,
+      "answer_span_end": 4838,
+      "source_passage": null
+    },
+    {
+      "citation_position": 9,
+      "source_url": "https://www.leichtbau.fraunhofer.de/?utm_source=openai",
+      "source_title": "Forschungsfeld Leichtbau",
+      "source_domain": "www.leichtbau.fraunhofer.de",
+      "cited_answer_span": "([leichtbau.fraunhofer.de](https://www.leichtbau.fraunhofer.de/?utm_source=openai))",
+      "answer_span_start": 5213,
+      "answer_span_end": 5296,
+      "source_passage": null
+    }
+  ]
+}

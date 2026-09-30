@@ -360,6 +360,36 @@ nasazovaná změna týká.
 
 ---
 
+## 4a. Ověřování citací — backfill a allowlist zdrojů
+
+Platí od nasazení `docs/TASKS_CITATION_VERIFICATION.md` (větev
+`feature/signalmap-citation-verification`, migrace 0036–0041). Worker musí
+běžet (4.2) — backfill jen zařazuje úlohy do `verification_jobs`, zpracuje
+je až worker.
+
+**Backfill historie klienta** (zachytí zdroje pro citace, které existovaly
+před tímhle nasazením — nové runy si zdroje zachytávají samy):
+```bash
+ssh signalmap 'cd /opt/signalmap && docker compose exec app python -m app.cli.backfill_sources --client <ID> --dry-run'
+```
+Zkontroluj počet zařazovaných úloh, pak ostře bez `--dry-run`. Průběh sleduj
+na `/ops` — dlaždice „Verification queue" (živý stav fronty) a tabulka
+„Capture success by reason" (kolik URL uspělo/selhalo a proč).
+
+**Robots.txt / User-Agent allowlist** — ověřovač stahuje stránky pod
+`User-Agent: SignalMapVerifier/1.0 (+https://expressyourself.ai)`
+(`app/services/source_capture.py`) a respektuje `robots.txt` každé domény
+(design decision 7) — nikdy neobchází blokaci. Pokud `/ops`'s „Capture
+success by reason" u klientovy vlastní domény ukazuje rostoucí `robots`
+nebo `bot_challenge` podíl, je na čase požádat klienta o allowlist v jeho
+WAF/CDN (typicky Cloudflare) a v `robots.txt`: konkrétní User-Agent řetězec
+výše, případně IP adresa serveru. Bez allowlistu ověřovač u vlastních
+domén klienta prostě dál narazí na `unverifiable` (`reason='robots'` nebo
+`'bot_challenge'`) — nejde o chybu appky, jen o to, co server na druhé
+straně dovolí.
+
+---
+
 ## 5. Uzavření
 
 ### 5.1 Pět minut sledovat

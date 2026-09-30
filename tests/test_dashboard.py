@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AIModel, AnalysisResult, Citation, Client, Market, Persona, Prompt, PromptSet, RawResponse, Run
+from app.models import AIModel, AnalysisResult, Citation, CitationVerification, Client, Market, Persona, Prompt, PromptSet, Provider, RawResponse, Run
 
 # Two runs in this week, a third two weeks later — 2026-01-12 (the week between them) has no
 # runs at all, so it exercises the timeseries "gap weeks are 0, not missing" guarantee.
@@ -623,3 +623,166 @@ def test_subdomains_are_not_unified_with_the_parent_domain(authed_client: TestCl
     domains = {row["domain"] for row in rows}
 
     assert domains == {"meag.com", "blog.meag.com"}, "a subdomain is a different source, not merged"
+
+
+# docs/TASKS_CITATION_VERIFICATION.md T16 — citation-verification rate aggregation.
+
+
+def _run_with_citations(
+    db_session: Session, prompt: Prompt, *, model_id: int, market_id: int, started_at: datetime, urls: tuple[tuple[str, str], ...]
+) -> tuple[Run, list[Citation]]:
+    """One Run + RawResponse + Citations with real `source_url`s (unlike `_make_run`, which only
+    sets `source_domain` — the citation-verification queries join on `source_url`, so this test
+    module needs its own helper rather than extending `_make_run` for every existing caller).
+    """
+    persona_id = db_session.scalar(select(Persona.id).where(Persona.is_default.is_(True)))
+    run = Run(prompt_id=prompt.id, model_id=model_id, market_id=market_id, persona_id=persona_id, status="success", started_at=started_at)
+    db_session.add(run)
+    db_session.flush()
+    raw_response = RawResponse(run_id=run.id, raw_payload={"answer": "..."}, rendered_text="...", has_citations=bool(urls))
+    db_session.add(raw_response)
+    db_session.flush()
+    citations = []
+    for position, (source_url, source_domain) in enumerate(urls):
+        citation = Citation(raw_response_id=raw_response.id, source_url=source_url, source_domain=source_domain, citation_position=position)
+        db_session.add(citation)
+        citations.append(citation)
+    db_session.commit()
+    for citation in citations:
+        db_session.refresh(citation)
+    return run, citations
+
+
+def _verify(db_session: Session, citation: Citation, *, verdict: str, created_at: datetime, check_type: str = "llm", reason: str | None = None) -> CitationVerification:
+    verification = CitationVerification(
+        citation_id=citation.id, check_type=check_type, verdict=verdict, reason=reason, verifier_version="1.0", created_at=created_at
+    )
+    db_session.add(verification)
+    db_session.commit()
+    return verification
+
+
+def _xai_and_deepseek(db_session: Session) -> dict:
+    xai_provider = Provider(code="xai", name="xAI Grok")
+    deepseek_provider = Provider(code="deepseek", name="DeepSeek")
+    db_session.add_all([xai_provider, deepseek_provider])
+    db_session.flush()
+    xai_model = AIModel(provider_id=xai_provider.id, model_name="grok-test-model", capability_tier="standard", supports_web_search=True, is_active=True)
+    deepseek_model = AIModel(provider_id=deepseek_provider.id, model_name="deepseek-test-model", capability_tier="standard", supports_web_search=False, is_active=True)
+    db_session.add_all([xai_model, deepseek_model])
+    db_session.commit()
+    db_session.refresh(xai_model)
+    db_session.refresh(deepseek_model)
+    return {"xai_model": xai_model, "deepseek_model": deepseek_model}
+
+
+def test_citation_verification_by_provider_buckets_and_excludes_xai_deepseek(authed_client: TestClient, db_session: Session, seed: dict):
+    """One citation per verdict bucket (verified/partial/unsupported/unverifiable) for a real
+    provider, plus an xAI and a DeepSeek citation that must never show up in `by_provider`
+    (design decision 29) even though they exist in `citations`.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    extra = _xai_and_deepseek(db_session)
+    model_id, market_id = seed["openai_model"].id, seed["market"].id
+
+    run, citations = _run_with_citations(
+        db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://a.example/1", "a.example"), ("https://a.example/2", "a.example"),
+              ("https://a.example/3", "a.example"), ("https://a.example/4", "a.example")),
+    )
+    _verify(db_session, citations[0], verdict="llm_supported", created_at=WEEK_1)
+    _verify(db_session, citations[1], verdict="llm_partial", created_at=WEEK_1)
+    _verify(db_session, citations[2], verdict="llm_not_supported", created_at=WEEK_1)
+    _verify(db_session, citations[3], verdict="unverifiable", created_at=WEEK_1, reason="robots")
+
+    _, xai_citations = _run_with_citations(
+        db_session, prompt, model_id=extra["xai_model"].id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://b.example/1", "b.example"),),
+    )
+    _verify(db_session, xai_citations[0], verdict="source_reachable", check_type="reachability", created_at=WEEK_1)
+
+    rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
+
+    assert [r["provider_code"] for r in rows["by_provider"]] == ["openai"], "xAI/DeepSeek must never appear in by_provider"
+    row = rows["by_provider"][0]
+    assert (row["verified"], row["partial"], row["unsupported"], row["unverifiable"], row["total"]) == (1, 1, 1, 1, 4)
+
+
+def test_citation_verification_unverifiable_never_counts_as_unsupported(authed_client: TestClient, db_session: Session, seed: dict):
+    """Regression guard for the explicit T16 rule: 'unverifiable' is its own bucket, never folded
+    into 'unsupported' — a page that failed to load says nothing about whether its claim is true.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+    run, citations = _run_with_citations(
+        db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://a.example/1", "a.example"),),
+    )
+    _verify(db_session, citations[0], verdict="unverifiable", created_at=WEEK_1, reason="bot_challenge")
+
+    rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
+
+    row = rows["by_provider"][0]
+    assert row["unsupported"] == 0
+    assert row["unverifiable"] == 1
+
+
+def test_citation_verification_uses_the_latest_verdict_per_citation(authed_client: TestClient, db_session: Session, seed: dict):
+    """`citation_verifications` is append-only — an older 'unsupported' verdict superseded by a
+    newer 'verified' one (e.g. a re-check after the source came back) must count as verified, not
+    be double-counted or averaged with its own history.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    model_id, market_id = seed["model"].id, seed["market"].id
+    run, citations = _run_with_citations(
+        db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://a.example/1", "a.example"),),
+    )
+    _verify(db_session, citations[0], verdict="llm_not_supported", created_at=WEEK_1)
+    _verify(db_session, citations[0], verdict="llm_supported", created_at=WEEK_1 + timedelta(days=1))
+
+    rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
+
+    row = rows["by_provider"][0]
+    assert (row["verified"], row["unsupported"], row["total"]) == (1, 0, 1)
+
+
+def test_citation_verification_by_domain_flags_own_domain_and_type(authed_client: TestClient, db_session: Session, seed: dict):
+    from app.models import DomainClassification
+
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp", domain="acme.com")
+    db_session.add(DomainClassification(domain="news.example", domain_type="editorial"))
+    db_session.commit()
+    model_id, market_id = seed["model"].id, seed["market"].id
+    run, citations = _run_with_citations(
+        db_session, prompt, model_id=model_id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://acme.com/page", "acme.com"), ("https://news.example/story", "news.example")),
+    )
+    _verify(db_session, citations[0], verdict="llm_supported", created_at=WEEK_1)
+    _verify(db_session, citations[1], verdict="llm_supported", created_at=WEEK_1)
+
+    rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
+    by_domain = {row["domain"]: row for row in rows["by_domain"]}
+
+    assert by_domain["acme.com"]["is_own_domain"] is True
+    assert by_domain["news.example"]["is_own_domain"] is False
+    assert by_domain["news.example"]["domain_type"] == "editorial"
+
+
+def test_xai_reviewed_sources_count_reflects_total_and_reviewed(authed_client: TestClient, db_session: Session, seed: dict):
+    """`reviewed_count` is expected to stay 0 today (no task builds the reachability check yet) —
+    this test only pins the honest shape (total_citations counts them, reviewed_count doesn't lie
+    about a check that never ran), not a specific non-zero value.
+    """
+    acme, prompt = _client_with_prompt(db_session, seed, "Acme Corp", "acme-corp")
+    extra = _xai_and_deepseek(db_session)
+    model_id, market_id = seed["model"].id, seed["market"].id
+
+    _run_with_citations(
+        db_session, prompt, model_id=extra["xai_model"].id, market_id=market_id, started_at=WEEK_1,
+        urls=(("https://x.example/1", "x.example"), ("https://x.example/2", "x.example")),
+    )
+
+    rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
+
+    assert rows["xai"] == {"total_citations": 2, "reviewed_count": 0}

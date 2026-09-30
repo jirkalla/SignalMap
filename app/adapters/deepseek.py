@@ -31,7 +31,7 @@ an explicit "reasoning model" flag — those reasoning tokens are already inside
 
 import openai
 
-from app.adapters.base import AdapterCitation, RawResponsePayload
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload
 from app.config import get_settings
 
 
@@ -102,4 +102,15 @@ class DeepSeekAdapter:
             citations=citations,
             search_queries=search_queries,
             token_usage=token_usage,
+        )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Not implemented, and not expected to be: DeepSeek has no web search at all (this
+
+        adapter's own `run()` never returns a citation), so there is never a claim/source pair
+        for a judge call to check.
+        """
+        raise NotImplementedError(
+            "DeepSeekAdapter.judge() is not implemented and is not planned — DeepSeek has no web "
+            "search and never produces a citation to judge."
         )

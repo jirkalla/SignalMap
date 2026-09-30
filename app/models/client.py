@@ -72,6 +72,22 @@ class Client(Base):
     run costs (app/services/cost.py), not an estimate, since the real cost of a run is only known
     after it completes. NULL = no threshold configured.
     """
+    auto_verify_citations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    """Whether a NEW run's OpenAI/Gemini citations get the paid LLM paraphrase check
+
+    (docs/TASKS_CITATION_VERIFICATION.md T12, `app.services.claim_judge.judge_citations`)
+    automatically, right after their sources are captured. Default off (design decision 25) —
+    this is the ONLY thing the flag gates: capture (T4) and the free literal-quote check for
+    Anthropic/Perplexity (T8) always run for every client regardless of it, and it has no effect
+    on the manual "Verify citations" button or a client's own retroactive bulk-verify run (T13) —
+    both are explicit, one-off user actions, not the "automatically after every new run" behavior
+    this flag controls.
+
+    Not editable on the shared `clients/form.html` — its own `POST
+    /clients/{id}/toggle-auto-verify-citations` route, same reasoning as `is_test` above: an
+    unchecked HTML checkbox on a form an editor might save for an unrelated reason would silently
+    reset it (docs/TASKS_PRE_SCHEDULER.md design decision 14).
+    """
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

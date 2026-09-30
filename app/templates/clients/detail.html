@@ -37,8 +37,36 @@
   </div>
   <p class="text-xs text-stone-400 max-w-prose">{{ t('client.test_help') }}</p>
   {% endif %}
+  {% if can_edit(current_user) %}
+  {# docs/TASKS_CITATION_VERIFICATION.md T13 — its own route rather than a field on the client
+     form for the same reason is_test has one above: an unchecked checkbox is never submitted, so
+     it could get silently reset the next time the form is saved for an unrelated edit (design
+     decision 14). Only gates automatic judging of NEW runs — capture and the free quote check
+     always run, and this has no effect on the "Verify citations" button or the bulk-verify below. #}
+  <div class="flex items-center gap-2 flex-wrap pt-1">
+    <span>{{ t('client.auto_verify_citations_label') }}:</span>
+    {{ toggle_button('/clients/' ~ client.id ~ '/toggle-auto-verify-citations', client.auto_verify_citations, t('client.auto_verify_citations_on_label'), t('client.auto_verify_citations_off_label')) }}
+  </div>
+  <p class="text-xs text-stone-400 max-w-prose">{{ t('client.auto_verify_citations_help') }}</p>
+  {% endif %}
   {% if client.notes %}<div class="whitespace-pre-line mt-2">{{ client.notes }}</div>{% endif %}
 </div>
+
+{% if can_edit(current_user) %}
+<h2 class="text-lg font-semibold mb-3">{{ t('client.verify_retroactively_title') }}</h2>
+{% call card() %}
+  <p class="text-sm text-stone-500 mb-4 max-w-prose">{{ t('client.verify_retroactively_help') }}</p>
+  <form method="post" action="/clients/{{ client.id }}/verify-retroactively/preview" class="flex flex-wrap items-end gap-3">
+    <div class="mb-0">
+      {{ text_field('date_from', t('client.verify_retroactively_date_from_label'), '', type='date', required=True) }}
+    </div>
+    <div class="mb-0">
+      {{ text_field('date_to', t('client.verify_retroactively_date_to_label'), '', type='date', required=True) }}
+    </div>
+    {{ button(t('client.verify_retroactively_preview_button')) }}
+  </form>
+{% endcall %}
+{% endif %}
 
 <h2 class="text-lg font-semibold mb-3">{{ t('client.aliases_title') }}</h2>
 {% call card() %}

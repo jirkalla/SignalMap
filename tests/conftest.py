@@ -90,6 +90,8 @@ def _reset_fake_adapter():
     yield
     FakeAdapter.payload_to_return = None
     FakeAdapter.error_to_raise = None
+    FakeAdapter.judge_payload_to_return = None
+    FakeAdapter.judge_error_to_raise = None
 
 
 @pytest.fixture(autouse=True)

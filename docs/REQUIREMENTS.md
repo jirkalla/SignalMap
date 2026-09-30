@@ -100,6 +100,21 @@ reported as "missing citations."
 > (`docs/TASKS_GEMINI_CITATIONS.md`), consistently across the whole
 > archive rather than as a step at the deploy date.
 
+> **Amendment (2026-09-29): citations can be checked against their source.**
+> A citation's claim-source link (FR-12) is now, for most providers,
+> checkable: the system fetches the cited page (or falls back to an
+> archive.org snapshot when it changed or disappeared) and records a
+> verdict — a literal-quote match for Anthropic/Perplexity (free, runs
+> automatically), an LLM paraphrase judgement for OpenAI/Gemini (costs
+> money, off by default per client, with a cost estimate shown before any
+> bulk run), or, for xAI, only whether the source was reachable at all (it
+> exposes no claim to check against). A verdict is one of `verified`,
+> `partially supported`, `unsupported`, or `unable to verify` — the last
+> one is never treated as "unsupported": a page that failed to load says
+> nothing about whether the claim it would have supported is true.
+> DeepSeek is excluded entirely (no web search, no citations to check).
+> Full design: `docs/TASKS_CITATION_VERIFICATION.md`.
+
 ### 2.5 Error handling
 - FR-16: If a provider call fails (timeout, API error, rate limit), the
   run is recorded with status "error" and a stored error message — it must
@@ -126,7 +141,15 @@ reported as "missing citations."
   structured shape (error_code, message, detail) rather than ad-hoc
   strings.
 - NFR-6 (Data integrity): Historical rows (prompt versions, raw responses)
-  are never overwritten — new data is always a new row.
+  are never overwritten — new data is always a new row. The same principle
+  covers citation verification (`docs/TASKS_CITATION_VERIFICATION.md`): a
+  captured source snapshot and a verdict on a citation are each their own
+  row, added next to any earlier one, never edited in place — a page
+  re-fetched after it changed, or a citation re-judged by a better
+  verifier, keeps its full history rather than losing what was true
+  before. A run's own lifecycle status (`pending` → `success`/`error`) is
+  the one recognized exception, since that is a state transition on the
+  run's own control row, not evidence about the outside world.
 - NFR-7 (Responsiveness): Screens should be usable on mobile, tablet, and
   desktop — not blocked in phase 1 by missing visual polish, but the
   underlying HTML/layout choices shouldn't actively break on a narrow

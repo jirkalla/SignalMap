@@ -41,7 +41,7 @@ an unverified parameter shape. `system_instruction` is still applied via the Res
 
 import openai
 
-from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 _BASE_URL = "https://api.perplexity.ai/v1"
@@ -144,4 +144,17 @@ class PerplexityAdapter:
             citations=citations,
             search_queries=search_queries,
             token_usage=token_usage,
+        )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Not implemented, and not expected to be: Perplexity's citations already get the free
+
+        literal-quote check (docs/TASKS_CITATION_VERIFICATION.md T8, `_QUOTE_PROVIDERS` in
+        app/services/citation_verification.py) against the `search_results[].snippet` this
+        adapter's own `run()` already captures — there is no paraphrase to judge here the way
+        there is for Gemini/OpenAI (T12).
+        """
+        raise NotImplementedError(
+            "PerplexityAdapter.judge() is not implemented and is not planned — Perplexity's "
+            "citations are verified by the literal-quote check (T8), not an LLM judge."
         )

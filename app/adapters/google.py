@@ -16,7 +16,7 @@ instead of a live mapper and a drifting re-extraction copy of it
 from google import genai
 from google.genai import types
 
-from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 
@@ -243,4 +243,16 @@ class GoogleGeminiAdapter:
             citations=citations,
             search_queries=search_queries,
             token_usage=token_usage,
+        )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Not implemented (docs/TASKS_CITATION_VERIFICATION.md T11) — Anthropic is T11's only
+
+        judge() provider; Gemini's own LLM claim-check is what T2's design already routes OpenAI/
+        Gemini citations to (see app/services/claims.py's docstring), not this method, and no
+        task has wired it up here yet.
+        """
+        raise NotImplementedError(
+            "GoogleGeminiAdapter.judge() is not implemented — docs/TASKS_CITATION_VERIFICATION.md "
+            "T11 only built this for Anthropic; Gemini has no judge() yet."
         )

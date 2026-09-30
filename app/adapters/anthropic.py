@@ -22,7 +22,7 @@ replays them over stored `raw_payload` rows.
 
 import anthropic
 
-from app.adapters.base import AdapterCitation, RawResponsePayload, extract_domain
+from app.adapters.base import AdapterCitation, JudgePayload, RawResponsePayload, extract_domain
 from app.config import get_settings
 
 # A perception-tracking prompt is exploratory/comparative by nature (docs/
@@ -37,6 +37,13 @@ _MAX_WEB_SEARCHES = 5
 # capacity (128k on Sonnet/Opus) — that would be needlessly expensive for
 # what this app asks for.
 _DEFAULT_MAX_TOKENS = 4096
+
+# A judge() reply is a verdict word + a one-sentence reason + one quoted sentence from the
+# source (docs/TASKS_CITATION_VERIFICATION.md design decision 22) — a small fraction of
+# _DEFAULT_MAX_TOKENS's grounded-answer budget above. Generous enough that a verbose model
+# never gets cut off mid-sentence, still far cheaper than reusing run()'s own budget for a
+# reply this short.
+_JUDGE_MAX_TOKENS = 512
 
 
 def _map_citations(payload: dict) -> tuple[list[AdapterCitation], bool]:
@@ -110,6 +117,25 @@ def _map_search_queries(payload: dict) -> list[str]:
         if query:
             queries.append(query)
     return queries
+
+
+def _map_judge_response(payload: dict) -> JudgePayload:
+    """Turn a judge() response payload into the canonical shape — mirrors `_map_citations`'
+
+    own "walk the serialized payload dict, not SDK objects" convention (this module's own
+    docstring), so it stays testable without ever constructing a real anthropic.Anthropic
+    client or making a network call. `payload` is the FULL response (`response.model_dump
+    (mode="json")`, same as `run()`), so `payload["usage"]` is exactly `response.usage.model_dump
+    (mode="json")` — no separate usage object needs passing in.
+
+    `text` joins every text block (there can be more than one even without tools) the same way
+    `run()`'s own `rendered_text` does; `""` rather than None when there is none — T12's parser
+    always has a string to work with, never a None it has to guard against first.
+    """
+    text = "".join(
+        block.get("text", "") for block in payload.get("content") or [] if (block or {}).get("type") == "text"
+    )
+    return JudgePayload(text=text, token_usage=payload.get("usage"))
 
 
 class AnthropicAdapter:
@@ -187,3 +213,26 @@ class AnthropicAdapter:
             search_queries=search_queries,
             token_usage=token_usage,
         )
+
+    def judge(self, system: str, user: str, model_name: str) -> JudgePayload:
+        """Run one tool-free judgement call (see ProviderAdapter.judge, app/adapters/base.py).
+
+        Deliberately NOT `run()` with `tools` omitted: no `web_search` block at all is passed to
+        the API, and `max_tokens` is `_JUDGE_MAX_TOKENS`, not `_DEFAULT_MAX_TOKENS` — a judge
+        reply is a verdict, a one-sentence reason, and one quoted sentence, not a full answer.
+
+        No `temperature` kwarg: found 2026-09-29 running this for real (docs/TASKS_CITATION_
+        VERIFICATION.md T12's manual runs 311/422) that the installed `anthropic==1.4.0` SDK's
+        `Messages.create()` has no `temperature` parameter at all (`TypeError: unexpected keyword
+        argument 'temperature'` — confirmed via `inspect.signature`, not guessed). Design decision
+        20 asks for temperature 0 for deterministic judging; this SDK version gives no way to set
+        it, the same constraint `run()` already lives with (it never passes `temperature` either).
+        """
+        response = self._client.messages.create(
+            model=model_name,
+            max_tokens=_JUDGE_MAX_TOKENS,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        payload = response.model_dump(mode="json")
+        return _map_judge_response(payload)

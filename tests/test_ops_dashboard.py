@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, AIModelPriceComponent, Client, Prompt, PromptSet, RawResponse, Run, User
-from app.services.cost import estimate_run_cost, load_price_components, prices_at
+from app.models.run import Citation
+from app.models.verification import CitationVerification, SourceDocument, VerificationJob
+from app.services.cost import average_llm_judge_cost_per_citation, client_month_to_date_spend, estimate_run_cost, load_price_components, prices_at
 
 
 def _client_with_prompt_set(db_session: Session, name: str, slug: str) -> tuple[Client, PromptSet]:
@@ -189,6 +191,122 @@ def test_summary_cost_is_none_without_a_model_price(authed_client: TestClient, d
     body = resp.json()
     assert body["runs_count"] == 1  # real data either side of the missing price — not a blanket failure
     assert body["total_cost_usd"] is None
+
+
+# --- Citation verification cost (docs/TASKS_CITATION_VERIFICATION.md T13) ----------------------
+
+
+def _add_citation_verification(db_session: Session, run: Run, *, cost_usd: float, check_type: str = "llm") -> CitationVerification:
+    """A minimal Citation + CitationVerification pair on `run`'s own RawResponse, for the cost
+
+    aggregation tests below — the verdict/claim fields don't matter to any of these, only that
+    `cost_usd`/`check_type`/`created_at` are set the way `client_month_to_date_spend`/`ops_summary`
+    read them.
+    """
+    raw_response = db_session.query(RawResponse).filter_by(run_id=run.id).one()
+    citation = Citation(raw_response_id=raw_response.id, source_url="https://example.com/a", source_domain="example.com", citation_position=0)
+    db_session.add(citation)
+    db_session.flush()
+    verification = CitationVerification(
+        citation_id=citation.id, check_type=check_type, verdict="llm_supported", cost_usd=Decimal(str(cost_usd)),
+        verifier_version="1.0", created_at=run.started_at,
+    )
+    db_session.add(verification)
+    db_session.commit()
+    return verification
+
+
+def test_summary_includes_verification_cost_as_its_own_field(authed_client: TestClient, db_session: Session, seed: dict):
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=now - timedelta(days=1), input_tokens=1000, output_tokens=500,
+    )
+    _add_citation_verification(db_session, run, cost_usd=0.0086)
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}")
+    body = resp.json()
+    # run cost (0.001+0.001) unaffected by the verification cost — the two are separate fields.
+    assert body["total_cost_usd"] == pytest.approx(0.002, abs=1e-9)
+    assert body["total_verification_cost_usd"] == pytest.approx(0.0086, abs=1e-9)
+
+
+def test_summary_verification_cost_is_none_with_no_citation_verifications(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+
+    resp = authed_client.get(f"/ops/api/summary?range=30d&client_id={client_row.id}")
+    assert resp.json()["total_verification_cost_usd"] is None
+
+
+def test_client_month_to_date_spend_includes_citation_verification_cost(db_session: Session, seed: dict):
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    month_start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=month_start + timedelta(days=2), input_tokens=1000, output_tokens=500,
+    )
+    _add_citation_verification(db_session, run, cost_usd=0.05)
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=month_start)
+
+    assert spend == pytest.approx(0.002 + 0.05, abs=1e-9)
+
+
+def test_client_month_to_date_spend_treats_a_missing_side_as_zero_not_none(db_session: Session, seed: dict):
+    """A client with real run cost but no citation verification yet must still get a real total,
+
+    not `None` — only BOTH sides being unknown should produce `None` (design decision 26).
+    """
+    _price(db_session, seed["model"], 0.001, 0.002)
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    month_start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=month_start + timedelta(days=2), input_tokens=1000, output_tokens=500,
+    )
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=month_start)
+
+    assert spend == pytest.approx(0.002, abs=1e-9)
+
+
+def test_client_month_to_date_spend_is_none_with_nothing_at_all(db_session: Session, seed: dict):
+    client_row, _ = _client_with_prompt_set(db_session, "Acme", "acme")
+
+    spend = client_month_to_date_spend(db_session, client_id=client_row.id, month_start=datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+    assert spend is None
+
+
+def test_average_llm_judge_cost_per_citation_averages_past_llm_verifications(db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run1 = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+    run2 = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=2))
+    _add_citation_verification(db_session, run1, cost_usd=0.01)
+    _add_citation_verification(db_session, run2, cost_usd=0.03)
+    # A quote-check verification must not count toward the LLM-judge average.
+    _add_citation_verification(db_session, run1, cost_usd=100.0, check_type="quote")
+
+    average = average_llm_judge_cost_per_citation(db_session)
+
+    assert average == pytest.approx((0.01 + 0.03) / 2, abs=1e-9)
+
+
+def test_average_llm_judge_cost_per_citation_is_none_without_any_history(db_session: Session, seed: dict):
+    assert average_llm_judge_cost_per_citation(db_session) is None
 
 
 def test_daily_fills_gap_days_and_matches_range_granularity(authed_client: TestClient, db_session: Session, seed: dict):
@@ -811,3 +929,141 @@ def test_prompt_detail_honours_the_flag(authed_client: TestClient, two_clients_o
 
     body_with = authed_client.get(f"/ops/api/prompt-detail?range=30d&prompt_id={test_prompt.id}&include_test=1").json()
     assert len(body_with["recent_runs"]) == 1
+
+
+# --- Capture success by reason + verification queue (docs/TASKS_CITATION_VERIFICATION.md T16) ---
+
+
+def _add_citation(db_session: Session, run: Run, *, source_url: str) -> Citation:
+    raw_response = db_session.query(RawResponse).filter_by(run_id=run.id).one()
+    citation = Citation(raw_response_id=raw_response.id, source_url=source_url, source_domain="example.com", citation_position=0)
+    db_session.add(citation)
+    db_session.commit()
+    db_session.refresh(citation)
+    return citation
+
+
+def _add_source_document(
+    db_session: Session, *, url: str, fetched_at: datetime, error_reason: str | None = None, challenge_vendor: str | None = None
+) -> SourceDocument:
+    document = SourceDocument(requested_url=url, method="live", error_reason=error_reason, challenge_vendor=challenge_vendor, fetched_at=fetched_at, verifier_version="1.0")
+    db_session.add(document)
+    db_session.commit()
+    return document
+
+
+def test_capture_reasons_buckets_success_failure_and_not_captured(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/ok")
+    _add_source_document(db_session, url="https://a.example/ok", fetched_at=now - timedelta(hours=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/blocked")
+    _add_source_document(db_session, url="https://a.example/blocked", fetched_at=now - timedelta(hours=1), error_reason="http_403")
+
+    _add_citation(db_session, run, source_url="https://a.example/never-captured")
+    # No SourceDocument row at all for this one.
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+    by_reason = {(row["reason"], row["challenge_vendor"]): row["count"] for row in body}
+
+    assert by_reason[("success", None)] == 1
+    assert by_reason[("http_403", None)] == 1
+    assert by_reason[("not_captured", None)] == 1
+
+
+def test_capture_reasons_counts_a_url_once_regardless_of_citation_count(authed_client: TestClient, db_session: Session, seed: dict):
+    """The same URL cited twice (two citations) must count once — a capture outcome is a property
+    of the URL, not of how many citations happen to point at it.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/shared")
+    _add_citation(db_session, run, source_url="https://a.example/shared")
+    _add_source_document(db_session, url="https://a.example/shared", fetched_at=now - timedelta(hours=1))
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "success", "challenge_vendor": None, "count": 1}]
+
+
+def test_capture_reasons_uses_the_latest_fetch_per_url(authed_client: TestClient, db_session: Session, seed: dict):
+    """A URL captured twice (retry after a change) must be judged by its NEWEST fetch, matching
+    `idx_source_documents_url_fetched` — an old failure must not outrank a later success.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=2))
+
+    _add_citation(db_session, run, source_url="https://a.example/retried")
+    _add_source_document(db_session, url="https://a.example/retried", fetched_at=now - timedelta(days=1), error_reason="timeout")
+    _add_source_document(db_session, url="https://a.example/retried", fetched_at=now)
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "success", "challenge_vendor": None, "count": 1}]
+
+
+def test_capture_reasons_carries_the_bot_challenge_vendor(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    _add_citation(db_session, run, source_url="https://a.example/cf")
+    _add_source_document(db_session, url="https://a.example/cf", fetched_at=now, error_reason="bot_challenge", challenge_vendor="cloudflare")
+
+    body = authed_client.get(f"/ops/api/capture-reasons?range=30d&client_id={client_row.id}").json()
+
+    assert body == [{"reason": "bot_challenge", "challenge_vendor": "cloudflare", "count": 1}]
+
+
+def test_verification_queue_snapshot_counts_by_kind_and_status(authed_client: TestClient, db_session: Session, seed: dict):
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    prompt = _make_prompt(db_session, prompt_set, seed["market"].id, "Test prompt?")
+    now = datetime.now(timezone.utc)
+    run_a = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+    run_b = _make_run(db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1))
+
+    db_session.add_all(
+        [
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_a.id).one().id, kind="capture", status="queued"),
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_a.id).one().id, kind="capture", status="queued"),
+            VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=run_b.id).one().id, kind="judge", status="error"),
+        ]
+    )
+    db_session.commit()
+
+    body = authed_client.get("/ops/api/verification-queue?range=30d").json()
+    by_bucket = {(row["kind"], row["status"]): row["count"] for row in body}
+
+    assert by_bucket[("capture", "queued")] == 2
+    assert by_bucket[("judge", "error")] == 1
+
+
+def test_verification_queue_snapshot_ignores_client_and_range_filters(authed_client: TestClient, db_session: Session, seed: dict):
+    """Live global state (verification_queue_snapshot's own docstring) — a job tied to a run
+    outside the requested client/range still shows up, since the worker still has to process it
+    regardless of what the admin currently has the page filtered to.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    other_client, other_set = _client_with_prompt_set(db_session, "Other", "other")
+    prompt = _make_prompt(db_session, other_set, seed["market"].id, "Test prompt?")
+    old_run = _make_run(
+        db_session, prompt, model_id=seed["model"].id, market_id=seed["market"].id, persona_id=seed["persona"].id,
+        started_at=datetime.now(timezone.utc) - timedelta(days=400),
+    )
+    db_session.add(VerificationJob(raw_response_id=db_session.query(RawResponse).filter_by(run_id=old_run.id).one().id, kind="capture", status="queued"))
+    db_session.commit()
+
+    body = authed_client.get(f"/ops/api/verification-queue?range=7d&client_id={client_row.id}").json()
+    by_bucket = {(row["kind"], row["status"]): row["count"] for row in body}
+
+    assert by_bucket.get(("capture", "queued")) == 1, "a job outside this client/range filter must still be counted"
