@@ -36,16 +36,16 @@ def _no_sleep(_seconds: float) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_module_state():
-    """These caches are module-level, process-lifetime state by design (production is a
+    """`_robots_cache` is module-level, process-lifetime state by design (production is a
 
-    long-lived worker) — but that means they leak between tests unless cleared, so a robots.txt
-    rule or a domain's last-request timestamp from one test can't silently affect another.
+    long-lived worker) — but that means it leaks between tests unless cleared, so a robots.txt
+    rule from one test can't silently affect another. The per-domain throttle itself moved to the
+    database (`app/services/rate_limit.py`, code-review finding 2026-09-30) — `db_session`'s own
+    per-test rollback/isolation already takes care of that, nothing to clear here.
     """
     source_capture._robots_cache.clear()
-    source_capture._last_domain_request.clear()
     yield
     source_capture._robots_cache.clear()
-    source_capture._last_domain_request.clear()
 
 
 def _client(handler) -> httpx.Client:

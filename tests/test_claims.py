@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.models.run import Citation
-from app.services.claims import DerivedClaim, derive_claim
+from app.services.claims import DerivedClaim, _byte_offset_to_char_hint, _find_closest_occurrence, derive_claim
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "claims"
 
@@ -211,6 +211,72 @@ def test_gemini_returns_none_and_logs_when_segment_is_not_found_in_rendered_text
 def test_gemini_returns_none_when_there_is_no_segment_at_all():
     citation = Citation(citation_position=0, cited_answer_span=None)
     assert derive_claim("google_gemini", citation, "Some rendered text.", {}) is None
+
+
+# --- _byte_offset_to_char_hint / _find_closest_occurrence (code-review finding, 2026-09-30
+# round 2 — regression tests: an earlier version of the occurrence-picking fix compared Gemini's
+# byte-offset hint directly against character indices, silently reintroducing the wrong-
+# occurrence bug the fix itself was written to solve). ---------------------------------------
+
+
+def test_byte_offset_to_char_hint_accounts_for_multibyte_characters():
+    # "Ü" is 2 bytes in UTF-8 but 1 character — "Über" is 5 bytes, 4 characters.
+    text = "Über die Grenzen hinaus."
+    assert _byte_offset_to_char_hint(text, 5) == 4
+
+
+def test_byte_offset_to_char_hint_returns_none_for_none_input():
+    assert _byte_offset_to_char_hint("some text", None) is None
+
+
+def test_byte_offset_to_char_hint_clamps_to_text_length_when_offset_exceeds_encoded_length():
+    text = "kurz"
+    assert _byte_offset_to_char_hint(text, 999) == len(text)
+
+
+def test_find_closest_occurrence_picks_the_occurrence_nearest_the_hint():
+    text = "AAA needle BBB needle CCC needle DDD"
+    # three occurrences of "needle" at char indices 4, 15, 26
+    assert _find_closest_occurrence(text, "needle", 4) == 4
+    assert _find_closest_occurrence(text, "needle", 26) == 26
+    assert _find_closest_occurrence(text, "needle", 20) == 15  # closer to 15 than to 4 or 26
+
+
+def test_find_closest_occurrence_falls_back_to_first_occurrence_without_a_hint():
+    text = "needle ... needle"
+    assert _find_closest_occurrence(text, "needle", None) == 0
+
+
+def test_find_closest_occurrence_returns_minus_one_when_not_found():
+    assert _find_closest_occurrence("no match here", "needle", 5) == -1
+
+
+def test_gemini_uses_the_byte_to_char_converted_hint_not_the_raw_byte_offset():
+    """A repeated segment surrounded by umlaut-heavy filler text, with `answer_span_start` (a real
+
+    Gemini BYTE offset) pointing at the SECOND occurrence. Comparing that byte offset directly
+    against `str.find()`'s character indices (the bug this test guards against) drifts enough,
+    once enough multi-byte characters have accumulated, to pick the wrong (first) occurrence
+    instead — silently misattributing the claim.
+    """
+    segment = "Qualität überzeugt"
+    filler = "Über müde Grünkohlküchlein süßer Prüfungsängste. " * 3
+    text = f"Zuerst: {segment} hier. {filler}Zweitens: {segment} dort."
+    first_char_index = text.index(segment)
+    second_char_index = text.index(segment, first_char_index + 1)
+    second_byte_index = len(text[:second_char_index].encode("utf-8"))
+    # Confirm the fixture actually exercises byte/char drift — otherwise this test would pass
+    # even with the old, unconverted comparison and wouldn't be a real regression guard.
+    assert second_byte_index != second_char_index
+
+    citation = Citation(
+        citation_position=0, cited_answer_span=segment,
+        answer_span_start=second_byte_index, answer_span_end=second_byte_index + len(segment.encode("utf-8")),
+    )
+    result = derive_claim("google_gemini", citation, text, {})
+
+    assert result is not None
+    assert abs(result.start - second_char_index) < abs(result.start - first_char_index)
 
 
 # --- Providers with no claim/answer-span link at all -------------------------------------------

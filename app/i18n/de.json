@@ -389,6 +389,7 @@
   "run.citations_not_supported": "Dieses Modell hat keine Websuche — seine Antworten stammen ausschließlich aus dem Modellwissen, weshalb keine Quellenangaben zurückgegeben werden.",
   "run.citation_claim_label": "Zitierte Aussage",
   "run.citation_claim_derived_hint": "Aus dem Antworttext abgeleitet",
+  "run.citation_claim_raw_hint": "Wie vom Anbieter geliefert — konnte im Antworttext nicht zugeordnet werden",
   "run.citation_source_passage_label": "Quellenpassage",
   "run.verification_title": "Zitatsprüfung",
   "run.verify_citations_button": "Zitate prüfen",

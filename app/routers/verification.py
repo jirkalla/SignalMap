@@ -6,8 +6,8 @@ flows:
 - Blind labeling (`/verification/label`): a stratified sample of already LLM-judged citations,
   shown WITHOUT the LLM's own verdict/reason/quote — only the claim, the captured page's nearest
   passages (the same evidence `judge_citations`, T12, saw), and a link to the source.
-- Reviewing one specific LLM verdict already on screen (the run detail page's "Souhlasím /
-  Nesouhlasím") — `agrees_with_verification_id` records exactly which `CitationVerification` the
+- Reviewing one specific LLM verdict already on screen (the run detail page's "Agree /
+  Disagree") — `agrees_with_verification_id` records exactly which `CitationVerification` the
   human is agreeing or disagreeing with.
 
 Both write `VerificationLabel` rows (append-only, NFR-6) — never `CitationVerification` itself,
@@ -23,16 +23,18 @@ from app.auth import current_active_user, require_role
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Citation, Provider, RawResponse, Run, User
-from app.models.verification import HUMAN_VERDICTS, CitationVerification, SourceDocument, SourceText, VerificationLabel
+from app.models.verification import HUMAN_VERDICTS, CitationVerification, SourceText, VerificationLabel
+from app.services.claim_judge import LLM_JUDGED_VERDICTS
 from app.services.claims import derive_claim
 from app.services.passages import select_passages
+from app.services.verification_display import latest_source_document as _latest_source_document
 from app.templating import get_t, render
 
 router = APIRouter(tags=["verification"])
 
 _editor_or_admin = [Depends(require_role("admin", "editor"))]
 
-# The inverse of app/services/claim_judge.py's own verdict map — "Souhlasím" copies the LLM's
+# The inverse of app/services/claim_judge.py's own verdict map — "Agree" copies the LLM's
 # verdict across in the human's own vocabulary (design decision 22's four words), so agreement is
 # just `verdict == <the human-vocabulary form of the LLM's own verdict>`, no separate boolean.
 _LLM_TO_HUMAN_VERDICT = {
@@ -65,7 +67,7 @@ def _citation_strata(db: Session) -> dict[int, tuple[str, str]]:
         .join(Run, RawResponse.run_id == Run.id)
         .join(AIModel, Run.model_id == AIModel.id)
         .join(Provider, AIModel.provider_id == Provider.id)
-        .where(CitationVerification.check_type == "llm", CitationVerification.verdict.in_(_LLM_TO_HUMAN_VERDICT.keys()))
+        .where(CitationVerification.check_type == "llm", CitationVerification.verdict.in_(LLM_JUDGED_VERDICTS))
         .order_by(CitationVerification.citation_id, CitationVerification.created_at.desc())
     ).all()
     strata: dict[int, tuple[str, str]] = {}
@@ -79,10 +81,11 @@ def _next_blind_citation_id(db: Session, user_id: int) -> int | None:
     """The next citation to blind-label for `user_id` — from whichever (provider, LLM verdict)
 
     stratum has the FEWEST blind labels recorded so far across ALL users (design decision 27's
-    "vzorek stratifikovaně"), so the accumulated sample stays balanced rather than skewing toward
+    "stratified sample"), so the accumulated sample stays balanced rather than skewing toward
     whichever combination happens to be most common. Excludes citations `user_id` already
-    blind-labeled; a DIFFERENT user may still be offered the same one (T15's "~20 z nich nezávisle
-    druhý člověk"). Ties broken by citation_id, so this is deterministic for tests.
+    blind-labeled; a DIFFERENT user may still be offered the same one (T15's "~20 of them
+    independently by a second person"). Ties broken by citation_id, so this is deterministic for
+    tests.
     """
     strata = _citation_strata(db)
     if not strata:
@@ -104,18 +107,6 @@ def _next_blind_citation_id(db: Session, user_id: int) -> int | None:
             stratum_counts[stratum] = stratum_counts.get(stratum, 0) + 1
 
     return min(eligible_ids, key=lambda citation_id: (stratum_counts.get(strata[citation_id], 0), citation_id))
-
-
-def _latest_source_document(db: Session, url: str) -> SourceDocument | None:
-    """Mirrors app/services/citation_verification.py's own `_latest_source_document` — kept as
-
-    its own copy here rather than a shared import, same reasoning app/services/claim_judge.py's
-    `_locate`/`_locate_page` already gave for not sharing small generic lookups across an
-    unrelated module boundary.
-    """
-    return db.scalar(
-        select(SourceDocument).where(SourceDocument.requested_url == url).order_by(SourceDocument.fetched_at.desc()).limit(1)
-    )
 
 
 @router.get("/verification/label", dependencies=_editor_or_admin)
@@ -187,7 +178,7 @@ def review_citation_verdict(
     db: Session = Depends(get_db),
     user: User = Depends(current_active_user),
 ):
-    """Record "Souhlasím / Nesouhlasím" (+ optionally the correct verdict) against the citation's
+    """Record "Agree / Disagree" (+ optionally the correct verdict) against the citation's
 
     own newest LLM verdict (T14 point 3). "Agree" copies that verdict across in the human
     vocabulary (`_LLM_TO_HUMAN_VERDICT`) rather than requiring the form to resubmit it — the
@@ -210,7 +201,21 @@ def review_citation_verdict(
         raise AppError("citation_verification_not_found", t("errors.citation_verification_not_found"), status_code=404)
 
     if agree == "true":
+        # Only THIS path actually needs `latest.verdict` to be a real llm_* judgement — Disagree
+        # (with or without a correction) never reads `_LLM_TO_HUMAN_VERDICT` and works fine
+        # against any verdict, including `unverifiable`. An earlier version of this guard rejected
+        # every submission (both Agree and Disagree) whenever `latest.verdict` wasn't a real
+        # judgement, which also blocked a previously-working Disagree (code-review finding,
+        # 2026-09-30, round 2) — scoped to just the Agree path now.
         chosen_verdict = _LLM_TO_HUMAN_VERDICT.get(latest.verdict)
+        if chosen_verdict is None:
+            # The citation's newest `check_type='llm'` row exists but isn't a real judgement (e.g.
+            # `verdict='unverifiable'` — its source failed to capture, or it was re-judged to that
+            # since the page was rendered). The UI only shows the Agree button when the verdict
+            # starts with `llm_`, so reaching this means a stale tab or a race (code-review
+            # finding, 2026-09-30) — reject explicitly rather than silently recording a "confirmed
+            # agreement" with no actual verdict behind it.
+            raise AppError("citation_verification_not_found", t("errors.citation_verification_not_found"), status_code=409)
     elif verdict:
         if verdict not in HUMAN_VERDICTS:
             raise AppError("invalid_verdict", t("errors.invalid_verdict"), status_code=400)

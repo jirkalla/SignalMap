@@ -1140,7 +1140,7 @@ def test_verification_shows_verdicts_with_no_capture_job_row_at_all(
     assert "1 captured" in body
 
 
-# --- "Ověřit citace" button (docs/TASKS_CITATION_VERIFICATION.md T13 point 2) -------------------
+# --- "Verify citations" button (docs/TASKS_CITATION_VERIFICATION.md T13 point 2) ----------------
 
 
 def test_verify_citations_button_shown_on_an_eligible_run(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):

@@ -248,13 +248,62 @@ def _derive_openai_claim(citation: _CitationLike, rendered_text: str) -> Derived
     )
 
 
+def _byte_offset_to_char_hint(text: str, byte_offset: int | None) -> int | None:
+    """Approximate the CHARACTER index in `text` corresponding to a UTF-8 BYTE offset.
+
+    Gemini's `start_index` is a byte offset (app/adapters/google.py) — comparing it directly
+    against `str.find()`'s character indices (as an earlier version of `_find_closest_occurrence`
+    did, code-review finding, 2026-09-30) silently drifts for any text with multi-byte UTF-8
+    characters, which German — this app's primary content language — is full of (ä/ö/ü/ß). Slicing
+    the UTF-8-encoded bytes to `byte_offset` and decoding what's left (dropping a partial
+    multi-byte char at the boundary, `errors="ignore"`) gives the character count up to that byte
+    position — approximate by construction (a hint, not an exact position; see
+    `_find_closest_occurrence`), but in the same unit as the positions it's compared against.
+    """
+    if byte_offset is None:
+        return None
+    encoded = text.encode("utf-8")
+    if byte_offset >= len(encoded):
+        return len(text)
+    return len(encoded[:byte_offset].decode("utf-8", errors="ignore"))
+
+
+def _find_closest_occurrence(text: str, segment: str, hint: int | None) -> int:
+    """The index of `segment` in `text` closest to `hint` (a CHARACTER index — see
+
+    `_byte_offset_to_char_hint` for converting a byte offset before calling this), or -1 when
+    `segment` isn't found at all.
+
+    `hint` is a useful PROPORTIONAL signal when `segment` recurs more than once in `text` — e.g.
+    repeated boilerplate or similarly worded list items. Always picking the FIRST occurrence (the
+    previous behavior) silently misattributed a citation to an earlier occurrence of the same text
+    whenever its real segment was the second or later one, with no warning logged (code-review
+    finding, 2026-09-30 — only a "not found at all" case logged anything). Falls back to the first
+    occurrence when there's only one, or no hint.
+    """
+    first = text.find(segment)
+    if first == -1 or hint is None:
+        return first
+    best, best_distance = first, abs(first - hint)
+    pos = first
+    while True:
+        pos = text.find(segment, pos + 1)
+        if pos == -1:
+            return best
+        distance = abs(pos - hint)
+        if distance < best_distance:
+            best, best_distance = pos, distance
+
+
 def _derive_gemini_claim(citation: _CitationLike, rendered_text: str) -> DerivedClaim | None:
     """`cited_answer_span` expanded to the full sentence / list item it's part of (design decision 4).
 
     Gemini's `start_index`/`end_index` are UTF-8 BYTE offsets (app/adapters/google.py), not
     character offsets, so they are never used to slice `rendered_text` here — `cited_answer_span`
     is instead located as TEXT (`str.find`), which is offset-unit-agnostic and always exact
-    (it's the provider's own segment text, copied verbatim). The found span is then widened
+    (it's the provider's own segment text, copied verbatim). When the segment text recurs more
+    than once, `_find_closest_occurrence` picks the occurrence nearest `answer_span_start` rather
+    than always the first (code-review finding, 2026-09-30). The found span is then widened
     backward to the previous sentence/line boundary and forward to the next sentence terminator,
     since Gemini's segments are frequently cut mid-sentence (verified against run 422: segment
     "Carbonbeton), um den Materialeinsatz zu optimieren" widens to the complete list item
@@ -264,7 +313,8 @@ def _derive_gemini_claim(citation: _CitationLike, rendered_text: str) -> Derived
     if not segment:
         return None
 
-    start = rendered_text.find(segment)
+    hint = _byte_offset_to_char_hint(rendered_text, citation.answer_span_start)
+    start = _find_closest_occurrence(rendered_text, segment, hint)
     if start == -1:
         logger.warning(
             "claims: gemini segment for citation %s not found in rendered_text as text",

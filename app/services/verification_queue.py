@@ -41,12 +41,23 @@ DEFAULT_LEASE_MINUTES = 15
 _BACKOFF_MINUTES = (1, 5, 25)
 _MAX_ATTEMPTS = len(_BACKOFF_MINUTES)
 
-# "limit času na úlohu" (T5 point 4) — one job can cover many citation URLs (a single Knauf run
+# "time limit per job" (T5 point 4) — one job can cover many citation URLs (a single Knauf run
 # has had 37 citations); this caps how long ONE job may hold the worker, so an unusually
 # source-heavy response can't starve run_queue for minutes. Each individual fetch already has
 # its own cap (source_capture.REQUEST_TIMEOUT_SECONDS) — this is the job's OWN budget across
-# however many of those it makes.
+# however many of those it makes. Only applies to the capture-URL loop specifically — see
+# JOB_TIME_BUDGET_SECONDS for the whole job's (capture + verify + judge) budget.
 MAX_JOB_SECONDS = 60.0
+
+# Whole-job budget (capture + the free quote check + auto-judge, or a standalone judge job),
+# code-review finding 2026-09-30 round 2: MAX_JOB_SECONDS only ever bounded the capture-URL loop,
+# leaving `verify_citations_by_quote`/`judge_citations` (real HTTP/LLM calls, no cap) free to run
+# indefinitely. A citation-heavy, LLM-call-heavy response could then legitimately still be
+# processing well past DEFAULT_LEASE_MINUTES, at which point `release_expired_job_leases` (which
+# has no way to tell "still working" from "the worker died") lets a second worker claim and
+# concurrently double-process — and double-pay for — the same job. Comfortably under the 15-minute
+# lease so a job always defers-and-resumes well before its lease could expire out from under it.
+JOB_TIME_BUDGET_SECONDS = 600.0
 
 
 def enqueue_capture(db: Session, raw_response_id: int, *, now: datetime) -> None:
@@ -80,7 +91,7 @@ def enqueue_judge(db: Session, raw_response_id: int, *, now: datetime, requested
     explicit-trigger counterpart to `enqueue_capture` above: the automatic case (a client with
     `auto_verify_citations` on) never calls this at all, it rides along inside the capture job
     itself instead (see `process_verification_job`'s own docstring for why). This is only ever
-    used for the two one-off human-triggered paths — the "Ověřit citace" button on a run and a
+    used for the two one-off human-triggered paths — the "Verify citations" button on a run and a
     client's retroactive bulk-verify — both of which set `requested_by_user_id`, unlike the
     automatic capture job's own `None` (`VerificationJob`'s docstring, T5).
     """
@@ -183,7 +194,9 @@ def _citation_urls(db: Session, raw_response_id: int) -> list[str]:
     return seen
 
 
-def _maybe_auto_judge(db: Session, raw_response: RawResponse, *, now: datetime) -> None:
+def _maybe_auto_judge(
+    db: Session, raw_response: RawResponse, *, now: datetime, since: datetime | None = None, deadline: float | None = None
+) -> bool:
     """Run the LLM paraphrase check inline, right after the capture job's own free quote check,
 
     when the response's client has `auto_verify_citations` on (docs/TASKS_CITATION_VERIFICATION.md
@@ -198,14 +211,17 @@ def _maybe_auto_judge(db: Session, raw_response: RawResponse, *, now: datetime) 
     progress capture job sidesteps that ordering race entirely — the same reasoning design
     decision 1 already gives for running T8's free quote check inline here instead of as its own
     job.
+
+    Returns `True` when nothing needed judging, or judging fully completed; `False` when
+    `judge_citations` bailed early on `deadline` (code-review finding, 2026-09-30 round 2).
     """
     provider_code = raw_response.run.model.provider.code
     if provider_code not in LLM_JUDGE_PROVIDERS:
-        return
+        return True
     client_row = raw_response.run.prompt.prompt_set.client
     if not client_row.auto_verify_citations:
-        return
-    judge_citations(db, raw_response, judge_model=_default_judge_model(db), now=now)
+        return True
+    return judge_citations(db, raw_response, judge_model=_default_judge_model(db), now=now, since=since, deadline=deadline)
 
 
 def process_verification_job(db: Session, job: VerificationJob, *, now: datetime, client: httpx.Client) -> None:
@@ -215,7 +231,7 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
     runs the free literal-quote check (T8, design decision 1 — "the literal check is free and
     always runs" is what makes it safe to do inline here rather than queuing a separate job for
     it), and then `_maybe_auto_judge`s it (T13) if the client has opted in. A 'judge' job (T13)
-    only ever comes from an explicit human trigger (the "Ověřit citace" button, or a client's
+    only ever comes from an explicit human trigger (the "Verify citations" button, or a client's
     retroactive bulk-verify) — see `enqueue_judge`'s own docstring for why the automatic case
     never creates one of these. Always ends this pass with exactly one outcome:
 
@@ -236,6 +252,24 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
     # No "raw_response no longer exists" guard here: `raw_response_id` is `ondelete="CASCADE"`
     # (app/models/verification.py) — a deleted RawResponse takes its VerificationJob rows down
     # with it, so a job that's still claimable always still points at a real response.
+    #
+    # `since=job.created_at` (code-review finding, 2026-09-30) lets `verify_citations_by_quote`/
+    # `judge_citations` skip a citation an EARLIER ATTEMPT of this same job already committed a
+    # verdict for — both functions now commit per-citation, so a mid-loop failure no longer loses
+    # already-paid work, but without `since` a retry would still re-verify (and duplicate) every
+    # citation from scratch. A citation verified by some OTHER, earlier job (e.g. a prior
+    # "Verify citations" click) is never skipped this way, since its row predates THIS job's
+    # `created_at`. Only actually passed from `job.attempts > 1` (code-review finding, 2026-09-30
+    # round 2) — on a job's first-ever attempt, no row created at/after `job.created_at` can
+    # possibly exist yet, so `has_verification_since` would just be a guaranteed-empty query on
+    # the common (first-attempt-succeeds) path for every citation.
+    #
+    # `job_deadline` (code-review finding, 2026-09-30 round 2) is the WHOLE job's time budget —
+    # see JOB_TIME_BUDGET_SECONDS's own comment for why this exists alongside the capture loop's
+    # own, tighter MAX_JOB_SECONDS.
+    job_since = job.created_at if job.attempts > 1 else None
+    job_deadline = time.monotonic() + JOB_TIME_BUDGET_SECONDS
+    incomplete = False
     try:
         if job.kind == "capture":
             urls = _citation_urls(db, job.raw_response_id)
@@ -244,33 +278,73 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
                 capture_url(db, url, now=now, client=client)
                 if time.monotonic() - started > MAX_JOB_SECONDS:
                     logger.info(
-                        "verification job %s: hit its %ss budget after %d/%d URLs — finishing the rest on a later pass",
+                        "verification job %s: hit its %ss budget after %d/%d URLs — deferring to finish the rest",
                         job.id,
                         MAX_JOB_SECONDS,
                         index + 1,
                         len(urls),
                     )
+                    incomplete = True
                     break
 
+            # Still runs even when the capture loop above broke early (unchanged from before this
+            # round) — the free quote check and any auto-judge should still cover whatever WAS
+            # captured this pass, not wait for a fully-complete capture loop.
             raw_response = db.get(RawResponse, job.raw_response_id)
-            verify_citations_by_quote(db, raw_response, now=now, client=client)
-            _maybe_auto_judge(db, raw_response, now=now)
+            verify_ok = verify_citations_by_quote(db, raw_response, now=now, client=client, since=job_since, deadline=job_deadline)
+            judge_ok = _maybe_auto_judge(db, raw_response, now=now, since=job_since, deadline=job_deadline)
+            incomplete = incomplete or not (verify_ok and judge_ok)
         else:
             raw_response = db.get(RawResponse, job.raw_response_id)
-            judge_citations(db, raw_response, judge_model=_default_judge_model(db), now=now)
+            incomplete = not judge_citations(
+                db, raw_response, judge_model=_default_judge_model(db), now=now, since=job_since, deadline=job_deadline
+            )
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
         logger.error("verification job %s failed: %s", job.id, exc, exc_info=True, extra={"extra_data": {"job_id": job.id}})
-        db.rollback()
-        if job.attempts >= _MAX_ATTEMPTS:
-            job.status = "error"
-            job.error = str(exc)[:2000]
-            job.finished_at = now
-        else:
-            job.status = "deferred"
-            job.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES[job.attempts - 1])
-        db.commit()
+        try:
+            db.rollback()
+            if job.attempts >= _MAX_ATTEMPTS:
+                job.status = "error"
+                job.error = str(exc)[:2000]
+                job.finished_at = now
+            else:
+                job.status = "deferred"
+                job.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES[job.attempts - 1])
+            db.commit()
+        except Exception as bookkeeping_exc:  # noqa: BLE001 - isolate the recovery path itself
+            # If even rollback/commit fails (a genuinely broken connection, not just a bad
+            # transaction), don't let that crash the whole worker loop on top of the original
+            # failure (code-review finding, 2026-09-30) — log it and leave the job `leased`;
+            # `release_expired_job_leases` reclaims it once its lease naturally expires, same as
+            # a worker that died outright.
+            logger.error(
+                "verification job %s: failed AGAIN while recording the original failure: %s",
+                job.id,
+                bookkeeping_exc,
+                exc_info=True,
+                extra={"extra_data": {"job_id": job.id}},
+            )
         return
 
-    job.status = "done"
-    job.finished_at = now
+    if incomplete:
+        # Not `done` — the capture loop, verify pass, or judge pass above only got through part
+        # of its work (budget/deadline cut it short), so there is real remaining work, not just
+        # evidence rows explaining a completed pass (see this function's own docstring on why an
+        # ordinary per-URL failure IS still `done`).
+        if job.attempts >= _MAX_ATTEMPTS:
+            # Capped the same way the exception path above is (code-review finding, 2026-09-30
+            # round 2) — without this, a pathologically large/slow response could re-enter this
+            # branch every ~1 minute forever, never reaching `error`, never surfacing on the ops
+            # dashboard for a human to notice.
+            job.status = "error"
+            job.error = f"gave up after {job.attempts} attempts, still incomplete (budget/deadline exceeded each time)"
+            job.finished_at = now
+        else:
+            # Deferred with the shortest backoff tier: it wasn't a failure, just ran out of
+            # budget, so it should resume soon, not wait a full retry cycle.
+            job.status = "deferred"
+            job.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES[0])
+    else:
+        job.status = "done"
+        job.finished_at = now
     db.commit()

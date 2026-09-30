@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Citation, Client, ClientAlias, Prompt, PromptSet, Provider, RawResponse, Run, TrackedEntity, TrackedEntityAlias, User
 from app.models.verification import CitationVerification
-from app.services.claim_judge import LLM_JUDGE_PROVIDERS
+from app.services.claim_judge import LLM_JUDGE_PROVIDERS, LLM_JUDGED_VERDICTS
 from app.services.cost import average_llm_judge_cost_per_citation
 from app.services.verification_queue import enqueue_judge
 from app.templating import get_t, render
@@ -144,14 +144,33 @@ def _bulk_verify_candidate_raw_response_ids(db: Session, client_id: int, start: 
     VERIFICATION.md T13): this client's, in `[start, end]`, from a provider `judge_citations` can
     do anything with (design decision 4 — Anthropic/Perplexity already get the free quote check,
     T8; xAI/DeepSeek have no claim to judge), with at least one citation, and NOT already judged —
-    a response with any `check_type='llm'` verification is excluded so re-running this doesn't pay
-    to re-judge citations that already have a verdict (a human can still re-check one citation at
-    a time via the run detail page's own button if they specifically want a fresh judgement).
+    a response with a REAL LLM verdict (`LLM_JUDGED_VERDICTS`) is excluded so re-running this
+    doesn't pay to re-judge citations that already have one (a human can still re-check one
+    citation at a time via the run detail page's own button if they specifically want a fresh
+    judgement). A `check_type='llm'` row whose own verdict is `unverifiable` because its source
+    failed to CAPTURE (`reason` set, e.g. `robots`/`http_403`) does NOT count as already judged
+    (code-review finding, 2026-09-30, same gap `app/routers/verification.py`'s `_citation_strata`
+    already excludes for blind-labeling) — that's a free placeholder `judge_citations` writes with
+    no LLM call made, so a response stuck with one must stay eligible once its source is captured
+    successfully.
+
+    A `check_type='llm'` row with `verdict='unverifiable'` and `reason IS NULL`, by contrast, DOES
+    count as already judged (code-review finding, 2026-09-30, round 2) — `judge_citations` writes
+    that shape only when the LLM was actually called (real, billed `cost_usd`/tokens) but its reply
+    couldn't be parsed into a recognized verdict. Treating that the same as a free capture-failure
+    placeholder would let a client whose judge model consistently returns malformed output for one
+    citation get re-billed for it on every future bulk-verify run, forever, with no way to converge.
     """
     already_judged = (
         select(Citation.raw_response_id)
         .join(CitationVerification, CitationVerification.citation_id == Citation.id)
-        .where(CitationVerification.check_type == "llm")
+        .where(
+            CitationVerification.check_type == "llm",
+            or_(
+                CitationVerification.verdict.in_(LLM_JUDGED_VERDICTS),
+                and_(CitationVerification.verdict == "unverifiable", CitationVerification.reason.is_(None)),
+            ),
+        )
     )
     query = (
         select(RawResponse.id)

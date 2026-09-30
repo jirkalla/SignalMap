@@ -84,12 +84,20 @@ VERDICTS = (
 # response's other citations) on every retry, since claim_judge.judge_citations commits once at
 # the end of its loop over all of a response's citations — found and the stuck jobs manually
 # halted 2026-09-29.
+#
+# 'http_other' added in migration 0042 — the actual root-cause fix for the 410/429 pattern above,
+# not one more reactively-added status code: app/services/source_capture.py used to fall back to
+# an unbounded f"http_{status}" string for any 4xx it didn't special-case, so the *next* unhandled
+# code (401, 402, 405, 406, 451, ...) would have hit this exact same CHECK constraint again.
+# source_capture.py now maps every 4xx besides 404/410/429 to this one generic bucket instead —
+# closing the gap for every future status code at once, rather than adding a migration per code.
 UNVERIFIABLE_REASONS = (
     "http_403",
     "http_404",
     "http_410",
     "http_429",
     "http_5xx",
+    "http_other",
     "timeout",
     "bot_challenge",
     "robots",
@@ -180,7 +188,7 @@ class VerificationJob(Base):
     derived-from, not independent of, the response it verifies.
 
     `requested_by_user_id` is NULL for the automatic capture job every successful run enqueues
-    (T5); set only when a human explicitly asked for it — the "Ověřit citace" button (T13) or a
+    (T5); set only when a human explicitly asked for it — the "Verify citations" button (T13) or a
     manual re-judge — so the two origins stay distinguishable without a separate `source` column
     (unlike `RunQueueItem.source`, which needed one to tell schedule/manual/batch apart; here
     there are only two origins and one of them is exactly "not NULL").
@@ -311,15 +319,15 @@ class VerificationLabel(Base):
     passages, and a link). `agrees_with_verification_id` is always NULL here — comparing a blind
     label against the LLM's own verdict is done later (T15) by joining on `citation_id`, not
     through this column, precisely so the SAME citation can be blind-labeled by more than one
-    user (T15's "~20 z nich nezávisle druhý člověk") without this row claiming to "agree/disagree
-    with" one specific verdict it never saw.
+    user (T15's "~20 of them independently by a second person") without this row claiming to
+    "agree/disagree with" one specific verdict it never saw.
 
-    `mode='review'`: the labeler DID see one specific `CitationVerification` (the "Souhlasím /
-    Nesouhlasím" control on the run detail page) — `agrees_with_verification_id` names exactly
+    `mode='review'`: the labeler DID see one specific `CitationVerification` (the "Agree /
+    Disagree" control on the run detail page) — `agrees_with_verification_id` names exactly
     which one. `verdict` is what the human says the correct verdict actually is: a copy of that
-    verification's own verdict on "Souhlasím" (agreement is then just `verdict ==
+    verification's own verdict on "Agree" (agreement is then just `verdict ==
     citation_verifications.verdict`, no separate boolean needed), the human's own correction on
-    "Nesouhlasím" + a picked verdict, or NULL on a bare "Nesouhlasím" with no correction offered —
+    "Disagree" + a picked verdict, or NULL on a bare "Disagree" with no correction offered —
     still useful signal ("the LLM was wrong") even without knowing what right looks like.
     """
 

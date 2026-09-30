@@ -1,6 +1,7 @@
 """Client CRUD (docs/REQUIREMENTS.md FR-1..FR-3) and its delete policy (HD-T4)."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -426,6 +427,67 @@ def test_verify_retroactively_confirm_skips_a_response_already_llm_verified(auth
     raw = _make_verifiable_run(db_session, prompt_set_id=prompt_set.id, seed=seed, started_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
     citation = db_session.scalars(select(Citation).where(Citation.raw_response_id == raw.id)).first()
     db_session.add(CitationVerification(citation_id=citation.id, check_type="llm", verdict="llm_supported", verifier_version="1.0"))
+    db_session.commit()
+
+    authed_client.post(
+        f"/clients/{client_id}/verify-retroactively/confirm",
+        data={"date_from": "2026-06-01", "date_to": "2026-06-30"},
+        follow_redirects=False,
+    )
+
+    assert db_session.scalar(select(VerificationJob).where(VerificationJob.raw_response_id == raw.id)) is None
+
+
+def test_verify_retroactively_confirm_retries_a_response_whose_capture_failed(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """A `verdict='unverifiable'` row with `reason` SET (a free capture failure — judge_citations
+
+    never actually called the LLM) must NOT count as "already judged" — the response must stay
+    eligible so it gets a real judgement once its source is captured successfully (code-review
+    finding, 2026-09-30).
+    """
+    client_id = _create_client(authed_client)
+    prompt_set = PromptSet(client_id=client_id, name="Set")
+    db_session.add(prompt_set)
+    db_session.commit()
+    raw = _make_verifiable_run(db_session, prompt_set_id=prompt_set.id, seed=seed, started_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
+    citation = db_session.scalars(select(Citation).where(Citation.raw_response_id == raw.id)).first()
+    db_session.add(CitationVerification(citation_id=citation.id, check_type="llm", verdict="unverifiable", reason="robots", verifier_version="1.0"))
+    db_session.commit()
+
+    authed_client.post(
+        f"/clients/{client_id}/verify-retroactively/confirm",
+        data={"date_from": "2026-06-01", "date_to": "2026-06-30"},
+        follow_redirects=False,
+    )
+
+    assert db_session.scalar(select(VerificationJob).where(VerificationJob.raw_response_id == raw.id)) is not None
+
+
+def test_verify_retroactively_confirm_skips_a_response_whose_judge_reply_was_unparseable(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """A `verdict='unverifiable'` row with `reason=None` (the LLM WAS called and billed, but its
+
+    reply couldn't be parsed into a recognized verdict — `judge_citations`' parse-failure branch)
+    must count as "already judged", unlike the free capture-failure case above — otherwise a
+    client whose judge model consistently returns malformed output for one citation would get
+    re-billed for it on every future bulk-verify run, forever (code-review finding, 2026-09-30
+    round 2).
+    """
+    client_id = _create_client(authed_client)
+    prompt_set = PromptSet(client_id=client_id, name="Set")
+    db_session.add(prompt_set)
+    db_session.commit()
+    raw = _make_verifiable_run(db_session, prompt_set_id=prompt_set.id, seed=seed, started_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
+    citation = db_session.scalars(select(Citation).where(Citation.raw_response_id == raw.id)).first()
+    db_session.add(
+        CitationVerification(
+            citation_id=citation.id, check_type="llm", verdict="unverifiable", reason=None,
+            needs_review=True, cost_usd=Decimal("0.001234"), verifier_version="1.0",
+        )
+    )
     db_session.commit()
 
     authed_client.post(

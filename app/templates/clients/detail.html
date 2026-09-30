@@ -42,7 +42,7 @@
      form for the same reason is_test has one above: an unchecked checkbox is never submitted, so
      it could get silently reset the next time the form is saved for an unrelated edit (design
      decision 14). Only gates automatic judging of NEW runs — capture and the free quote check
-     always run, and this has no effect on the "Ověřit citace" button or the bulk-verify below. #}
+     always run, and this has no effect on the "Verify citations" button or the bulk-verify below. #}
   <div class="flex items-center gap-2 flex-wrap pt-1">
     <span>{{ t('client.auto_verify_citations_label') }}:</span>
     {{ toggle_button('/clients/' ~ client.id ~ '/toggle-auto-verify-citations', client.auto_verify_citations, t('client.auto_verify_citations_on_label'), t('client.auto_verify_citations_off_label')) }}

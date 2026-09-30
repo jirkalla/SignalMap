@@ -14,6 +14,7 @@ from app.models.notification import NotificationOutbox, WorkerHeartbeat
 from app.models.persona import Persona
 from app.models.prompt import Prompt, PromptSet
 from app.models.provider import AIModel, AIModelPriceComponent, Provider
+from app.models.rate_limit import ThrottleState
 from app.models.run import Citation, RawResponse, Run, SearchQuery
 from app.models.schedule import RunQueueItem, RunSchedule
 from app.models.settings import SystemInstructionTemplate
@@ -52,4 +53,5 @@ __all__ = [
     "VerificationJob",
     "CitationVerification",
     "VerificationLabel",
+    "ThrottleState",
 ]

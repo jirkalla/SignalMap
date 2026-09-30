@@ -26,7 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.verification import SourceDocument, SourceText
+from app.models.verification import UNVERIFIABLE_REASONS, SourceDocument, SourceText
+from app.services.rate_limit import throttle
 from app.services.source_extract import extract_html, extract_pdf
 
 logger = logging.getLogger(__name__)
@@ -46,19 +47,19 @@ REQUEST_TIMEOUT_SECONDS = 20.0
 MAX_REDIRECTS = 10
 MAX_BYTES = 20 * 1024 * 1024
 
-# design decision 9's "1 s mezi požadavky na stejnou doménu" — the "nejvýš 1 požadavek na
-# doménu" half of that decision is NOT enforced here: verification_jobs are claimed and
-# processed one at a time (design decision 3, T5), so at most one capture_url call is ever
-# in flight at all from this process, for any domain, without this module needing a lock of
-# its own. Only the minimum spacing between consecutive requests to the SAME domain — which
-# serial processing does not give you for free when many citations share one domain — is
-# this module's job.
+# design decision 9's "1s between requests to the same domain" — the "at most 1 request per
+# domain" half of that decision only holds WITHIN one process (verification_jobs are claimed and
+# processed one at a time per process, design decision 3, T5, so at most one capture_url call is
+# ever in flight from a single process for any domain). Production runs 4 such processes at once
+# (`docker compose --scale worker=4`), so the minimum spacing itself is enforced across processes
+# too, via `app/services/rate_limit.py`'s DB-backed `throttle()` — a plain in-process dict here
+# used to let 2+ workers each pace independently against the same domain, multiplying the real
+# aggregate rate by however many of them collided (code-review finding, 2026-09-30).
 MIN_DOMAIN_INTERVAL_SECONDS = 1.0
 
-_last_domain_request: dict[str, float] = {}
 _robots_cache: dict[str, RobotFileParser] = {}
 
-# Short body (design decision 8: "< 1500 znaků") matching a known bot-protection interstitial,
+# Short body (design decision 8: "< 1500 characters") matching a known bot-protection interstitial,
 # even on a plain HTTP 200 — the whole point being that status code alone is not sufficient
 # evidence of real content.
 _CHALLENGE_BODY_MAX_CHARS = 1500
@@ -95,19 +96,14 @@ def build_capture_client() -> httpx.Client:
     )
 
 
-def _throttle_domain(domain: str, *, sleep: Callable[[float], None]) -> None:
+def _throttle_domain(db: Session, domain: str, *, sleep: Callable[[float], None]) -> None:
     """Block (via `sleep`) until at least `MIN_DOMAIN_INTERVAL_SECONDS` have passed since the
 
-    last request to `domain` from this process. `sleep` is injected (defaults to `time.sleep`
-    in `capture_url`) so tests can pass a no-op and never actually wait.
+    last request to `domain` from ANY worker process sharing this database (code-review finding,
+    2026-09-30 — see `MIN_DOMAIN_INTERVAL_SECONDS`'s own comment). `sleep` is injected (defaults
+    to `time.sleep` in `capture_url`) so tests can pass a no-op and never actually wait.
     """
-    now = time.monotonic()
-    last = _last_domain_request.get(domain)
-    if last is not None:
-        remaining = MIN_DOMAIN_INTERVAL_SECONDS - (now - last)
-        if remaining > 0:
-            sleep(remaining)
-    _last_domain_request[domain] = time.monotonic()
+    throttle(db, domain, interval_seconds=MIN_DOMAIN_INTERVAL_SECONDS, sleep=sleep)
 
 
 def _robots_allowed(client: httpx.Client, url: str) -> bool:
@@ -259,6 +255,22 @@ def _store(
     insert-if-missing the matching `source_texts` row (design decision 12's content-addressed
     dedup: `ON CONFLICT (sha256) DO NOTHING`, since identical text needs storing only once).
     """
+    if error_reason is not None and error_reason not in UNVERIFIABLE_REASONS:
+        # Defense in depth (code-review finding, 2026-09-30 round 2): `source_documents.error_
+        # reason` is itself free-form/not CHECK-constrained (design decision 28), but every value
+        # this module produces is EXPECTED to eventually be copyable into `citation_verifications.
+        # reason`, which IS constrained to UNVERIFIABLE_REASONS — a value outside that set would
+        # raise an IntegrityError deep in a worker job the moment `verify_citations_by_quote`/
+        # `judge_citations` tried to copy it across (the exact bug class migrations 0038/0041/0042
+        # each patched reactively for one specific value). Caught and normalized HERE, at the one
+        # chokepoint every capture outcome passes through, instead of letting it surface later as
+        # an opaque DB error with no indication which call site introduced the bad value.
+        logger.error(
+            "source_capture: %r is not in UNVERIFIABLE_REASONS — storing as 'http_other' instead (this is a bug, not an expected outcome)",
+            error_reason,
+        )
+        error_reason = "http_other"
+
     text_sha256 = None
     if text is not None:
         text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -316,7 +328,7 @@ def capture_url(
         return _store(db, requested_url=url, now=now, error_reason="robots")
 
     domain = urlsplit(url).netloc
-    _throttle_domain(domain, sleep=sleep)
+    _throttle_domain(db, domain, sleep=sleep)
 
     try:
         fetched = _fetch(client, url)
@@ -364,7 +376,19 @@ def capture_url(
         )
 
     if fetched.status >= 400:
-        reason = "http_404" if fetched.status == 404 else ("http_5xx" if fetched.status >= 500 else f"http_{fetched.status}")
+        # Only the codes UNVERIFIABLE_REASONS actually enumerates (app/models/verification.py)
+        # get their own value — any other 4xx (401, 402, 405, 406, 408, 451, ...) maps to the
+        # generic "http_other" bucket instead of an unbounded f"http_{status}" string. That
+        # unbounded fallback used to reach citation_verifications.reason's CHECK constraint
+        # unvalidated, raising an IntegrityError on the first unhandled code (already hit twice
+        # in production for 410 and 429, migrations 0038/0041) — "http_other" closes the gap for
+        # every future code at once instead of adding one more reactive migration per status.
+        if fetched.status in (404, 410, 429):
+            reason = f"http_{fetched.status}"
+        elif fetched.status >= 500:
+            reason = "http_5xx"
+        else:
+            reason = "http_other"
         return _store(
             db,
             requested_url=url,

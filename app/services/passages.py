@@ -8,9 +8,9 @@ the same choice quote_match.py already made for fuzzy matching (its own Sequence
 matcher, not a fuzzy-matching library) — this module follows that precedent rather than pulling
 in `rank_bm25` for one focused use.
 
-Candidates are every sentence of the page AND every adjacent pair of sentences ("věty nebo
-dvojice vět", design decision 21) — a claim's supporting text often spans a sentence boundary, so
-scoring only single sentences would sometimes miss it. Verified against the citation-verification
+Candidates are every sentence of the page AND every adjacent pair of sentences ("sentences or
+sentence pairs", design decision 21) — a claim's supporting text often spans a sentence boundary,
+so scoring only single sentences would sometimes miss it. Verified against the citation-verification
 prototype (claude.ai/artifact/39VLVcB4u27cvpv87PRcvs): its own stored "candidate" for run 311 is
 exactly a two-sentence window with its own score/coverage fields, confirming this shape.
 """

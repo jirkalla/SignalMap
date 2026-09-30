@@ -698,9 +698,24 @@ def capture_success_by_reason(db: Session, run_ids_query: Select) -> list[Captur
     Outer-joined (not inner) so a URL with no `SourceDocument` row at all — still queued, or its
     capture job hasn't run yet — is counted as its own `'not_captured'` bucket rather than silently
     dropped, the same "explicit empty state" discipline the rest of this module follows.
+
+    The `latest_doc` subquery's `DISTINCT ON` is scoped to this request's own citation URLs
+    BEFORE it runs (code-review finding, 2026-09-30) — the same requirement
+    `app.services.dashboard`'s `_latest_verification_subquery` docstring spells out for its own
+    `DISTINCT ON`: unscoped, it would sort the entire ever-growing `source_documents` table on
+    every `/ops` load regardless of the client/date filters actually in effect.
     """
+    scoped_urls = (
+        select(Citation.source_url)
+        .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+        .where(RawResponse.run_id.in_(run_ids_query), Citation.source_url.is_not(None))
+        .distinct()
+    )
     latest_doc = (
-        select(SourceDocument).distinct(SourceDocument.requested_url).order_by(SourceDocument.requested_url, SourceDocument.fetched_at.desc())
+        select(SourceDocument)
+        .where(SourceDocument.requested_url.in_(scoped_urls))
+        .distinct(SourceDocument.requested_url)
+        .order_by(SourceDocument.requested_url, SourceDocument.fetched_at.desc())
     ).subquery()
 
     reason_expr = case(

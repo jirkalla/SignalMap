@@ -389,6 +389,7 @@
   "run.citations_not_supported": "This model has no web search — its answers come from model knowledge only, so citations are never returned.",
   "run.citation_claim_label": "Cited claim",
   "run.citation_claim_derived_hint": "Derived from the answer text",
+  "run.citation_claim_raw_hint": "As returned by the provider — couldn't be matched in the answer text",
   "run.citation_source_passage_label": "Source passage",
   "run.verification_title": "Citation verification",
   "run.verify_citations_button": "Verify citations",

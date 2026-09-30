@@ -244,6 +244,16 @@
         <div class="text-sm text-stone-600 italic break-words">&ldquo;{{ claim.text }}&rdquo;</div>
         <div class="text-[11px] text-stone-400 mt-0.5">{{ t('run.citation_claim_derived_hint') }}</div>
       </div>
+      {% elif c.cited_answer_span %}
+      {# derive_claim() couldn't locate this citation's segment in the rendered answer (e.g.
+         whitespace/unicode drift) — fall back to the provider's own raw span rather than
+         showing nothing at all (code-review finding, 2026-09-30: this used to always render
+         before claims were derived at all, and silently disappeared once derivation could fail). #}
+      <div class="mt-2">
+        <div class="text-xs font-semibold text-stone-400 uppercase tracking-wide">{{ t('run.citation_claim_label') }}</div>
+        <div class="text-sm text-stone-600 italic break-words">&ldquo;{{ c.cited_answer_span }}&rdquo;</div>
+        <div class="text-[11px] text-stone-400 mt-0.5">{{ t('run.citation_claim_raw_hint') }}</div>
+      </div>
       {% endif %}
       {% if c.source_passage %}
       <div class="mt-2">

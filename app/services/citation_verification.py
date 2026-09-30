@@ -37,6 +37,7 @@ from app.services import archive_lookup
 from app.services.archive_lookup import ArchivedContent, ArchiveSnapshot
 from app.services.claims import derive_claim
 from app.services.quote_match import ChunkMatch, QuoteMatchResult, match_quote
+from app.services.verification_display import has_verification_since, latest_source_document as _latest_source_document, locate as _locate, locate_page as _locate_page
 
 VERIFIER_VERSION = "1.0"
 
@@ -76,47 +77,6 @@ def _cited_text(citation: Citation, provider_code: str, raw_payload: dict) -> st
     if provider_code == "perplexity":
         return _perplexity_snippet(raw_payload, citation.source_url) if citation.source_url else None
     return None
-
-
-def _latest_source_document(db: Session, url: str) -> SourceDocument | None:
-    return db.scalar(
-        select(SourceDocument).where(SourceDocument.requested_url == url).order_by(SourceDocument.fetched_at.desc()).limit(1)
-    )
-
-
-def _locate(match_start: int | None, locations: list[dict[str, Any]] | None) -> dict[str, Any] | None:
-    """The `{headings, collapsed, collapsed_title}` record (app/services/source_extract.py's
-
-    shape) whose span contains `match_start`, or None when there's nothing to locate or no
-    location data was captured for this document (e.g. a PDF, which has `page_starts` instead).
-    """
-    if match_start is None or not locations:
-        return None
-    for location in locations:
-        if location["start"] <= match_start < location["end"]:
-            return {
-                "headings": location["headings"],
-                "collapsed": location["collapsed"],
-                "collapsed_title": location["collapsed_title"],
-            }
-    return None
-
-
-def _locate_page(match_start: int | None, page_starts: list[int] | None) -> int | None:
-    """The 1-indexed PDF page `match_start` falls on, from `SourceDocument.page_starts`
-
-    (app/services/source_extract.py's `ExtractedPdf.page_starts`), or None for an HTML document
-    (which has `locations` instead) or when there's nothing to locate.
-    """
-    if match_start is None or not page_starts:
-        return None
-    page_index = 0
-    for i, start in enumerate(page_starts):
-        if start <= match_start:
-            page_index = i
-        else:
-            break
-    return page_index + 1
 
 
 def _fragment_dict(fragment: ChunkMatch) -> dict[str, Any]:
@@ -185,7 +145,7 @@ def _try_archive_fallback(
     """Look up and check an archive.org snapshot of `citation.source_url` — returns
 
     `(archive_document, match_result)` only when the archive FULLY verifies the quote (design
-    decision 19: `page_changed`/`archive_only` both mean the archive citát MÁ, not "partially
+    decision 19: `page_changed`/`archive_only` both mean the archive HAS the quote, not "partially
     has" — there is no archive-specific `partially_found` in the verdict enum). Returns None when
     archive.org has no snapshot at all, or its snapshot doesn't fully verify either — in both
     cases the caller keeps whatever verdict the live check already produced. Lets
@@ -193,10 +153,10 @@ def _try_archive_fallback(
     429/5xx/timeout from archive.org must defer the whole verification job, never get recorded
     as a verdict here.
     """
-    snapshot = archive_lookup.find_closest_snapshot(client, citation.source_url, target_date=target_date, sleep=sleep)
+    snapshot = archive_lookup.find_closest_snapshot(db, client, citation.source_url, target_date=target_date, sleep=sleep)
     if snapshot is None:
         return None
-    content = archive_lookup.fetch_snapshot_content(client, snapshot, sleep=sleep)
+    content = archive_lookup.fetch_snapshot_content(db, client, snapshot, sleep=sleep)
     if content is None:
         return None
     result = match_quote(quote_text, provider_code, content.text)
@@ -213,12 +173,31 @@ def verify_citations_by_quote(
     now: datetime,
     client: httpx.Client | None = None,
     sleep: Callable[[float], None] = time.sleep,
-) -> None:
+    since: datetime | None = None,
+    deadline: float | None = None,
+) -> bool:
     """Run the literal-quote check for every citation on `raw_response` that has one to run
 
     (design decisions 1-3): Anthropic/Perplexity citations whose source has already been
     captured. Writes one `CitationVerification` row per checked citation — never touches an
-    existing row (NFR-6, append-only).
+    existing row (NFR-6, append-only). Commits after each citation, not once at the end (code-
+    review finding, 2026-09-30): a single trailing commit meant one citation's failure discarded
+    every other citation's already-computed verdict from the same call.
+
+    `deadline` (a `time.monotonic()` value, typically the whole job's shared time budget from
+    `process_verification_job`, code-review finding 2026-09-30 round 2) makes this bail out before
+    a citation-heavy response's verify phase can run long enough to approach the job's lease
+    expiry — without it, a long-running job could still be `leased` past `lease_expires_at` while
+    genuinely still working, letting a second worker reclaim and concurrently double-process the
+    same job. Returns `True` when every citation was checked, `False` when the deadline cut the
+    pass short (caller must treat that as incomplete, not done — the per-citation `since` check
+    above means a later pass resumes rather than restarts).
+
+    `since` (typically `job.created_at`, passed by `process_verification_job`) skips a citation
+    that already has a `check_type='quote'` row created at/after `since` — this is what makes a
+    retried attempt of the SAME job resume instead of re-verifying (and duplicating) citations an
+    earlier attempt already committed, while a genuinely new job (created later) still re-checks
+    everything, since old rows all have `created_at < since` for it.
 
     Silently does nothing for a citation when: its provider isn't Anthropic/Perplexity, it has
     no cited text to check (Perplexity citations with no matching search_results snippet), or
@@ -234,9 +213,17 @@ def verify_citations_by_quote(
     """
     provider_code = raw_response.run.model.provider.code
     if provider_code not in _QUOTE_PROVIDERS:
-        return
+        return True
 
     target_date = raw_response.run.started_at
+    # Captured once, up front, rather than read via `raw_response.raw_payload`/`.rendered_text`
+    # inside the loop below (code-review finding, 2026-09-30 round 2): `SessionLocal` defaults to
+    # `expire_on_commit=True`, so the per-citation `db.commit()` this function now does would
+    # otherwise silently force a fresh SELECT of this response's full JSONB/Text columns on every
+    # subsequent citation, for no reason — nothing about `raw_response` itself changes mid-loop.
+    raw_payload = raw_response.raw_payload
+    rendered_text = raw_response.rendered_text
+    response_id = raw_response.id
 
     def _row(
         citation: Citation,
@@ -265,19 +252,23 @@ def verify_citations_by_quote(
             verifier_version=VERIFIER_VERSION,
         )
 
-    citations = db.scalars(select(Citation).where(Citation.raw_response_id == raw_response.id)).all()
+    citations = db.scalars(select(Citation).where(Citation.raw_response_id == response_id)).all()
     for citation in citations:
+        if deadline is not None and time.monotonic() > deadline:
+            return False
         if not citation.source_url:
             continue
-        quote_text = _cited_text(citation, provider_code, raw_response.raw_payload)
+        quote_text = _cited_text(citation, provider_code, raw_payload)
         if not quote_text:
+            continue
+        if since is not None and has_verification_since(db, citation.id, "quote", since):
             continue
 
         document = _latest_source_document(db, citation.source_url)
         if document is None:
             continue
 
-        derived_claim = derive_claim(provider_code, citation, raw_response.rendered_text, raw_response.raw_payload)
+        derived_claim = derive_claim(provider_code, citation, rendered_text, raw_payload)
 
         if document.error_reason is not None:
             archived = None
@@ -291,6 +282,7 @@ def verify_citations_by_quote(
                 db.add(_row(citation, derived_claim, source_document=archive_document, verdict="archive_only", result=result))
             else:
                 db.add(_row(citation, derived_claim, source_document=document, verdict="unverifiable", reason=document.error_reason))
+            db.commit()
             continue
 
         source_text_row = db.get(SourceText, document.text_sha256)
@@ -306,6 +298,7 @@ def verify_citations_by_quote(
             # extracted-text case). Not an archive.org trigger (design decision 19: only 404/410
             # or "quote not found", not "quote too short to check meaningfully").
             db.add(_row(citation, derived_claim, source_document=document, verdict="unverifiable", reason="no_checkable_text"))
+            db.commit()
             continue
 
         if result.verdict == "not_found" and client is not None:
@@ -316,7 +309,9 @@ def verify_citations_by_quote(
             if archived is not None:
                 archive_document, archive_result = archived
                 db.add(_row(citation, derived_claim, source_document=archive_document, verdict="page_changed", result=archive_result))
+                db.commit()
                 continue
 
         db.add(_row(citation, derived_claim, source_document=document, verdict=result.verdict, result=result))
-    db.commit()
+        db.commit()
+    return True

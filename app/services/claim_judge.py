@@ -11,13 +11,14 @@ Wired into app/services/verification_queue.py (T13): `process_verification_job` 
 client has `auto_verify_citations` on — see that module's own docstring for why this rides
 along on the capture job rather than a separately-enqueued 'judge' job. The 'judge' `kind` on
 `VerificationJob` itself is reserved for the two explicit, one-off paths that don't have a
-freshly-captured source to piggyback on: the "Ověřit citace" button and a client's retroactive
+freshly-captured source to piggyback on: the "Verify citations" button and a client's retroactive
 bulk-verify run (both `app/routers/runs.py`/`app/routers/clients.py`, T13).
 """
 
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -33,6 +34,7 @@ from app.services.claims import derive_claim
 from app.services.cost import estimate_run_cost, load_price_components, prices_at, raw_input_output_tokens
 from app.services.passages import select_passages
 from app.services.quote_match import ChunkMatch, find_chunk
+from app.services.verification_display import has_verification_since, latest_source_document as _latest_source_document, locate as _locate, locate_page as _locate_page
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +43,7 @@ VERIFIER_VERSION = "1.0"
 # design decision 4's routing table: OpenAI/Gemini give the answer-side claim, no source passage
 # to run a literal-quote check against (Anthropic/Perplexity, T8) — an LLM judgement against the
 # captured page is the only way to check them at all. Public (no leading underscore, T13): both
-# this module and app/routers/runs.py (to decide whether to show the "Ověřit citace" button) and
+# this module and app/routers/runs.py (to decide whether to show the "Verify citations" button) and
 # app/routers/clients.py (the bulk-verify preview/confirm) need to ask the same question.
 LLM_JUDGE_PROVIDERS = ("openai", "google_gemini")
 
@@ -74,6 +76,16 @@ _VERDICT_MAP = {
     "not_supported": "llm_not_supported",
     "contradicted": "llm_contradicted",
 }
+
+# The 4 verdicts a REAL LLM judgement can produce (design decision 22) — `judge_citations` can
+# also write `verdict="unverifiable"` for a citation whose capture failed before the LLM was ever
+# asked anything, which is a placeholder, not a judgement. Shared so "did this citation get a
+# real LLM opinion" is answered the same way everywhere it matters: app/routers/verification.py's
+# `_citation_strata` (excludes unverifiable placeholders from blind-labeling, found 2026-09-29)
+# and app/routers/clients.py's bulk-verify exclusion (code-review finding, 2026-09-30 — used to
+# treat any check_type='llm' row, placeholder included, as "already judged", permanently
+# excluding a response whose source later got captured successfully from ever being re-verified).
+LLM_JUDGED_VERDICTS = tuple(_VERDICT_MAP.values())
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 # Anchored on the literal, distinctive `"quote"`/closing-brace text rather than a generic
@@ -126,53 +138,36 @@ def _build_user_prompt(claim_text: str, passages: list[str]) -> str:
     passage_block = "\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(passages))
     return f"Claim: {claim_text}\n\nPage text:\n{passage_block}"
 
-
-def _latest_source_document(db: Session, url: str) -> SourceDocument | None:
-    return db.scalar(
-        select(SourceDocument).where(SourceDocument.requested_url == url).order_by(SourceDocument.fetched_at.desc()).limit(1)
-    )
-
-
-def _locate(match_start: int | None, locations: list[dict[str, Any]] | None) -> dict[str, Any] | None:
-    """Mirrors app/services/citation_verification.py's own `_locate` (T8) — kept as its own copy
-
-    here rather than a shared import: it's a small, generic (match_start, locations) -> location
-    lookup with nothing provider- or check-type-specific about it, and both modules independently
-    need it, the same reasoning app/services/citation_verification.py's `_store_archive_document`
-    (T10) already gave for not sharing a small helper across an unrelated module boundary.
-    """
-    if match_start is None or not locations:
-        return None
-    for location in locations:
-        if location["start"] <= match_start < location["end"]:
-            return {"headings": location["headings"], "collapsed": location["collapsed"], "collapsed_title": location["collapsed_title"]}
-    return None
-
-
-def _locate_page(match_start: int | None, page_starts: list[int] | None) -> int | None:
-    """Mirrors app/services/citation_verification.py's own `_locate_page` (T8) — see `_locate`'s
-
-    docstring for why this is its own copy rather than a shared import.
-    """
-    if match_start is None or not page_starts:
-        return None
-    page_index = 0
-    for i, start in enumerate(page_starts):
-        if start <= match_start:
-            page_index = i
-        else:
-            break
-    return page_index + 1
-
-
-def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIModel, now: datetime) -> None:
+def judge_citations(
+    db: Session,
+    raw_response: RawResponse,
+    *,
+    judge_model: AIModel,
+    now: datetime,
+    since: datetime | None = None,
+    deadline: float | None = None,
+) -> bool:
     """Run the LLM paraphrase check for every OpenAI/Gemini citation on `raw_response` whose
 
     source has already been captured (design decisions 20-24). Writes one `CitationVerification`
     row per checked citation, `check_type='llm'` — never touches an existing row (NFR-6,
     append-only). `judge_model` is a plain parameter (an `ai_models` row) rather than looked up
     internally: which model is "the" judge model is a caller/config decision (T13), not this
-    function's.
+    function's. Commits after each citation, not once at the end (code-review finding,
+    2026-09-30): a single trailing commit meant one citation's failure discarded every other
+    citation's already-paid LLM verdict from the same call.
+
+    `since` (typically `job.created_at`, passed by `process_verification_job`) skips a citation
+    that already has a `check_type='llm'` row created at/after `since` — lets a retried attempt
+    of the SAME job resume instead of re-judging (and re-paying for) citations an earlier attempt
+    already committed, while a genuinely new job (e.g. the user clicking "Verify citations" again
+    later) still re-judges everything, since old rows all predate that new job's `since`.
+
+    `deadline` (a `time.monotonic()` value, code-review finding 2026-09-30 round 2) bails this out
+    before a citation-heavy, LLM-call-heavy response can run long enough to approach the job's
+    lease expiry, which could otherwise let a second worker reclaim and concurrently double-
+    process (and double-pay for) the same job. Returns `True` when every citation was checked,
+    `False` when the deadline cut the pass short.
 
     Silently does nothing for a citation when: its provider isn't OpenAI/Gemini, its source
     hasn't been captured yet (still queued — a later pass, once capture finishes, is what makes
@@ -183,11 +178,22 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
     """
     provider_code = raw_response.run.model.provider.code
     if provider_code not in LLM_JUDGE_PROVIDERS:
-        return
+        return True
 
     judge_adapter = get_adapter(judge_model.provider.code)
     price_components = load_price_components(db, [judge_model.id])
     prices = prices_at(price_components.get(judge_model.id, []), now)
+    # Captured once, up front, rather than read via `raw_response.raw_payload`/`.rendered_text`/
+    # `judge_model.model_name`/`.id` inside the loop below (code-review finding, 2026-09-30 round
+    # 2): `SessionLocal` defaults to `expire_on_commit=True`, so the per-citation `db.commit()`
+    # this function now does would otherwise silently force a fresh SELECT of these rows' full
+    # columns on every subsequent citation, for no reason — nothing about `raw_response`/
+    # `judge_model` themselves changes mid-loop.
+    raw_payload = raw_response.raw_payload
+    rendered_text = raw_response.rendered_text
+    response_id = raw_response.id
+    judge_model_name = judge_model.model_name
+    judge_model_id = judge_model.id
 
     def _row(
         citation: Citation,
@@ -219,7 +225,7 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
             match_end=match.match_end if match else None,
             page_number=_locate_page(match.match_start, source_document.page_starts) if match else None,
             location=_locate(match.match_start, source_document.locations) if match else None,
-            llm_model_id=judge_model.id,
+            llm_model_id=judge_model_id,
             llm_reason=llm_reason,
             llm_quote=llm_quote,
             llm_quote_found=llm_quote_found,
@@ -230,12 +236,16 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
             verifier_version=VERIFIER_VERSION,
         )
 
-    citations = db.scalars(select(Citation).where(Citation.raw_response_id == raw_response.id)).all()
+    citations = db.scalars(select(Citation).where(Citation.raw_response_id == response_id)).all()
     for citation in citations:
+        if deadline is not None and time.monotonic() > deadline:
+            return False
         if not citation.source_url:
             continue
-        derived_claim = derive_claim(provider_code, citation, raw_response.rendered_text, raw_response.raw_payload)
+        derived_claim = derive_claim(provider_code, citation, rendered_text, raw_payload)
         if derived_claim is None:
+            continue
+        if since is not None and has_verification_since(db, citation.id, "llm", since):
             continue
 
         document = _latest_source_document(db, citation.source_url)
@@ -244,6 +254,7 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
 
         if document.error_reason is not None:
             db.add(_row(citation, derived_claim, source_document=document, verdict="unverifiable", reason=document.error_reason))
+            db.commit()
             continue
 
         source_text_row = db.get(SourceText, document.text_sha256) if document.text_sha256 else None
@@ -253,9 +264,10 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
         passages = select_passages(derived_claim.text, source_text_row.text)
         if not passages:
             db.add(_row(citation, derived_claim, source_document=document, verdict="unverifiable", reason="no_checkable_text"))
+            db.commit()
             continue
 
-        response = judge_adapter.judge(_SYSTEM_PROMPT, _build_user_prompt(derived_claim.text, passages), judge_model.model_name)
+        response = judge_adapter.judge(_SYSTEM_PROMPT, _build_user_prompt(derived_claim.text, passages), judge_model_name)
         tokens_in, tokens_out = raw_input_output_tokens(response.token_usage)
         cost_usd = estimate_run_cost(response.token_usage, judge_model, prices)
 
@@ -271,6 +283,7 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
                     tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
                 )
             )
+            db.commit()
             continue
 
         match: ChunkMatch | None = None
@@ -289,4 +302,5 @@ def judge_citations(db: Session, raw_response: RawResponse, *, judge_model: AIMo
                 tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
             )
         )
-    db.commit()
+        db.commit()
+    return True

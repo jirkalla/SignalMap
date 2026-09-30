@@ -1,7 +1,7 @@
 """Tests for app/routers/verification.py (docs/TASKS_CITATION_VERIFICATION.md T14, design
 
 decision 27) — blind labeling (`/verification/label`) and reviewing one specific LLM verdict
-(the run detail page's "Souhlasím / Nesouhlasím"). No real API calls — every fixture inserts
+(the run detail page's "Agree / Disagree"). No real API calls — every fixture inserts
 `citation_verifications` rows directly, the same "build the row, call the route, assert on the
 row" shape as tests/test_citation_verification.py.
 """
@@ -99,7 +99,7 @@ def test_next_blind_citation_excludes_ones_this_user_already_labeled(db_session:
 def test_next_blind_citation_offers_the_same_citation_to_a_different_user(db_session: Session, seed, sample_prompt: Prompt, editor_user: User, admin_user: User):
     """A second independent labeler must still be offered a citation the first one already
 
-    labeled (T15's "~20 z nich nezávisle druhý člověk").
+    labeled (T15's "~20 of them independently by a second person").
     """
     citation, _ = _make_llm_judged_citation(db_session, seed, sample_prompt)
     db_session.add(VerificationLabel(citation_id=citation.id, user_id=editor_user.id, verdict="supported", mode="blind"))
@@ -222,7 +222,40 @@ def test_review_disagree_without_a_correction_records_null_verdict(authed_client
 
     label = db_session.scalar(select(VerificationLabel).where(VerificationLabel.citation_id == citation.id))
     assert label.verdict is None
-    assert label.mode == "review"
+
+
+def test_review_disagree_still_works_against_an_unverifiable_citation(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    """Disagree (with or without a correction) never reads the LLM->human verdict map, so it must
+
+    keep working even when the citation's latest `check_type='llm'` verdict is `unverifiable` —
+    an earlier version of a guard added to reject a stale-tab Agree also rejected this
+    previously-working Disagree path (code-review finding, 2026-09-30 round 2).
+    """
+    citation, verification = _make_llm_judged_citation(db_session, seed, sample_prompt, verdict="unverifiable")
+    run_id = db_session.scalar(select(RawResponse.run_id).where(RawResponse.id == citation.raw_response_id))
+
+    response = authed_client.post(
+        f"/runs/{run_id}/citations/{citation.id}/review", data={"agree": "false", "verdict": "not_supported"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    label = db_session.scalar(select(VerificationLabel).where(VerificationLabel.citation_id == citation.id))
+    assert label.verdict == "not_supported"
+    assert label.agrees_with_verification_id == verification.id
+
+
+def test_review_agree_rejects_an_unverifiable_citation(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    """Agree DOES need a real llm_* verdict to copy — rejected with 409, not a silently-recorded
+
+    NULL-verdict "confirmed agreement" (code-review finding, 2026-09-30).
+    """
+    citation, _ = _make_llm_judged_citation(db_session, seed, sample_prompt, verdict="unverifiable")
+    run_id = db_session.scalar(select(RawResponse.run_id).where(RawResponse.id == citation.raw_response_id))
+
+    response = authed_client.post(f"/runs/{run_id}/citations/{citation.id}/review", data={"agree": "true"})
+
+    assert response.status_code == 409
+    assert db_session.scalar(select(VerificationLabel).where(VerificationLabel.citation_id == citation.id)) is None
 
 
 def test_review_404s_when_the_citation_has_no_llm_verdict_yet(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):

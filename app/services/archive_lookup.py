@@ -31,7 +31,9 @@ from typing import Callable
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy.orm import Session
 
+from app.services.rate_limit import throttle
 from app.services.source_extract import extract_html, extract_pdf
 
 logger = logging.getLogger(__name__)
@@ -42,10 +44,13 @@ CDX_URL = "https://web.archive.org/cdx/search/cdx"
 REQUEST_TIMEOUT_SECONDS = 60.0  # design decision 19
 MIN_REQUEST_INTERVAL_SECONDS = 3.0  # design decision 19
 
-# Module-level, process-lifetime state (production is a long-lived worker) — mirrors
-# source_capture.py's own `_last_domain_request`, just keyed by nothing since there is only one
-# target domain here. Tests reset this between runs (tests/test_archive_lookup.py).
-_last_request_at: float | None = None
+# Rate-limit key for the DB-backed shared throttle (app/services/rate_limit.py) — a fixed string,
+# not a domain, since there is only ever one target here (archive.org itself), unlike
+# source_capture.py's per-domain keys. Used to be a plain in-process module variable, which
+# production's 4 worker processes could each pace independently against (code-review finding,
+# 2026-09-30) — see MIN_DOMAIN_INTERVAL_SECONDS's comment in source_capture.py for the same gap
+# there.
+_THROTTLE_KEY = "archive.org"
 
 
 class ArchiveUnavailable(Exception):
@@ -80,23 +85,13 @@ class ArchivedContent:
     locations: list[dict] | None
 
 
-def _throttle(*, sleep: Callable[[float], None]) -> None:
-    global _last_request_at
-    now = time.monotonic()
-    if _last_request_at is not None:
-        remaining = MIN_REQUEST_INTERVAL_SECONDS - (now - _last_request_at)
-        if remaining > 0:
-            sleep(remaining)
-    _last_request_at = time.monotonic()
-
-
-def _request(client: httpx.Client, url: str, *, sleep: Callable[[float], None]) -> httpx.Response:
+def _request(db: Session, client: httpx.Client, url: str, *, sleep: Callable[[float], None]) -> httpx.Response:
     """One rate-limited GET against archive.org — the single chokepoint every archive.org call
 
     in this module goes through, so the 3s pacing and the ArchiveUnavailable classification only
     ever need to be right in one place.
     """
-    _throttle(sleep=sleep)
+    throttle(db, _THROTTLE_KEY, interval_seconds=MIN_REQUEST_INTERVAL_SECONDS, sleep=sleep)
     try:
         response = client.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
     except httpx.TimeoutException as exc:
@@ -109,7 +104,7 @@ def _request(client: httpx.Client, url: str, *, sleep: Callable[[float], None]) 
 
 
 def find_closest_snapshot(
-    client: httpx.Client, url: str, *, target_date: datetime, sleep: Callable[[float], None] = time.sleep
+    db: Session, client: httpx.Client, url: str, *, target_date: datetime, sleep: Callable[[float], None] = time.sleep
 ) -> ArchiveSnapshot | None:
     """The Wayback snapshot of `url` closest to `target_date` with a 200 status (design decision
 
@@ -125,7 +120,7 @@ def find_closest_snapshot(
         "closest": target_date.strftime("%Y%m%d%H%M%S"),
         "limit": "1",
     }
-    response = _request(client, f"{CDX_URL}?{urlencode(params)}", sleep=sleep)
+    response = _request(db, client, f"{CDX_URL}?{urlencode(params)}", sleep=sleep)
     rows = response.json()
     if len(rows) < 2:  # rows[0] is the CDX header row; no header at all means no match either
         return None
@@ -138,7 +133,7 @@ def find_closest_snapshot(
 
 
 def fetch_snapshot_content(
-    client: httpx.Client, snapshot: ArchiveSnapshot, *, sleep: Callable[[float], None] = time.sleep
+    db: Session, client: httpx.Client, snapshot: ArchiveSnapshot, *, sleep: Callable[[float], None] = time.sleep
 ) -> ArchivedContent | None:
     """Download and extract `snapshot`'s raw content — the same extract_html/extract_pdf
 
@@ -147,7 +142,7 @@ def fetch_snapshot_content(
     checkable (e.g. a PDF with no extractable text) — archive.org answered fine, the snapshot
     itself just has nothing usable, so this is NOT an ArchiveUnavailable.
     """
-    response = _request(client, snapshot.fetch_url, sleep=sleep)
+    response = _request(db, client, snapshot.fetch_url, sleep=sleep)
     content_type = response.headers.get("content-type", "")
     is_pdf = "pdf" in content_type.lower() or snapshot.fetch_url.lower().split("?")[0].endswith(".pdf")
 

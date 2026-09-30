@@ -340,7 +340,7 @@ def trigger_run(
 def verify_run_citations(request: Request, run_id: int, db: Session = Depends(get_db), user: User = Depends(current_active_user)):
     """Queue an on-demand LLM paraphrase check for this run's citations (docs/TASKS_CITATION_
 
-    VERIFICATION.md T13 point 2, design decision 25's "Ověřit citace" button) — independent of the
+    VERIFICATION.md T13 point 2, design decision 25's "Verify citations" button) — independent of the
     client's `auto_verify_citations` setting, the same way triggering a run is independent of any
     scheduler config. Same dual HTMX/plain-POST redirect shape as `trigger_run` above
     (AI_INSTRUCTIONS.md §5's reference implementation).
@@ -442,7 +442,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), use
     # nothing configured to compare against", so the template can show an explanatory empty
     # state instead of a technically-correct-but-misleading number (docs/TASKS_PHASE5.md P5-T6).
     tracked_entities_configured = bool(run.prompt.prompt_set.client.tracked_entities)
-    # docs/TASKS_CITATION_VERIFICATION.md T13 — the "Ověřit citace" button only shows when
+    # docs/TASKS_CITATION_VERIFICATION.md T13 — the "Verify citations" button only shows when
     # verify_run_citations could actually do something; the route's own 409 guard repeats this
     # exact check server-side rather than trusting a hidden/disabled button never gets bypassed.
     can_verify_citations = bool(raw_response and raw_response.has_citations and run.model.provider.code in LLM_JUDGE_PROVIDERS)

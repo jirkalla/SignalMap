@@ -9,6 +9,7 @@ in this app (routers/services build data, templates format and translate it).
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -112,6 +113,75 @@ def latest_verification_query() -> Select:
         .distinct(CitationVerification.citation_id)
         .order_by(CitationVerification.citation_id, CitationVerification.created_at.desc())
     )
+
+
+def has_verification_since(db: Session, citation_id: int, check_type: str, since: datetime) -> bool:
+    """Whether `citation_id` already has a `check_type` verification created at/after `since` —
+
+    lets `verify_citations_by_quote`/`judge_citations` (code-review finding, 2026-09-30) skip a
+    citation their OWN job already committed a row for on an earlier attempt of the same
+    `VerificationJob` (caller passes `since=job.created_at`), without blocking a genuinely new
+    job from re-verifying — a verification from an older, unrelated job always has
+    `created_at < since` and is never skipped. Uses `idx_citation_verifications_citation_created`
+    (citation_id, created_at DESC), so this is an index lookup, not a scan.
+    """
+    return (
+        db.scalar(
+            select(CitationVerification.id)
+            .where(
+                CitationVerification.citation_id == citation_id,
+                CitationVerification.check_type == check_type,
+                CitationVerification.created_at >= since,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def latest_source_document(db: Session, url: str) -> SourceDocument | None:
+    """The newest `SourceDocument` fetch of `url` — shared by app/services/citation_verification.py
+
+    (T8) and app/services/claim_judge.py (T12), which used to each keep their own byte-for-byte
+    copy of this lookup (code-review finding, 2026-09-30).
+    """
+    return db.scalar(
+        select(SourceDocument).where(SourceDocument.requested_url == url).order_by(SourceDocument.fetched_at.desc()).limit(1)
+    )
+
+
+def locate(match_start: int | None, locations: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """The `{headings, collapsed, collapsed_title}` record (app/services/source_extract.py's
+
+    shape) whose span contains `match_start`, or None when there's nothing to locate or no
+    location data was captured for this document (e.g. a PDF, which has `page_starts` instead).
+    Shared by citation_verification.py and claim_judge.py (code-review finding, 2026-09-30) — both
+    used to keep their own identical copy of this lookup.
+    """
+    if match_start is None or not locations:
+        return None
+    for location in locations:
+        if location["start"] <= match_start < location["end"]:
+            return {"headings": location["headings"], "collapsed": location["collapsed"], "collapsed_title": location["collapsed_title"]}
+    return None
+
+
+def locate_page(match_start: int | None, page_starts: list[int] | None) -> int | None:
+    """The 1-indexed PDF page `match_start` falls on, from `SourceDocument.page_starts`
+
+    (app/services/source_extract.py's `ExtractedPdf.page_starts`), or None for an HTML document
+    (which has `locations` instead) or when there's nothing to locate. Shared by
+    citation_verification.py and claim_judge.py (code-review finding, 2026-09-30).
+    """
+    if match_start is None or not page_starts:
+        return None
+    page_index = 0
+    for i, start in enumerate(page_starts):
+        if start <= match_start:
+            page_index = i
+        else:
+            break
+    return page_index + 1
 
 
 def latest_verifications(db: Session, raw_response_id: int) -> dict[int, CitationVerification]:
@@ -225,7 +295,7 @@ class Evidence:
     every other service in this app).
 
     `verification_id` (T14) is the underlying `CitationVerification.id`, `None` while pending —
-    the run detail page's "Souhlasím / Nesouhlasím" control (app/routers/verification.py) needs
+    the run detail page's "Agree / Disagree" control (app/routers/verification.py) needs
     it to record exactly which verdict a human reviewed, not just its value.
     """
 

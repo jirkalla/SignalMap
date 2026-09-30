@@ -17,10 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, Citation, Prompt, RawResponse, Run
+from app.models.rate_limit import ThrottleState
 from app.models.verification import CitationVerification, SourceDocument, VerificationJob
 from app.services import archive_lookup, source_capture
 from app.services.archive_lookup import ArchiveSnapshot, ArchiveUnavailable, fetch_snapshot_content, find_closest_snapshot
 from app.services.citation_verification import verify_citations_by_quote
+from app.services.rate_limit import throttle
 from app.services.verification_queue import DEFAULT_LEASE_MINUTES, claim_next_job, enqueue_capture, process_verification_job
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
@@ -33,20 +35,16 @@ def _no_sleep(_seconds: float) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_module_state():
-    """`_last_request_at` is module-level, process-lifetime state by design (production is a
+    """`_robots_cache` is module-level, process-lifetime state by design (production is a
 
     long-lived worker) — cleared between tests the same way tests/test_source_capture.py resets
-    source_capture's own module-level caches, so one test's throttling can't affect another's.
-    Also clears source_capture's own caches: several tests here go through `process_verification_job`
-    -> `capture_url` for the same citation URL, and without this, a leftover `_last_domain_request`
-    entry from an earlier test could trigger a real (if short) `time.sleep` here too.
+    it, so one test's robots.txt rule can't affect another's. The throttles themselves moved to
+    the database (`app/services/rate_limit.py`, code-review finding 2026-09-30); every test here
+    passes a no-op `sleep`, so a leftover `throttle_state` row from an earlier test changes what
+    duration would be computed, never whether the test actually waits.
     """
-    archive_lookup._last_request_at = None
-    source_capture._last_domain_request.clear()
     source_capture._robots_cache.clear()
     yield
-    archive_lookup._last_request_at = None
-    source_capture._last_domain_request.clear()
     source_capture._robots_cache.clear()
 
 
@@ -69,7 +67,7 @@ _CDX_HEADER = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "dig
 # --- find_closest_snapshot ----------------------------------------------------------------------
 
 
-def test_find_closest_snapshot_returns_the_matching_row():
+def test_find_closest_snapshot_returns_the_matching_row(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/cdx/search/cdx"
         assert "closest=20260305090000" in str(request.url)
@@ -77,7 +75,7 @@ def test_find_closest_snapshot_returns_the_matching_row():
         return httpx.Response(200, json=[_CDX_HEADER, _CDX_ROW])
 
     snapshot = find_closest_snapshot(
-        _client(handler), "https://www.karriere-familienunternehmen.de/firmenprofile/knauf",
+        db_session, _client(handler), "https://www.karriere-familienunternehmen.de/firmenprofile/knauf",
         target_date=TARGET_DATE, sleep=_no_sleep,
     )
 
@@ -88,49 +86,49 @@ def test_find_closest_snapshot_returns_the_matching_row():
     )
 
 
-def test_find_closest_snapshot_returns_none_for_an_empty_cdx_result():
+def test_find_closest_snapshot_returns_none_for_an_empty_cdx_result(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])
 
-    assert find_closest_snapshot(_client(handler), "https://example.com/gone", target_date=TARGET_DATE, sleep=_no_sleep) is None
+    assert find_closest_snapshot(db_session, _client(handler), "https://example.com/gone", target_date=TARGET_DATE, sleep=_no_sleep) is None
 
 
-def test_find_closest_snapshot_returns_none_for_header_only_result():
+def test_find_closest_snapshot_returns_none_for_header_only_result(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[_CDX_HEADER])
 
-    assert find_closest_snapshot(_client(handler), "https://example.com/gone", target_date=TARGET_DATE, sleep=_no_sleep) is None
+    assert find_closest_snapshot(db_session, _client(handler), "https://example.com/gone", target_date=TARGET_DATE, sleep=_no_sleep) is None
 
 
 @pytest.mark.parametrize("status", [429, 500, 503])
-def test_find_closest_snapshot_raises_archive_unavailable_on_rate_limit_or_server_error(status):
+def test_find_closest_snapshot_raises_archive_unavailable_on_rate_limit_or_server_error(status, db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status)
 
     with pytest.raises(ArchiveUnavailable):
-        find_closest_snapshot(_client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
+        find_closest_snapshot(db_session, _client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
 
 
-def test_find_closest_snapshot_raises_archive_unavailable_on_timeout():
+def test_find_closest_snapshot_raises_archive_unavailable_on_timeout(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("timed out", request=request)
 
     with pytest.raises(ArchiveUnavailable):
-        find_closest_snapshot(_client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
+        find_closest_snapshot(db_session, _client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
 
 
-def test_find_closest_snapshot_raises_archive_unavailable_on_connection_error():
+def test_find_closest_snapshot_raises_archive_unavailable_on_connection_error(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
     with pytest.raises(ArchiveUnavailable):
-        find_closest_snapshot(_client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
+        find_closest_snapshot(db_session, _client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
 
 
 # --- fetch_snapshot_content ----------------------------------------------------------------------
 
 
-def test_fetch_snapshot_content_extracts_html_text():
+def test_fetch_snapshot_content_extracts_html_text(db_session: Session):
     snapshot = ArchiveSnapshot(
         archive_timestamp="20260303091500",
         fetch_url="https://web.archive.org/web/20260303091500id_/https://example.com/a",
@@ -144,51 +142,57 @@ def test_fetch_snapshot_content_extracts_html_text():
             headers={"content-type": "text/html; charset=utf-8"},
         )
 
-    content = fetch_snapshot_content(_client(handler), snapshot, sleep=_no_sleep)
+    content = fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep)
 
     assert content is not None
     assert "Knauf setzt auf nachhaltiges Bauen." in content.text
     assert content.page_starts is None
 
 
-def test_fetch_snapshot_content_returns_none_when_extracted_text_is_empty():
+def test_fetch_snapshot_content_returns_none_when_extracted_text_is_empty(db_session: Session):
     snapshot = ArchiveSnapshot(archive_timestamp="20260303091500", fetch_url="https://web.archive.org/web/x/id_/y", view_url="https://web.archive.org/web/x/y")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"<html><body><script>var x=1;</script></body></html>", headers={"content-type": "text/html"})
 
-    assert fetch_snapshot_content(_client(handler), snapshot, sleep=_no_sleep) is None
+    assert fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep) is None
 
 
 @pytest.mark.parametrize("status", [429, 502])
-def test_fetch_snapshot_content_raises_archive_unavailable_on_rate_limit_or_server_error(status):
+def test_fetch_snapshot_content_raises_archive_unavailable_on_rate_limit_or_server_error(status, db_session: Session):
     snapshot = ArchiveSnapshot(archive_timestamp="20260303091500", fetch_url="https://web.archive.org/web/x/id_/y", view_url="https://web.archive.org/web/x/y")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status)
 
     with pytest.raises(ArchiveUnavailable):
-        fetch_snapshot_content(_client(handler), snapshot, sleep=_no_sleep)
+        fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep)
 
 
-# --- _throttle -------------------------------------------------------------------------------
+# --- throttle (app/services/rate_limit.py) ----------------------------------------------------
 
 
-def test_throttle_sleeps_for_the_remaining_interval():
-    archive_lookup._last_request_at = time.monotonic() - 1.0
+def test_throttle_sleeps_for_the_remaining_interval(db_session: Session):
+    # Equivalent to "the last request was 1s ago" against a 3s interval (MIN_REQUEST_INTERVAL_
+    # SECONDS): the previous reservation's own next_available_at is 1s-ago + 3s = now + 2s.
+    now = datetime.now(timezone.utc)
+    db_session.add(ThrottleState(key="archive.org", next_available_at=now + timedelta(seconds=2)))
+    db_session.commit()
     calls: list[float] = []
 
-    archive_lookup._throttle(sleep=calls.append)
+    throttle(db_session, "archive.org", interval_seconds=archive_lookup.MIN_REQUEST_INTERVAL_SECONDS, sleep=calls.append)
 
     assert len(calls) == 1
-    assert 1.8 <= calls[0] <= 2.2
+    assert 1.5 <= calls[0] <= 2.5
 
 
-def test_throttle_does_not_sleep_once_the_interval_has_already_elapsed():
-    archive_lookup._last_request_at = time.monotonic() - 10.0
+def test_throttle_does_not_sleep_once_the_interval_has_already_elapsed(db_session: Session):
+    now = datetime.now(timezone.utc)
+    db_session.add(ThrottleState(key="archive.org", next_available_at=now - timedelta(seconds=7)))
+    db_session.commit()
     calls: list[float] = []
 
-    archive_lookup._throttle(sleep=calls.append)
+    throttle(db_session, "archive.org", interval_seconds=archive_lookup.MIN_REQUEST_INTERVAL_SECONDS, sleep=calls.append)
 
     assert calls == []
 

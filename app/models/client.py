@@ -79,7 +79,7 @@ class Client(Base):
     automatically, right after their sources are captured. Default off (design decision 25) —
     this is the ONLY thing the flag gates: capture (T4) and the free literal-quote check for
     Anthropic/Perplexity (T8) always run for every client regardless of it, and it has no effect
-    on the manual "Ověřit citace" button or a client's own retroactive bulk-verify run (T13) —
+    on the manual "Verify citations" button or a client's own retroactive bulk-verify run (T13) —
     both are explicit, one-off user actions, not the "automatically after every new run" behavior
     this flag controls.
 
