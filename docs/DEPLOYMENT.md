@@ -77,11 +77,18 @@ git checkout master && git pull --ff-only && docker compose up -d --build --wait
 ```
 
 ```bash
-COPYFILE_DISABLE=1 tar -cf - tests requirements-dev.txt | docker compose run --rm --no-deps -T app sh -c 'tar -xf - && pip install --no-cache-dir -r requirements-dev.txt && python -m pytest -p no:cacheprovider -q'
+COPYFILE_DISABLE=1 tar -cf - tests requirements-dev.txt CHANGELOG.md | docker compose run --rm --no-deps -T app sh -c 'tar -xf - && pip install --no-cache-dir -r requirements-dev.txt && python -m pytest -p no:cacheprovider -q'
 ```
 `pytest` je jen vývojová závislost, do image se nebalí — `docker compose exec
 app pytest` proto vždy selže na „No module named pytest". Tenhle příkaz ho
 nainstaluje do jednorázového kontejneru, spustí a zahodí.
+
+`CHANGELOG.md` v tar archivu je nutný — `dockerfile` ho do image nebalí
+(`.dockerignore` pouští dovnitř jen `app/`, `alembic/`, `scripts/` a pár
+jednotlivých souborů), takže bez něj `tests/test_version.py`
+(`docs/TASKS_VERSIONING.md` design decision 14) padá na `FileNotFoundError`
+u `/code/CHANGELOG.md` — bez ohledu na to, jestli verze a changelog
+skutečně souhlasí. Zjištěno 2026-09-30 při nasazení v1.2.0.
 
 **Čekaný výstup:** `N passed`, 0 failed. Na server nejde nic, co tady
 neprošlo. Projdi i ručně obrazovky, kterých se změna týká.
