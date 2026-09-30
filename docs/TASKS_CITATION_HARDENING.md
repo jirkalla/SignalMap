@@ -158,6 +158,14 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
 | T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ⏳ |
 
+**Pořadí provedení** (ID úkolů jsou stabilní a nemění se, pořadí se od nich
+liší, protože T8 a T9 přibyly dodatečně):
+
+`T1 ✅ → T8 ✅ → T2 → T3 → T4 → T5 → T9 → T6 → T7`
+
+T2–T5 jsou na sobě nezávislé. T9 musí být hotový před backfillem v T7
+(krok 5), T6 dokumentuje až hotové opravy a T7 (nasazení) je vždy poslední.
+
 ---
 
 ## T1 — Přesměrování hop po hopu + robots cíle

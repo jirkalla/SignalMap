@@ -10,6 +10,9 @@
 ##    (pořadí doporučené — CH-1 má největší dopad), CH-6 dokumentuje,
 ##    CH-7 nasazuje. CH-8 a CH-9 přibyly 2026-09-30 při ověřování CH-1
 ##    a dělají se PŘED CH-7 (CH-9 nejpozději před backfillem v CH-7).
+##    POŘADÍ PROVEDENÍ: CH-1 ✅ → CH-8 ✅ → CH-2 → CH-3 → CH-4 → CH-5 →
+##    CH-9 → CH-6 → CH-7. (Čísla promptů jsou stabilní ID, ne pořadí;
+##    CH-7 = nasazení je vždy poslední.)
 ## 3. SESSION HEADER vlož jen JEDNOU na začátku nové konverzace pro tuhle větev.
 ## 4. Po každém promptu: git commit (message navržená na konci promptu,
 ##    commit provádíš ty, ne agent — agent NIKDY nespouští git commit/push
