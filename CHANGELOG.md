@@ -11,6 +11,15 @@ not a public API.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-30
+
+### Fixed
+
+- The run detail page returned a 500 error when a citation's source capture
+  had failed with reason `http_429` or `http_other` — both were valid
+  reason values but had no matching translation key. `/ops`'s "Capture
+  success by reason" table had the same gap for the two reasons.
+
 ## [1.2.0] - 2026-09-30
 
 ### Added

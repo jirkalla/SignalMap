@@ -413,7 +413,9 @@
   "run.reason_http_403": "Blocked (403 Forbidden)",
   "run.reason_http_404": "Page not found (404)",
   "run.reason_http_410": "Page permanently removed (410)",
+  "run.reason_http_429": "Rate limited (429)",
   "run.reason_http_5xx": "Server error",
+  "run.reason_http_other": "Blocked (other HTTP error)",
   "run.reason_timeout": "Timed out",
   "run.reason_bot_challenge": "Blocked by bot protection",
   "run.reason_robots": "Blocked by robots.txt",
@@ -820,10 +822,12 @@
   "ops.capture_reason_http_410": "Gone (410)",
   "ops.capture_reason_http_429": "Rate limited (429)",
   "ops.capture_reason_http_5xx": "Server error (5xx)",
+  "ops.capture_reason_http_other": "Blocked (other HTTP error)",
   "ops.capture_reason_timeout": "Timeout",
   "ops.capture_reason_bot_challenge": "Bot challenge",
   "ops.capture_reason_robots": "Blocked by robots.txt",
   "ops.capture_reason_too_large": "Too large",
   "ops.capture_reason_pdf_no_text": "PDF with no extractable text",
-  "ops.capture_reason_no_checkable_text": "No checkable text"
+  "ops.capture_reason_no_checkable_text": "No checkable text",
+  "ops.capture_reason_archive_unavailable": "Archive copy unavailable"
 }

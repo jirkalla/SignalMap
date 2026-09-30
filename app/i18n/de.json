@@ -413,7 +413,9 @@
   "run.reason_http_403": "Blockiert (403 Forbidden)",
   "run.reason_http_404": "Seite nicht gefunden (404)",
   "run.reason_http_410": "Seite dauerhaft entfernt (410)",
+  "run.reason_http_429": "Rate-Limit erreicht (429)",
   "run.reason_http_5xx": "Serverfehler",
+  "run.reason_http_other": "Blockiert (anderer HTTP-Fehler)",
   "run.reason_timeout": "Zeitüberschreitung",
   "run.reason_bot_challenge": "Durch Bot-Schutz blockiert",
   "run.reason_robots": "Durch robots.txt blockiert",
@@ -820,10 +822,12 @@
   "ops.capture_reason_http_410": "Entfernt (410)",
   "ops.capture_reason_http_429": "Rate-Limit (429)",
   "ops.capture_reason_http_5xx": "Serverfehler (5xx)",
+  "ops.capture_reason_http_other": "Blockiert (anderer HTTP-Fehler)",
   "ops.capture_reason_timeout": "Zeitüberschreitung",
   "ops.capture_reason_bot_challenge": "Bot-Abwehr",
   "ops.capture_reason_robots": "Durch robots.txt blockiert",
   "ops.capture_reason_too_large": "Zu groß",
   "ops.capture_reason_pdf_no_text": "PDF ohne extrahierbaren Text",
-  "ops.capture_reason_no_checkable_text": "Kein prüfbarer Text"
+  "ops.capture_reason_no_checkable_text": "Kein prüfbarer Text",
+  "ops.capture_reason_archive_unavailable": "Archivkopie nicht verfügbar"
 }
