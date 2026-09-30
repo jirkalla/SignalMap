@@ -26,6 +26,7 @@ Nothing in progress right now.
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
+| TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
 | TASKS_PEEC_COMPARISON | PC | feature/signalmap-peec-comparison | #23 | 2026-09-28 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
 | TASKS_DEV_DB_REFRESH | DR | feature/signalmap-dev-db-refresh | #22 | 2026-09-26 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
 | TASKS_OPENAI_IMPORT_RACE | OIR | feature/signalmap-openai-import-race | #21 | 2026-09-25 | Production deploy and verification (T3) not done yet |

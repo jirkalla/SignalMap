@@ -11,6 +11,8 @@ not a public API.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-30
+
 ### Added
 
 - `tools/local/refresh_dev_db.py` loads a production dump into the local

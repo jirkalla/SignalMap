@@ -1,5 +1,7 @@
 # SignalMap — Tasks: Citation Verification
 
+## Status: 🔜 Merged (PR #24, 2026-09-30) — production deploy and verification (T18) pending
+
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-citation-verification
 ## Task ID prefix: CV
