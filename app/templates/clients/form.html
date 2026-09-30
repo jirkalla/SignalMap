@@ -12,7 +12,8 @@
   {{ text_field('name', t('client.name_label'), client.name if client else '', required=True) }}
   {{ text_field('industry', t('client.industry_label'), client.industry if client else '') }}
   {{ text_field('domain', t('client.domain_label'), client.domain if client else '', placeholder=t('client.domain_placeholder')) }}
-  {{ textarea_field('notes', t('client.notes_label'), client.notes if client else '', rows=4) }}
+  {{ textarea_field('vision', t('client.vision_label'), client.vision if client else '', rows=5, help=t('client.vision_help'), placeholder=t('client.vision_placeholder')) }}
+  {{ textarea_field('notes', t('client.notes_label'), client.notes if client else '', rows=4, placeholder=t('client.notes_placeholder')) }}
   {% if client %}
   <div class="border-t border-stone-200 pt-4 mt-2">
     {{ text_field('priority', t('client.priority_label'), client.priority, type='number') }}

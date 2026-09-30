@@ -52,6 +52,93 @@ def test_create_list_edit_detail_flow(authed_client: TestClient):
     assert "Acme Corp" in detail_response.text
 
 
+def test_create_client_stores_the_vision(authed_client: TestClient, db_session: Session):
+    response = authed_client.post(
+        "/clients", data={"name": "Acme", "vision": "  Reliable and innovative.\nSustainable.  "}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    client_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    assert db_session.get(Client, client_id).vision == "Reliable and innovative.\nSustainable."
+
+
+def test_editing_a_client_changes_and_clears_the_vision(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+    url = f"/clients/{client_id}/edit"
+
+    assert authed_client.post(url, data={"name": "Acme", "vision": "First."}, follow_redirects=False).status_code == 303
+    db_session.expire_all()
+    assert db_session.get(Client, client_id).vision == "First."
+
+    assert authed_client.post(url, data={"name": "Acme", "vision": "Second."}, follow_redirects=False).status_code == 303
+    db_session.expire_all()
+    assert db_session.get(Client, client_id).vision == "Second."
+
+    assert authed_client.post(url, data={"name": "Acme", "vision": "   "}, follow_redirects=False).status_code == 303
+    db_session.expire_all()
+    assert db_session.get(Client, client_id).vision is None
+
+
+def test_vision_at_the_limit_is_accepted(authed_client: TestClient, db_session: Session):
+    client_id = _create_client(authed_client)
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit", data={"name": "Acme", "vision": "x" * 4000}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    db_session.expire_all()
+    assert len(db_session.get(Client, client_id).vision) == 4000
+
+
+def test_editing_a_client_rejects_an_over_long_vision_and_keeps_the_typed_text(
+    authed_client: TestClient, db_session: Session
+):
+    client_id = _create_client(authed_client)
+    too_long = "y" * 4001
+
+    response = authed_client.post(
+        f"/clients/{client_id}/edit", data={"name": "Renamed", "vision": too_long}, follow_redirects=False
+    )
+
+    assert response.status_code == 400
+    assert "4000" in response.text
+    assert too_long in response.text  # the filled-in form comes back, nothing is lost
+    db_session.expire_all()
+    client = db_session.get(Client, client_id)
+    assert client.vision is None
+    assert client.name == "Acme Corporation"
+
+
+def test_creating_a_client_rejects_an_over_long_vision(authed_client: TestClient, db_session: Session):
+    response = authed_client.post("/clients", data={"name": "Too Wordy", "vision": "z" * 4001}, follow_redirects=False)
+
+    assert response.status_code == 400
+    assert db_session.scalar(select(Client).where(Client.name == "Too Wordy")) is None
+
+
+def test_viewer_cannot_post_a_vision(client: TestClient, editor_user: User, viewer_user: User, db_session: Session):
+    _login_as(client, editor_user)
+    client_id = _create_client(client)
+
+    _login_as(client, viewer_user)
+    assert client.post("/clients", data={"name": "X", "vision": "v"}, follow_redirects=False).status_code == 403
+    assert (
+        client.post(f"/clients/{client_id}/edit", data={"name": "X", "vision": "v"}, follow_redirects=False).status_code
+        == 403
+    )
+    db_session.expire_all()
+    assert db_session.get(Client, client_id).vision is None
+
+
+def test_client_form_shows_vision_above_notes_with_help(authed_client: TestClient):
+    body = authed_client.get("/clients/new").text
+
+    assert 'name="vision"' in body
+    assert body.index('name="vision"') < body.index('name="notes"')
+    assert "How the client wants AI assistants to describe it" in body
+
+
 def test_delete_blocked_when_a_run_exists_under_the_client(authed_client: TestClient, db_session: Session, seed: dict):
     client_id = _create_client(authed_client)
     prompt_set = PromptSet(client_id=client_id, name="Set")
