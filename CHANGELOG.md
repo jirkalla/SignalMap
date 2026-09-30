@@ -21,12 +21,29 @@ not a public API.
   client's Peec export for the models both tools have, and reports whether
   the two tools' brand and source-domain findings differ more than either
   tool's own day-to-day/repeat noise.
+- Citation verification: every cited source is fetched and its text
+  snapshotted, with an archive.org fallback when the live page has
+  changed or disappeared. Anthropic and Perplexity citations are checked
+  against their captured source deterministically (literal-quote
+  matching); OpenAI and Gemini citations can additionally be judged by an
+  LLM for paraphrased claims, gated behind a per-client toggle with a
+  cost estimate shown before any bulk run. Reviewers can agree or
+  disagree with an LLM verdict, or blind-label a citation without seeing
+  it first. The run detail page, the client dashboard, and `/ops` all
+  show the resulting verified/partial/unsupported/unverifiable rates.
+- `python -m app.cli.backfill_sources` captures sources for a client's
+  existing citation history (a one-time backfill, not part of the
+  regular run flow).
 
 ### Fixed
 
 - The first runs on OpenAI, Perplexity, DeepSeek, Grok, or Anthropic
   after a restart could fail with "deadlock detected by _ModuleLock"
   when triggered concurrently.
+- OpenAI citations showed the raw link marker
+  (`([domain](url?utm_source=openai))`) as the "Cited claim" on the run
+  detail page and in exports, instead of the actual claim text from the
+  rendered answer.
 
 ## [1.1.0] - 2026-09-23
 

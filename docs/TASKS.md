@@ -465,6 +465,14 @@ which in Perplexity's and Grok's cases turned out to disagree with the real API 
 would have shipped wrong code otherwise. Full task breakdown, all corrected design decisions,
 and the verified response shapes: `docs/TASKS_NEW_PROVIDERS.md`.
 
+## Citation verification
+
+Branch `feature/signalmap-citation-verification` (not yet merged), roadmap item #12. Checks
+whether a cited source actually supports the claim it's attached to — captured page snapshots
+(with an archive.org fallback), deterministic quote-matching, an opt-in LLM paraphrase judge, and
+human review. Full task breakdown, design decisions, and the production measurements the design is
+based on: `docs/TASKS_CITATION_VERIFICATION.md` and `docs/PROMPTS_CITATION_VERIFICATION.md`.
+
 ## After phase 1 (not started yet — flag if a request touches these early)
 - Source/signal map, intervention hypotheses (dashboard v0 itself is done — see Phase 4 above).
 - Multi-tenant scoping by client_id (authentication itself is done — see Phase 6 above).

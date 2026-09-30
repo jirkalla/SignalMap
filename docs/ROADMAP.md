@@ -564,6 +564,14 @@ porovnání s tím, co vrátil provider; (2) vlastní tabulka
 u klienta; (5) brána z ruční slepé sady před zapnutím LLM. Měření a
 prototypy na datech z produkce jsou ve „Výchozím stavu“ toho dokumentu.
 
+**T1–T16 implementováno na branch `feature/signalmap-citation-verification`
+(2026-09-29), čeká na merge** — capture/snímky zdrojů (vč. archive.org
+zálohy), deterministické ověření citátu (Anthropic/Perplexity), LLM
+posouzení parafráze (OpenAI/Gemini) za přepínačem u klienta s odhadem ceny
+před spuštěním, ruční i hromadné ověření, lidské hodnocení verdiktů (slepá
+sada i souhlas/nesouhlas), agregace na dashboardu a v `/ops`. Zbývá T17
+(tahle dokumentace) a T18 (nasazení, backfill na produkci, konec větve).
+
 ## 13. Project/Brand entita
 
 **Přidáno 2026-09-15.** Vrstva mezi `Client` a `PromptSet` — dnes 1 Client
@@ -802,7 +810,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 9 | Nové UI | Přehodnoceno 2026-09-18 — hotový je jen screenshot a nápad, ne design systém; nejde o kosmetiku, ale o rozhraní ovladatelné na mobilu/tabletu, tedy velkou položku. Potvrzeno žádný přechod na SPA (2026-09-15) |
 | 10 | Client-scoped access | Rozšířeno o smíšený model (2026-09-15) — Client = tenant, `user_type`/`home_client_id`, Knauf jako konkrétní případ; čeká na vlastní branch |
 | 11 | Oprava extrakce citací (Gemini) | ✅ Hotovo, smergnuto ([PR #15](https://github.com/jirkalla/SignalMap/pull/15)) a nasazeno 2026-09-18 — lokálně 551 → 1 354 vazeb, na produkci 565 → 820; historie přepočítaná migrací `0028` |
-| 12 | LLM quote-verification skill | Navrženo 2026-09-15; **rozšířeno a naplánováno 2026-09-28** jako ověřování citací proti staženým zdrojům — `docs/TASKS_CITATION_VERIFICATION.md` (CV-T1…T18, neimplementováno) |
+| 12 | LLM quote-verification skill | Navrženo 2026-09-15; **rozšířeno a naplánováno 2026-09-28** jako ověřování citací proti staženým zdrojům — `docs/TASKS_CITATION_VERIFICATION.md` (CV-T1…T18). **T1–T16 hotové na branch `feature/signalmap-citation-verification` (2026-09-29), čeká na merge** — zbývá T17 (dokumentace) a T18 (nasazení) |
 | 13 | Project/Brand entita | Navrženo 2026-09-15 |
 | 14 | Client-view portál + Executive Summary | Navrženo 2026-09-15; #2, #3, #4 a #5 splněné, zbývá čekat na 10 |
 | 15 | UUID `public_id` na `clients` | Navrženo 2026-09-15, spolu s 10/14 |
