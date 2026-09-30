@@ -618,3 +618,43 @@ def test_verify_retroactively_preview_excludes_providers_with_no_llm_judge_path(
     # The confirm form only renders when raw_response_count > 0 (clients/verify_retroactively_
     # preview.html) — its absence is this test's proof the Anthropic citation was excluded.
     assert 'action="/clients/%d/verify-retroactively/confirm"' % client_id not in response.text
+
+
+def test_detail_shows_the_vision_card_above_the_metadata(authed_client: TestClient):
+    client_id = _create_client(authed_client)
+    authed_client.post(
+        f"/clients/{client_id}/edit", data={"name": "Acme", "vision": "Trusted and bold.", "notes": "test notes"}, follow_redirects=False
+    )
+
+    body = authed_client.get(f"/clients/{client_id}").text
+
+    assert "Trusted and bold." in body
+    assert 'id="client-vision-title"' in body
+    assert body.index("Trusted and bold.") < body.index("test notes")
+    assert "Add a vision" not in body
+
+
+def test_detail_without_a_vision_offers_an_editor_the_add_link_but_not_a_viewer(
+    client: TestClient, editor_user: User, viewer_user: User
+):
+    _login_as(client, editor_user)
+    client_id = _create_client(client)
+
+    editor_body = client.get(f"/clients/{client_id}").text
+    assert "Add a vision" in editor_body
+    assert 'id="client-vision-title"' not in editor_body
+
+    _login_as(client, viewer_user)
+    viewer_body = client.get(f"/clients/{client_id}").text
+    assert "Add a vision" not in viewer_body
+    assert 'id="client-vision-title"' not in viewer_body
+
+
+def test_a_viewer_sees_an_existing_vision(client: TestClient, editor_user: User, viewer_user: User):
+    _login_as(client, editor_user)
+    client_id = _create_client(client)
+    client.post(f"/clients/{client_id}/edit", data={"name": "Acme", "vision": "Seen by all."}, follow_redirects=False)
+
+    _login_as(client, viewer_user)
+
+    assert "Seen by all." in client.get(f"/clients/{client_id}").text
