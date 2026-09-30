@@ -1,0 +1,32 @@
+{# "Verify citations" button or the progress of its judge job (docs/TASKS_CITATION_VERIFICATION.md
+   T13 point 2). Rendered inline by runs/detail.html and served on its own by
+   GET /runs/{id}/verify-status, which is what the hx-get below re-fetches.
+
+   While a job is queued/running/retrying (`verify_active`) the wrapper polls itself every few
+   seconds; the server answers the first poll after the job finished with an HX-Refresh, so the
+   whole page reloads once and shows the new verdicts — this fragment never needs to decide that
+   itself. The button hides while a job is active (the route also ignores a second POST, so a
+   stale tab can't stack another paid LLM pass). #}
+{% from "partials/macros.html" import button, local_time %}
+<div id="verify-status" class="-mt-4 mb-6"
+     {% if verify_active %}hx-get="/runs/{{ run.id }}/verify-status?poll=true" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
+  {% if verify_active %}
+  <p class="flex items-center gap-2 text-sm text-stone-500" role="status">
+    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" aria-hidden="true"></span>
+    {% if verify_job.status == 'queued' %}{{ t('run.verify_status_queued') }}
+    {% elif verify_job.status == 'deferred' %}{{ t('run.verify_status_retrying') }}
+    {% else %}{{ t('run.verify_status_running') }}{% endif %}
+  </p>
+  {% else %}
+  {% if verify_job and verify_job.status == 'error' %}
+  <p class="text-sm text-red-700 mb-2" role="alert">{{ t('run.verify_status_error') }}</p>
+  {% elif verify_job and verify_job.status == 'done' %}
+  <p class="text-sm text-stone-500 mb-2">{{ t('run.verify_status_done') }} {{ local_time(verify_job.finished_at or verify_job.created_at, t('common.utc_suffix'), seconds=False) }}</p>
+  {% endif %}
+  {% if can_edit(current_user) %}
+  <form method="post" action="/runs/{{ run.id }}/verify-citations" hx-post="/runs/{{ run.id }}/verify-citations">
+    {{ button(t('run.verify_citations_button'), variant='secondary') }}
+  </form>
+  {% endif %}
+  {% endif %}
+</div>

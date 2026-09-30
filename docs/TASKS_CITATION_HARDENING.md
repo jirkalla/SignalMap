@@ -7,7 +7,7 @@
 
 Status: navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
-Sedm úkolů, bez migrace.
+Osm úkolů (T8 přibyl 2026-09-30 při lokálním ověřování T1), bez migrace.
 
 **Nasazuje se společně s Vision u klienta** (`docs/TASKS_CLIENT_VISION.md`,
 #23): větev `feature/signalmap-client-vision` se smerguje do `master`
@@ -155,6 +155,7 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T5 | Test pokrytí překladů důvodů a verdiktů | ⏳ |
 | T6 | Dokumentace + CHANGELOG | ⏳ |
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
+| T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
 
 ---
 
@@ -353,6 +354,51 @@ jako před změnou.
 **Done when:** kroky 4–6 ověřené a uživatel potvrdil.
 
 **Expected commit:** `docs(docs): record citation hardening deploy and close the branch`
+
+---
+
+## T8 — Průběh „Verify citations“ a ochrana proti duplicitním jobům
+
+Přibylo 2026-09-30 při lokálním ověřování T1: tlačítko „Verify citations“
+po kliknutí nic neukázalo a server ho nechránil — každý klik zařadil další
+placený `judge` job (nad runem 401 jich vznikly tři). Nejde o opravu citací
+jako T1–T5, ale o stejné riziko zbytečných nákladů, a mění jen UI a router,
+takže patří do téhož vydání. **Musí být hotové před T7.**
+
+**Target:** `app/services/verification_queue.py`, `app/routers/runs.py`,
+`app/templates/runs/detail.html`, `app/templates/runs/verify_status.html` (nový),
+`app/i18n/{en,de}.json`, `tests/test_runs.py`
+
+1. `verification_queue.py`: `ACTIVE_JOB_STATUSES = ("queued", "leased", "deferred")`
+   a `latest_judge_job(db, raw_response_id)`. Jen `judge` — `capture` má
+   vlastní stav „čeká na capture“ (`verification_display.is_capture_pending`).
+2. `verify_run_citations`: když poslední `judge` job je aktivní, nový se
+   nezařadí (odpověď je dál přesměrování, stránka ukáže průběh). Podmínku
+   způsobilosti sdílí s tlačítkem (`_can_verify_citations`).
+3. Nová route `GET /runs/{id}/verify-status` (HTML fragment): tlačítko, nebo
+   průběh jobu; s `?poll=true` a dokončeným jobem vrací `HX-Refresh: true`,
+   takže se stránka jednou sama obnoví a ukáže nové verdikty. Fragment se
+   při aktivním jobu sám dotazuje každé 4 s (vzor `schedules/index.html`).
+4. `runs/verify_status.html` + pět klíčů `run.verify_status_*` (en/de). Stavy:
+   čeká / běží / opakuje se po chybě / selhalo (+ tlačítko) / „Last verified“
+   (+ tlačítko). Viewer vidí průběh, ale ne tlačítko. Čas se vykresluje přes
+   makro `local_time` mimo `str.format` (jinak by se escapoval).
+5. Testy: druhý POST při `queued`/`leased`/`deferred` nevytvoří job, po
+   `done`/`error` ano; fragment pro každý stav, `HX-Refresh` po dokončení,
+   409 pro run bez citací, viewer bez tlačítka.
+
+**Done when:** testy + celá sada `pytest` projdou; v prohlížeči (run 401) se
+průběh objeví po kliknutí, po dokončení se stránka sama obnoví, druhá záložka
+tlačítko nevidí; 640/1024 px bez horizontálního posuvníku. ✅ ověřeno
+2026-09-30.
+
+**Vědomě mimo rozsah:** hromadné ověření na detailu klienta
+(`clients.py::verify_retroactively_confirm`) dál zařazuje joby bez téhle
+kontroly; samostatné rozhodnutí. Během ověřování narazil soudce na limit
+útraty účtu Anthropic (job zůstal `deferred` a po navýšení limitu doběhl) —
+kategorizace takových chyb je vydání 2 (#21).
+
+**Expected commit:** `fix(runs): show verification progress and ignore duplicate Verify citations clicks`
 
 ---
 

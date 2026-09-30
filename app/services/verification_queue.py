@@ -85,6 +85,26 @@ def enqueue_capture(db: Session, raw_response_id: int, *, now: datetime) -> None
     db.commit()
 
 
+# A job in any of these states still has work ahead of it (`deferred` = failed once, waiting out
+# its backoff) — the statuses the run detail page shows as "in progress" and the ones a second
+# "Verify citations" click must not stack another paid judge job on top of.
+ACTIVE_JOB_STATUSES = ("queued", "leased", "deferred")
+
+
+def latest_judge_job(db: Session, raw_response_id: int) -> VerificationJob | None:
+    """The newest 'judge' job for `raw_response_id`, in any state — None if nobody ever asked.
+
+    Only 'judge' jobs: a 'capture' job has its own "waiting for capture" state on the run page
+    (`verification_display.is_capture_pending`), and only a judge job costs LLM money.
+    """
+    return db.scalar(
+        select(VerificationJob)
+        .where(VerificationJob.raw_response_id == raw_response_id, VerificationJob.kind == "judge")
+        .order_by(VerificationJob.id.desc())
+        .limit(1)
+    )
+
+
 def enqueue_judge(db: Session, raw_response_id: int, *, now: datetime, requested_by_user_id: int | None = None) -> None:
     """Queue a 'judge' job for `raw_response_id` (docs/TASKS_CITATION_VERIFICATION.md T13) — the
 

@@ -19,6 +19,14 @@ not a public API.
   top of the client page, and as a collapsible strip on the dashboard. It
   is informational only: it does not affect runs, prompts or exports.
 
+### Changed
+
+- "Verify citations" on a run now shows its progress — queued, running,
+  retrying, or failed — instead of a bare button, reloads the page once
+  the check finishes so the new verdicts appear, and ignores another click
+  while a check for that run is already in progress (no duplicate paid
+  LLM passes).
+
 ## [1.2.1] - 2026-09-30
 
 ### Fixed
