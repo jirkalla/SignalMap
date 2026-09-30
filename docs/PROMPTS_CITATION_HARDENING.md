@@ -6,9 +6,10 @@
 ## 0. NEJDŘÍV větev feature/signalmap-client-vision (docs/PROMPTS_CLIENT_VISION.md,
 ##    VI-1 až VI-4), merge do master BEZ nasazení — nasadí se v CH-7.
 ## 1. git checkout -b feature/signalmap-citation-hardening (z master po merge Vision)
-## 2. Sedm promptů (CH-1 až CH-7). CH-1 až CH-5 jsou na sobě nezávislé
+## 2. Devět promptů (CH-1 až CH-9). CH-1 až CH-5 jsou na sobě nezávislé
 ##    (pořadí doporučené — CH-1 má největší dopad), CH-6 dokumentuje,
-##    CH-7 nasazuje.
+##    CH-7 nasazuje. CH-8 a CH-9 přibyly 2026-09-30 při ověřování CH-1
+##    a dělají se PŘED CH-7 (CH-9 nejpozději před backfillem v CH-7).
 ## 3. SESSION HEADER vlož jen JEDNOU na začátku nové konverzace pro tuhle větev.
 ## 4. Po každém promptu: git commit (message navržená na konci promptu,
 ##    commit provádíš ty, ne agent — agent NIKDY nespouští git commit/push
@@ -59,6 +60,8 @@ KRITICKÉ:
 ---
 
 ## CH-1 — Přesměrování hop po hopu + robots cíle
+
+### DONE — commit b8c8898
 
 ```
 Úkol CH-T1 z docs/TASKS_CITATION_HARDENING.md (design decisions 1-3).
@@ -170,6 +173,53 @@ test(i18n): require a translation for every unverifiable reason
 Ukaž diff PŘED zápisem.
 
 Navržený commit: docs(docs): document citation hardening fixes
+```
+
+---
+
+## CH-8 — Průběh „Verify citations" a ochrana proti duplicitním jobům
+
+### DONE — commit 0ec458d
+
+```
+Úkol CH-T8 z docs/TASKS_CITATION_HARDENING.md.
+
+1. Přečti app/routers/runs.py (verify_run_citations, run_detail),
+   app/services/verification_queue.py, app/templates/runs/detail.html
+   a vzor pollingu v app/templates/schedules/index.html.
+2. Řekni mi co/kde/proč (§2) a jak budou vypadat stavy průběhu.
+3. Implementuj podle T8 bodů 1-4; texty přes t() v en/de.
+4. Testy podle T8 bodu 5, celá sada pytest.
+5. Lokální ověření v prohlížeči na run 401: průběh po kliknutí, sama
+   se obnovující stránka po dokončení, druhá záložka bez tlačítka,
+   640/1024 px bez horizontálního posuvníku. Pozor: soudce může narazit
+   na limit účtu Anthropic — job pak zůstane `deferred`, to není chyba
+   kódu.
+
+Na konci: shrnutí, testy, výsledek ověření, navržený commit:
+fix(runs): show verification progress and ignore duplicate Verify citations clicks
+```
+
+---
+
+## CH-9 — Hromadné ověření u klienta nestackuje aktivní judge joby
+
+```
+Úkol CH-T9 z docs/TASKS_CITATION_HARDENING.md. Předpoklad: CH-8 je
+commitnutý (používá ACTIVE_JOB_STATUSES z verification_queue.py).
+
+1. Přečti app/routers/clients.py (_bulk_verify_candidate_raw_response_ids,
+   náhled i potvrzení) a testy hromadného ověření v tests/test_clients.py.
+2. Řekni mi co/kde/proč (§2) — hlavně jak se vyloučení aktivního jobu
+   projeví v náhledu vs. v potvrzení.
+3. Implementuj podle T9 bodů 1-2.
+4. Testy podle T9 bodu 3, celá sada pytest.
+5. Lokální ověření: po „Verify citations" na run 401 (nebo ručním
+   zařazení judge jobu) ukaž, že náhled u klienta tuhle odpověď nenabízí,
+   dokud job neskončí.
+
+Na konci: shrnutí, testy, výsledek ověření, navržený commit:
+fix(clients): skip responses with a judge job in progress in bulk verify
 ```
 
 ---

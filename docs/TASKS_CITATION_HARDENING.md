@@ -7,7 +7,7 @@
 
 Status: navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
-Osm úkolů (T8 přibyl 2026-09-30 při lokálním ověřování T1), bez migrace.
+Devět úkolů (T8 a T9 přibyly 2026-09-30 při lokálním ověřování T1), bez migrace.
 
 **Nasazuje se společně s Vision u klienta** (`docs/TASKS_CLIENT_VISION.md`,
 #23): větev `feature/signalmap-client-vision` se smerguje do `master`
@@ -148,7 +148,7 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Přesměrování hop po hopu + robots cíle (Gemini) | ⏳ |
+| T1 | Přesměrování hop po hopu + robots cíle (Gemini) | ✅ |
 | T2 | Timeout na voláních providerů | ⏳ |
 | T3 | Výpadek archive.org izolovaný na citaci | ⏳ |
 | T4 | Sanitizace NUL v extrahovaném textu | ⏳ |
@@ -156,6 +156,7 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T6 | Dokumentace + CHANGELOG | ⏳ |
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
+| T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ⏳ |
 
 ---
 
@@ -394,11 +395,44 @@ tlačítko nevidí; 640/1024 px bez horizontálního posuvníku. ✅ ověřeno
 
 **Vědomě mimo rozsah:** hromadné ověření na detailu klienta
 (`clients.py::verify_retroactively_confirm`) dál zařazuje joby bez téhle
-kontroly; samostatné rozhodnutí. Během ověřování narazil soudce na limit
+kontroly — řeší T9. Během ověřování narazil soudce na limit
 útraty účtu Anthropic (job zůstal `deferred` a po navýšení limitu doběhl) —
 kategorizace takových chyb je vydání 2 (#21).
 
 **Expected commit:** `fix(runs): show verification progress and ignore duplicate Verify citations clicks`
+
+---
+
+## T9 — Hromadné ověření u klienta nestackuje aktivní judge joby
+
+Přibylo 2026-09-30 jako dotažení T8. Hromadné zpětné ověření na detailu
+klienta (`/clients/{id}`: rozsah dat → náhled → potvrzení) vybírá odpovědi
+přes `clients.py::_bulk_verify_candidate_raw_response_ids`, která vynechá
+jen odpovědi **s už zapsaným** LLM verdiktem. Odpověď s `judge` jobem, který
+je teprve ve frontě nebo běží, verdikt ještě nemá — druhé spuštění nebo klik
+na „Verify citations“ během dávky ji proto zařadí znovu a za stejné citace
+se zaplatí dvakrát. U malé dávky jde o centy (run 401 ≈ 0,03 USD), po
+backfillu v T7 (desítky až stovky odpovědí) o jednotky dolarů a dlouhou
+frontu. **Musí být hotové před T7 krokem 5 (backfill).**
+
+**Target:** `app/routers/clients.py`, `tests/test_clients.py`
+
+1. `_bulk_verify_candidate_raw_response_ids`: vyloučit odpovědi, které mají
+   `judge` job ve stavu z `ACTIVE_JOB_STATUSES` (`verification_queue.py`,
+   z T8) — stejná definice „běží“ jako u tlačítka na run detailu. Náhled
+   i potvrzení používají tutéž funkci, takže se počty nerozejdou. Docstring
+   doplnit o tohle pravidlo.
+2. Žádná změna šablon ani překladů. Potvrzení dál jen zařadí méně jobů než
+   náhled, nikdy více (beze změny oproti dnešku).
+3. Testy: odpověď s `judge` jobem `queued`/`leased`/`deferred` mimo náhled
+   i potvrzení; po `done`/`error` bez verdiktu znovu způsobilá; druhé
+   potvrzení hned po prvním nezařadí nic.
+
+**Done when:** testy + celá sada `pytest` projdou; lokálně po „Verify
+citations“ na runu z fixture (Skoda Auto, prompt 54) náhled u klienta tuhle
+odpověď nenabízí, dokud job neskončí.
+
+**Expected commit:** `fix(clients): skip responses with a judge job in progress in bulk verify`
 
 ---
 
