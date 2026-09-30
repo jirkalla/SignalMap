@@ -20,7 +20,9 @@ reconstructed from git history later. PR numbers and merge dates come from
 
 ## In progress / not started
 
-Nothing in progress right now.
+| Document | Prefix | Branch | Notes |
+|---|---|---|---|
+| TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | T1–T4 done on the branch; not merged yet. Release v1.3.0 together with citation hardening (CH-T7) |
 
 ## Merged, release pending
 

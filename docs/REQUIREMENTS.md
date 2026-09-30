@@ -12,9 +12,16 @@ scheduling, auth) is deliberately deferred until this loop is proven.
 ## 2. Functional Requirements
 
 ### 2.1 Client management
-- FR-1: User can create a client with name, industry, and free-text notes.
+- FR-1: User can create a client with name, industry, domain, vision, and free-text notes.
 - FR-2: User can view a list of existing clients.
-- FR-3: User can edit an existing client's name, industry, and notes.
+- FR-3: User can edit an existing client's name, industry, domain, vision, and notes.
+- FR-3a (Vision): A client has an optional free-text **Vision** (max 4000
+  characters) — how the client wants AI assistants to describe it. It is
+  distinct from Notes (internal agency remarks): shown as the first card on the client
+  detail page and as a collapsible strip on `/dashboard`, editable by
+  admin/editor and readable by viewer. It is plain text with no structure
+  and does not influence runs, prompts, analysis or export
+  (docs/TASKS_CLIENT_VISION.md, docs/ROADMAP.md #23).
 - Strategy/reputation fields (guiding principles, priority topics, desired
   wording) are explicitly **out of scope for phase 1** — deferred to the
   analysis-layer phase.

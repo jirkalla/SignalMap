@@ -6,6 +6,7 @@ the skill's "Build sequencing" section.
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -24,6 +25,10 @@ from app.services.cost import average_llm_judge_cost_per_citation
 from app.services.verification_queue import enqueue_judge
 from app.templating import get_t, render
 from app.utils import unique_slugify
+
+# Upper bound on `clients.vision`, enforced here rather than in the column (plain TEXT) so it can
+# change without a migration (docs/TASKS_CLIENT_VISION.md design decision 3).
+VISION_MAX_LENGTH = 4000
 
 # Reused on every create/edit/delete route below (docs/TASKS_PHASE6.md P6-T6) — viewer can read
 # everything on this router, but not change anything.
@@ -197,6 +202,31 @@ def _citation_count(db: Session, raw_response_ids: list[int]) -> int:
     return db.scalar(select(func.count(Citation.id)).where(Citation.raw_response_id.in_(raw_response_ids))) or 0
 
 
+def _vision_too_long_response(request: Request, vision: str, submitted: dict, *, action: str, cancel_url: str, title_key: str):
+    """Re-render the client form (400) with an inline error, keeping everything the user typed.
+
+    A ~4000-character free-text field is exactly the input a user would hate to lose to a bare
+    error page, so this returns the filled-in form instead of raising AppError. `submitted` holds
+    the raw form values, wrapped in a stand-in for the `client` the template reads from — nothing
+    is written to the database, and on the edit path the ORM object is never touched.
+    """
+    t = get_t(request)
+    message = t("errors.client_vision_too_long").format(max=VISION_MAX_LENGTH, count=len(vision))
+    return render(
+        request,
+        "clients/form.html",
+        {
+            "title": t(title_key),
+            "action": action,
+            "cancel_url": cancel_url,
+            "client": SimpleNamespace(**submitted),
+            "error": message,
+            "default_daily_run_limit": get_settings().scheduler_default_daily_run_limit,
+        },
+        400,
+    )
+
+
 @router.get("")
 def list_clients(request: Request, db: Session = Depends(get_db)):
     """List all clients, newest first (FR-2)."""
@@ -217,9 +247,13 @@ def new_client_form(request: Request):
 
 @router.post("", dependencies=_editor_or_admin)
 def create_client(
+    request: Request,
     name: str = Form(..., description="Client's display name."),
     industry: str = Form("", description="Free-text industry label, e.g. 'Automotive'."),
     notes: str = Form("", description="Free-text notes about this client."),
+    vision: str = Form(
+        "", description="How the client wants AI assistants to describe it — free text, max 4000 characters."
+    ),
     domain: str = Form(
         "",
         description="Client's own primary domain, e.g. 'acme.com' — used to detect when the client's "
@@ -227,16 +261,26 @@ def create_client(
     ),
     db: Session = Depends(get_db),
 ):
-    """Create a new client with name, industry, notes, and domain (FR-1).
+    """Create a new client with name, industry, vision, notes, and domain (FR-1).
 
     A URL-safe slug is auto-derived from the name; it is not user-editable
     and never changes after creation.
     """
+    if len(vision.strip()) > VISION_MAX_LENGTH:
+        return _vision_too_long_response(
+            request,
+            vision.strip(),
+            {"name": name, "industry": industry, "domain": domain, "vision": vision, "notes": notes},
+            action="/clients",
+            cancel_url="/clients",
+            title_key="client.create_title",
+        )
     slug = unique_slugify(db, Client, name)
     client = Client(
         name=name.strip(),
         slug=slug,
         industry=industry.strip() or None,
+        vision=vision.strip() or None,
         notes=notes.strip() or None,
         domain=domain.strip().lower() or None,
     )
@@ -298,6 +342,9 @@ def update_client(
     name: str = Form(..., description="Client's display name."),
     industry: str = Form("", description="Free-text industry label."),
     notes: str = Form("", description="Free-text notes about this client."),
+    vision: str = Form(
+        "", description="How the client wants AI assistants to describe it — free text, max 4000 characters."
+    ),
     domain: str = Form(
         "",
         description="Client's own primary domain, e.g. 'acme.com' — used to detect when the client's "
@@ -312,14 +359,33 @@ def update_client(
     ),
     db: Session = Depends(get_db),
 ):
-    """Update an existing client's name, industry, notes, domain, and scheduler settings (FR-3,
+    """Update an existing client's name, industry, vision, notes, domain, and scheduler settings (FR-3,
 
     docs/TASKS_SCHEDULER.md T10). The slug is immutable.
     """
     t = get_t(request)
     client = _get_client_or_404(db, request, client_id)
+    if len(vision.strip()) > VISION_MAX_LENGTH:
+        return _vision_too_long_response(
+            request,
+            vision.strip(),
+            {
+                "name": name,
+                "industry": industry,
+                "domain": domain,
+                "vision": vision,
+                "notes": notes,
+                "priority": priority,
+                "daily_run_limit": daily_run_limit,
+                "monthly_budget_usd": monthly_budget_usd,
+            },
+            action=f"/clients/{client_id}/edit",
+            cancel_url=f"/clients/{client_id}",
+            title_key="client.edit_title",
+        )
     client.name = name.strip()
     client.industry = industry.strip() or None
+    client.vision = vision.strip() or None
     client.notes = notes.strip() or None
     client.domain = domain.strip().lower() or None
     # Bounds found in code review, 2026-09-22: `priority` feeds `client.priority * 1000 +

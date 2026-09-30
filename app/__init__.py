@@ -7,4 +7,4 @@ the worker heartbeat, and the page footer all import it rather than keeping thei
 Bump rules: docs/DEPLOYMENT.md. History: CHANGELOG.md.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"

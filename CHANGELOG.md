@@ -11,6 +11,23 @@ not a public API.
 
 ## [Unreleased]
 
+### Added
+
+- Clients have a Vision field — how the client wants AI assistants to
+  describe it (values, positioning, key messages). It is entered on the
+  client form above Notes (up to 4000 characters), shown as a card at the
+  top of the client page, and as a collapsible strip on the dashboard. It
+  is informational only: it does not affect runs, prompts or exports.
+
+## [1.2.1] - 2026-09-30
+
+### Fixed
+
+- The run detail page returned a 500 error when a citation's source capture
+  had failed with reason `http_429` or `http_other` — both were valid
+  reason values but had no matching translation key. `/ops`'s "Capture
+  success by reason" table had the same gap for the two reasons.
+
 ## [1.2.0] - 2026-09-30
 
 ### Added

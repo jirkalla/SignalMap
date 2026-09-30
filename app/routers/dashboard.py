@@ -261,7 +261,13 @@ def dashboard_page(
         {
             "dashboard_init": {
                 "clients": [
-                    {"id": c.id, "name": c.name, "domain": c.domain, "tracked_entities_count": len(c.tracked_entities)}
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "domain": c.domain,
+                        "vision": c.vision,
+                        "tracked_entities_count": len(c.tracked_entities),
+                    }
                     for c in clients
                 ],
                 "markets": [{"id": m.id, "label": m.locale_name or m.code} for m in markets],

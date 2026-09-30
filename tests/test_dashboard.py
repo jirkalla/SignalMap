@@ -6,6 +6,7 @@ express "two runs in one week, a third two weeks later, with an empty week in be
 exercise the league table, the own-domain matching, and the timeseries gap-filling together.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
@@ -786,3 +787,14 @@ def test_xai_reviewed_sources_count_reflects_total_and_reviewed(authed_client: T
     rows = authed_client.get(f"/dashboard/api/citation-verification?client_id={acme.id}&range=all").json()
 
     assert rows["xai"] == {"total_citations": 2, "reviewed_count": 0}
+
+
+def test_dashboard_init_carries_each_clients_vision(authed_client: TestClient, db_session: Session, seed: dict):
+    client, _ = _client_with_prompt(db_session, seed, "Visionary Ltd", "visionary-ltd")
+    client.vision = "Pioneer of quiet luxury."
+    db_session.commit()
+
+    body = authed_client.get("/dashboard").text
+    init = json.loads(body.split('id="dashboard-init">', 1)[1].split("</script>", 1)[0])
+
+    assert [c["vision"] for c in init["clients"] if c["id"] == client.id] == ["Pioneer of quiet luxury."]
