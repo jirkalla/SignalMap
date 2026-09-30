@@ -5,7 +5,9 @@
 ## Task ID prefix: VI
 ## Cílová verze: v1.3.0 (MINOR) — nasazuje se společně s `feature/signalmap-citation-hardening`
 
-Status: navrženo 2026-09-30 (`docs/ROADMAP.md` #23, požadavek uživatelů).
+## Status: ✅ Hotovo na větvi (T1–T4), merge do `master` a PR čekají — nasazení s v1.3.0 (CH-T7)
+
+Navrženo 2026-09-30 (`docs/ROADMAP.md` #23, požadavek uživatelů).
 Čtyři úkoly, **jedna migrace** (jen přidává).
 
 **Goal:** klient má pole **Vision** — jak chce, aby ho AI asistenti
@@ -96,10 +98,10 @@ tuhle roadmapu" (plný Desired Perception Claims model nahrazený pro v1
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Migrace + model | ⏳ |
-| T2 | Formulář (makro, router, validace) | ⏳ |
-| T3 | Detail klienta, dashboard, nápověda | ⏳ |
-| T4 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | Migrace + model | ✅ |
+| T2 | Formulář (makro, router, validace) | ✅ |
+| T3 | Detail klienta, dashboard, nápověda | ✅ |
+| T4 | Dokumentace + CHANGELOG | ✅ |
 
 ---
 
