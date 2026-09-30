@@ -696,6 +696,7 @@ Při stejném celkovém počtu workerů C nezrychlí víc než B — přínos C 
 potřeba měnit limity z UI.
 
 **Zváženo a odloženo (konverzace 2026-09-26):**
+
 - **Vlákna v jednom workeru** — stejný efekt jako C2 v jednom procesu,
   ale přepis smyčky (sloty, lease, heartbeat, shutdown); zvážit, až bude
   počet replik nepraktický.
@@ -708,6 +709,270 @@ potřeba měnit limity z UI.
   poskytovatele (bez toho nejsou citace). Kandidát, až bude tlačit cena.
 - **Celery/Redis** — ne; Postgres fronta se `SKIP LOCKED` je pro tenhle
   objem standard.
+
+## 19. Nedostatky ověřování citací zjištěné při nasazení v1.2.1 (pilot Knauf)
+
+**Zaznamenáno 2026-09-30** při prvním produkčním běhu ověřování citací pro
+Knauf (`docs/TASKS_CITATION_VERIFICATION.md`, viz i `CHANGELOG.md [1.2.1]`)
+— pět nezávislých nálezů, žádný nebyl blokující pro nasazení, ale všechny
+reálně snižují míru úspěšně ověřených citací:
+
+- **Gemini citace se nedají ověřit vůbec, systémově** — appka kontroluje
+  robots.txt na Googlově přesměrovací bráně
+  (`vertexaisearch.cloud.google.com/grounding-api-redirect/...`; `Disallow:
+  /grounding-api-redirect` a `/grounding-redirect` platí pro
+  `User-agent: *`) ještě předtím, než se dostane k reálné cílové stránce
+  (`app/services/source_capture.py`, pořadí: cache → robots.txt →
+  fetch/redirect). Postihuje **100 % Gemini citací**, u všech klientů,
+  natrvalo — ne dočasný jev. Oprava: vyřešit přesměrování první, robots.txt
+  kontrolovat až u cílové domény.
+- **Chybí timeout na volání AI providerů** — potvrzeno u
+  `app/adapters/grok.py` (jen výchozí hodnota z OpenAI SDK, žádné
+  explicitní `timeout=`), stojí za kontrolu i u ostatních adaptérů. Zaseklý
+  Grok request zablokoval jeden ze 4 workerů na ~27 minut; appka to sama
+  nepoznala (lease na `run_queue` se neuvolní, dokud má položka přiřazený
+  `run_id` — design decision 13) ani nevyřešila (`reconcile_interrupted_runs`
+  čeká 30 minut a pak jen označí `error`, žádný automatický retry).
+- **Jedna chyba archive.org shodí celý verification job, ne jen jednu
+  citaci** — záměr (design decision 19: `ArchiveUnavailable` je běžná
+  `Exception`, job se odloží a zkusí znovu, max 3×), ale při výpadku
+  archive.org (série `503`/timeout) to vzalo s sebou i ostatní citace ve
+  stejném jobu, co jinak byly v pořádku.
+- **NUL byte v extrahovaném PDF textu shazuje insert** — Postgres `text`
+  sloupec je striktně odmítá; jeden konkrétní PDF tímhle shodil celý job.
+  Chybí sanitizace před uložením do `source_texts`.
+- **Chybí i18n parity test pro `UNVERIFIABLE_REASONS`** — přesně tohle
+  způsobilo produkční 500 na `/runs/<id>` opravené v `v1.2.1` (chyběly
+  `run.reason_http_429`/`http_other`). Bez mechanické kontroly (analogické
+  `tests/test_version.py`) se stejná třída chyby zopakuje při příštím
+  novém důvodu.
+
+## 20. Provozní viditelnost citační fronty a kvóty
+
+**Zaznamenáno 2026-09-30**, ze stejného Knauf pilotu — tři menší UX
+nálezy, žádný z nich bug, ale všechny stály čas při ručním ověřování stavu
+appky:
+
+- **Žádný ukazatel zbývající denní kvóty** (`daily_run_limit`, výchozí
+  50/24h na klienta) na detailu klienta — muselo se ověřovat ručně přes SQL
+  před spuštěním větší dávky.
+- **Přeskočené runy kvůli kvótě jsou tiché** — `RunQueueItem.status=
+  'skipped', skip_reason='quota_exceeded'` pošle jen notifikaci, na
+  `/schedules` ani detailu klienta není souhrnný banner "X runů dnes
+  přeskočeno".
+- **"LLM judge" dlaždice na `/ops` matoucí** — počítá jen ručně vyvolané
+  judge joby (tlačítko "Verify citations"), ne automatické posouzení
+  běžící uvnitř capture jobu (`_maybe_auto_judge`,
+  `app/services/verification_queue.py`) — číslo tak vypadá podezřele
+  nízké, i když automatika běží v pořádku.
+
+## 21. Scheduler: odolnost vůči chybám účtu providera (kredit / billing)
+
+**Zaznamenáno 2026-09-30** — vyčerpaný kredit u OpenAI: všechny běhy GPT-5.6
+Luna/Terra skončily `error` po třech pokusech za ~6 minut (12:01:42 →
+12:02:42 → 12:08:03), zatímco Gemini a Claude Haiku doběhly. Nález
+z rozboru `app/worker.py` a `app/services/queue.py`; žádný z bodů zatím
+neimplementován a všechny vyžadují záznam v `docs/TASKS_SCHEDULER.md` a
+vlastní branch (mimo aktivní fázi).
+
+**Příčina:** `_is_retryable_error` zná jen 429, 5xx a chyby bez HTTP
+odpovědi; o pokusech rozhoduje `_MAX_TRANSPORT_ATTEMPTS = 3`. Grace period
+(`SCHEDULER_GRACE_PERIOD_MINUTES`, 360) **není okno pro opakování**, jen
+horní hranice stáří položky — kredit se za 6 minut nedoplní, takže položky
+padnou dřív, než by šlo problém napravit. Provideři to hlásí různě
+(OpenAI 429 `insufficient_quota`, Anthropic 400 `credit balance too low`),
+takže chování dnes závisí na náhodě kódu, ne na příčině.
+
+Návrhy, podle přínosu:
+
+- **Kategorie chyby z adapteru** (`billing` / `rate_limit` / `auth` /
+  `transient` / `invalid_request`) místo hádání z `status_code` ve workeru.
+  U `billing` položku neukončovat jako `error`, ale `deferred` s dlouhým
+  odstupem (30–60 min) až do konce grace — po doplnění kreditu doběhne sama.
+  Jedna notifikace „kredit u provideru X došel“ místo `schedule.run_failed`
+  na každou položku.
+- **Circuit breaker na provideru** — po několika po sobě jdoucích
+  `billing`/`auth` chybách pozastavit další volání tohoto provideru
+  (nezahlcovat historii chybnými `Run` řádky), stav ukázat na `/schedules`
+  s tlačítkem Obnovit.
+- **Sladit retry politiku** — krok 25 min z `_BACKOFF_MINUTES` se při 3
+  pokusech nikdy nepoužije; buď zvýšit počet pokusů, nebo krok odstranit.
+  Do UI a dokumentace jasně rozlišit „grace = stáří položky“ vs.
+  „transport attempts = počet pokusů“ (docstring dnes vede k záměně).
+- **History: filtr podle modelu/providera/stavu/chyby** a Retry all errors
+  podle celého filtru (dnes jen text promptu nebo klient), `last_error`
+  přímo v řádku. Nahradí ruční SQL pro hromadný restart chyb.
+- **Seskupit opakované pokusy** v Runs — jedna položka dnes dává 3
+  chybové `Run` řádky, přehled vypadá zavádějícně.
+- **Kontrola před dávkou** — odhad ceny (`app/services/cost.py`) a ověření,
+  že provider je dostupný, před zařazením velkých dávek (prompt set ×
+  modely × persony); rozšířit `check_budget_thresholds`.
+- **Ověřit** `queued_depth` v `_enqueue_one_schedule`, aby dávka
+  neúspěšných položek nezpůsobila `queue_depth_exceeded` u dalších oken.
+- **Testy** `_is_retryable_error` s reálnými tvary chyb všech SDK
+  (`insufficient_quota`, `credit balance too low`).
+
+Souvisí s #19 (chybějící timeout adaptérů) a #18 (429 při vyšší souběžnosti).
+Doporučené pořadí: kategorie chyby + sladění retry politiky (malé, řeší
+přesně dnešní situaci) → circuit breaker → History filtry.
+
+**Dočasně (do implementace):** hromadný restart chyb přes SQL — kopie
+`create_retry` (`app/services/queue.py`) jako `INSERT ... SELECT` nad
+`run_queue` s `retry_of_id` a `NOT EXISTS` proti dvojímu spuštění;
+skript byl připraven mimo repo, při opakované potřebě by patřil do `tools/`.
+
+## 22. Market: kód locale jako jediný vstup, názvy jazyka/země do system instruction
+
+**Zaznamenáno 2026-09-30** (požadavek uživatele). System-instruction šablona
+dnes dostává `{market_language}` = `cs` a `{market_country}` = `CZ` — ISO
+kódy, ne slova. Velké modely „cs" většinou pochopí (hlavně díky
+`{market_locale_name}` ve stejné větě), ale dvoupísmenné kódy jsou uprostřed
+anglické věty víceznačné (`it`, `no`, `is`, `hi`, `id`, `or`…) a slabší
+modely s nimi zachází hůř. Instrukce je přitom jediná páka na jazyk
+odpovědi — žádný provider nemá parametr „odpověz v jazyce X".
+
+**Nejde jen přepsat hodnoty v `/markets`** (`cs` → `Czech`, `CZ` →
+`Czech Republic`): formulář validuje ISO formát, sloupce jsou `String(10)`
+a hlavně `market_country` jde jako ISO kód do `user_location.country`
+u Anthropic/OpenAI/Grok — slovo by rozbilo geo-targeting.
+
+**Návrh (best practice — Shopify/Stripe/ICU vzor):** jediný povinný vstup
+je kód locale ve tvaru BCP 47 (`cs-CZ`); jazyk, země a jejich anglické
+názvy se odvodí z CLDR přes knihovnu **Babel** a předvyplní ve formuláři.
+Názvy se **ukládají** (nové sloupce `language_name`, `country_name`), ne
+počítají za běhu — text instrukce je součást měřicí metodiky a CLDR se
+mění (CZ: „Czech Republic" → „Czechia"), upgrade knihovny nesmí potichu
+změnit prompty. `{market_language}`/`{market_country}` nově vrací názvy,
+ISO kódy přes nové `{market_language_code}`/`{market_country_code}`.
+
+- **ISO kódy `language`/`country` zůstávají beze změny** — čtou je adaptéry
+  (`user_location`); odvozují se z kódu, uživatel je už nepíše (dnes můžou
+  být s `code` v rozporu a nic to nezachytí).
+- **Formulář:** jen pole Code; HTMX `GET /markets/resolve?code=` předvyplní
+  odvozené kódy (read-only) a názvy (editovatelné). Bez JS doplní server.
+- **V1 jen `jazyk` / `jazyk-ZEMĚ`** — skripty/varianty (`zh-Hant-TW`,
+  `es-419`) odmítnout, zatím je nikdo nepotřebuje.
+- **Názvy anglicky** (šablony jsou anglické); `locale_name` zůstává (čte ho
+  dashboard a `app/utils.py`), předvyplní se jako „Language (Country)".
+- **Nový default šablony** s `{market_country}` + `{market_language}`;
+  market bez země → `{market_country}` spadne na `locale_name`/`code`.
+- **Migrace** (flagovat, `AI_INSTRUCTIONS.md` §4): `language_name`,
+  `country_name` (`String(100) NULL`) + backfill přes Babel, výjimka CZ →
+  „Czech Republic", oprava `fr-FR` `locale_name` na „French (France)". Jen
+  přidává — jde vrátit downgradem. **Nová závislost** `babel`.
+- **Nasazení:** před merge SQL kontrola uložených šablon na produkci
+  (`system_instruction_templates.template ~ '\{market_(language|country)\}'`)
+  — kde věta počítá s kódem, přepnout na `{market_*_code}`. Po nasazení
+  jeden testovací run a kontrola `runs.request_payload ->>
+  'system_instruction'` + `user_location.country` = `CZ`. **Datum a čas
+  přepnutí zapsat** do CHANGELOG a deploy logu — od té chvíle jde modelům
+  jiný text instrukce (hranice pro srovnání trendů; staré runy mají
+  původní text v `request_payload`, NFR-6).
+- Malé: 1 migrace, ~8 souborů + i18n + testy. Verze MINOR.
+
+## 23. Vision u klienta
+
+**Zaznamenáno 2026-09-30** (požadavek uživatelů). Při zakládání/editaci
+klienta pole **Vision** (nad Notes) — jak chce klient, aby ho AI popisovala;
+na detailu klienta zvýrazněná karta nahoře, ne další řádek metadat.
+Volitelně sbalené v hlavičce `/dashboard`.
+
+- Je to přesně to „prosté volné textové pole", kterým roadmapa v sekci
+  „Mimo tuhle roadmapu" nahradila plný Desired Perception Claims model —
+  pojmenovat to tak od začátku, protože na něj půjde navázat #8 (gap
+  score) i #14 (Executive Summary).
+- Vision ≠ Notes: Vision = žádoucí vnímání (vstup pro budoucí analýzu),
+  Notes = interní poznámky. Proto dvě pole.
+- **Migrace** (`clients.vision TEXT NULL`) — flagovat před implementací.
+  Malé, ~5 souborů.
+
+## 24. Pojmenování workerů na `/schedules`
+
+**Zaznamenáno 2026-09-30** (provoz). `WORKER_NAME` se záměrně nenastavuje,
+repliky berou hostname kontejneru (náhodný hex, `app/config.py`), a stavový
+pruh na `/schedules` jméno **vůbec nezobrazuje** — 4× stejné „Scheduler
+running". Ve frontě je vidět jen hex v `leased_by`. Nedá se poznat, který
+worker má problém (viz zaseknutý Grok v #19).
+
+- Čitelné jméno `worker-1`…`worker-N` z čísla repliky Compose, hostname
+  jako fallback; `deploy.replicas`/`--scale` zůstává beze změny.
+- Pruh → kompaktní řádek na workera: jméno, stav, poslední signál a **co
+  právě zpracovává** (klient / model / od kdy, join na `run_queue.leased_by`).
+- Heartbeat řádky po starých kontejnerech po redeployi mizí samy (jména se
+  opakují) nebo se po X hodinách uklidí.
+- Bez migrace. Vydání 2 spolu s Worker Throughput (repliky, heartbeat).
+
+## 25. Export v2 — prompt set, rozsah dat, raw, ověření citací
+
+**Zaznamenáno 2026-09-30** (požadavek uživatele). Dnešní export
+(`app/services/export.py`, `docs/TASKS_EXPORT.md`) má scope run / prompt /
+client a `content=answer|raw|full`.
+
+- **Nový scope** `GET /prompt-sets/{id}/runs/export`.
+- **Filtry pro client i prompt set:** `date_from`/`date_to` (podle
+  `started_at`, presety jako na dashboardu), stav (výchozí jen `success`),
+  checkbox „zahrnout raw response" (= dnešní `content`). Místo tří odkazů
+  malý GET formulář.
+- **Chybějící sloupce v Runs:** `persona_label`, `market_language`/
+  `market_country` (po #22), odhad ceny (`app/services/cost.py`),
+  `trigger_type`/`schedule_id`.
+- **Ověření citací v Citations:** nejnovější verdikt (`verdict`,
+  `check_type`, `reason`, `similarity`, `matched_text`, `page_number`,
+  `llm_reason`, lidské hodnocení) + snímek zdroje (`final_url`,
+  `http_status`, `method` live/archive, `fetched_at`). Plný text zdroje jen
+  v JSON/ZIP s volbou raw.
+- **Souhrn** (XLSX list „Summary", JSON `summary`): runy podle modelu,
+  úspěšnost, citace, rozpad verdiktů.
+- **Strop velikosti** — export se generuje v paměti v requestu; nad N runů
+  vynutit užší rozsah (asynchronní export až při reálné potřebě).
+- Bez migrace. Střední velikost.
+
+## 26. Vysvětlení metrik (ⓘ u každého čísla)
+
+**Zaznamenáno 2026-09-30** (požadavek uživatele). Žádná metrika v appce
+dnes nemá vysvětlení (dashboard, `/ops`, detail runu i klienta — nula
+tooltipů). Standard analytických nástrojů (Google Analytics, Stripe,
+Datadog, konkurenti Profound/Peec) je vysvětlení přímo u čísla; pro
+budoucí klientský portál (#14) nutnost.
+
+- **Ikona ⓘ, ne jen hover** — hover na mobilu/tabletu neexistuje:
+  desktop hover/fokus, dotyk klepnutí, klávesnice, `aria-describedby`.
+- **Jeden zdroj definic** — i18n klíče `metric.<id>.what/how` (DE/EN)
+  + katalog `app/metrics_catalog.py`; stejný text v tooltipu, ve
+  slovníčku na `/help` a v listu „Definitions" exportu (#25).
+- **Definice z kódu, ne z paměti** — první úkol projde výpočty; nalezené
+  nesrovnalosti rozhodne uživatel, nehotfixují se potichu.
+- Test pokrytí (každá zobrazená metrika má definici). Bez migrace, beze
+  změny výpočtů.
+- Plán: `docs/TASKS_METRIC_DEFINITIONS.md` — vydání 4, před Export v2.
+
+## Plán vydání (2026-09-30)
+
+Položky #19–26 (a předstupeň #18 — Worker Throughput) se nasazují ve
+**čtyřech tematických vydáních**, ne jedním velkým deployem: hotfixy
+nečekají týdny, změna metodiky (#22) jde ven sama a dá se odlišit
+v trendech, a každé vydání jde vrátit zvlášť (rollback zálohou by jinak
+zahodil všechno najednou). Uvnitř vydání platí: krátké větve, merge do
+`master` po dokončení, jeden deploy na konci; `master` je vždy
+nasaditelný, migrace jen přidávají, deploy mimo okna scheduleru
+a před každým zkouška na kopii produkční DB.
+
+| Vydání | Verze | Větve v pořadí | Obsah | Migrace |
+|---|---|---|---|---|
+| 1 — Vision + citation hardening | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
+| 2 — Scheduler ops | v1.4.0 | `worker-throughput` → `scheduler-ops` | WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
+| 3 — Market locale names | v1.5.0 | `market-locale-names` | #22 (jediná změna metodiky) | 1× přidání |
+| 4 — Metriky + Export v2 | v1.6.0 | `metric-definitions` → `export-v2` | #26, #25, #21 (History filtry) | ne |
+
+Plány (TASKS/PROMPTS): `CLIENT_VISION`, `CITATION_HARDENING`,
+`WORKER_THROUGHPUT`, `SCHEDULER_OPS`, `MARKET_LOCALE_NAMES`,
+`METRIC_DEFINITIONS`, `EXPORT_V2`
+v `docs/`. V každém vydání se nasazuje až poslední větev (její poslední
+úkol nasadí i ty předchozí).
+
+Backfill Gemini citací (`docs/TASKS_CITATION_VERIFICATION.md` T18) až po
+vydání 1. Po vydání 4: circuit breaker (#21), C1 (#18) podle dat
+z provozu; strategicky #10 → #15 → #14 (Knauf portál), #13, #7 → #8, #9.
 
 ## Mimo tuhle roadmapu, zaznamenáno pro pořádek
 
@@ -817,3 +1082,11 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
 | 18 | Souběžnost workeru podle poskytovatele (C1/C2) | Navrženo 2026-09-26; předstupeň A + B = `docs/TASKS_WORKER_THROUGHPUT.md` (neimplementováno). C čeká na 429 v produkci nebo ~10+ klientů se stejným startem |
+| 19 | Nedostatky ověřování citací (Knauf pilot) | Zaznamenáno 2026-09-30 po nasazení v1.2.1 — Gemini robots.txt (100 % citací), chybějící timeout na adaptérech, archive.org resilience, NUL byte sanitizace, i18n parity test |
+| 20 | Provozní viditelnost fronty/kvóty | Zaznamenáno 2026-09-30, stejný pilot — ukazatel zbývající kvóty, banner přeskočených runů, popisek "LLM judge" dlaždice na `/ops` |
+| 21 | Scheduler: odolnost vůči chybám účtu providera | Zaznamenáno 2026-09-30 po vyčerpání kreditu OpenAI — kategorie chyb z adapterů, `deferred` místo `error` u billing, circuit breaker, sladění retry politiky (25 min krok nikdy nepoužit), History filtry + hromadný retry; neimplementováno |
+| 22 | Market: kód locale → názvy jazyka/země | Naplánováno 2026-09-30 — vydání 3 (v1.5.0), `docs/TASKS_MARKET_LOCALE_NAMES.md`; neimplementováno |
+| 23 | Vision u klienta | Naplánováno 2026-09-30 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md`; neimplementováno |
+| 24 | Pojmenování workerů na `/schedules` | Naplánováno 2026-09-30 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md`; neimplementováno |
+| 25 | Export v2 | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_EXPORT_V2.md`; neimplementováno |
+| 26 | Vysvětlení metrik (ⓘ) | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_METRIC_DEFINITIONS.md`; neimplementováno |
