@@ -20,14 +20,13 @@ reconstructed from git history later. PR numbers and merge dates come from
 
 ## In progress / not started
 
-| Document | Prefix | Branch | Notes |
-|---|---|---|---|
-| TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | T1–T4 done on the branch; not merged yet. Release v1.3.0 together with citation hardening (CH-T7) |
+Nothing in progress right now.
 
 ## Merged, release pending
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
+| TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | #25 | 2026-09-30 | Not deployed on its own; ships with citation hardening as v1.3.0 (CH-T7) |
 | TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
 | TASKS_PEEC_COMPARISON | PC | feature/signalmap-peec-comparison | #23 | 2026-09-28 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
 | TASKS_DEV_DB_REFRESH | DR | feature/signalmap-dev-db-refresh | #22 | 2026-09-26 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |

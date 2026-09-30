@@ -5,7 +5,7 @@
 ## Task ID prefix: VI
 ## Cílová verze: v1.3.0 (MINOR) — nasazuje se společně s `feature/signalmap-citation-hardening`
 
-## Status: ✅ Hotovo na větvi (T1–T4), merge do `master` a PR čekají — nasazení s v1.3.0 (CH-T7)
+## Status: 🔜 Merged (PR #25, 2026-09-30) — release pending, v1.3.0 together with citation hardening (CH-T7)
 
 Navrženo 2026-09-30 (`docs/ROADMAP.md` #23, požadavek uživatelů).
 Čtyři úkoly, **jedna migrace** (jen přidává).
