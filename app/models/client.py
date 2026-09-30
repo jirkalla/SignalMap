@@ -34,6 +34,13 @@ class Client(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     industry: Mapped[str | None] = mapped_column(String(120))
+    vision: Mapped[str | None] = mapped_column(Text)
+    """How the client wants AI assistants to describe it (docs/ROADMAP.md #23).
+
+    Free text, no structure (docs/TASKS_CLIENT_VISION.md decision 2). Distinct from `notes`: Vision
+    is the desired perception, Notes are internal agency remarks. It influences no run, prompt or
+    export (decision 8). The length limit lives in the router, not the column.
+    """
     notes: Mapped[str | None] = mapped_column(Text)
     domain: Mapped[str | None] = mapped_column(String(200))
     is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
