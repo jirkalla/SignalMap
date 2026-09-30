@@ -885,6 +885,9 @@ Volitelně sbalené v hlavičce `/dashboard`.
   Notes = interní poznámky. Proto dvě pole.
 - **Migrace** (`clients.vision TEXT NULL`) — flagovat před implementací.
   Malé, ~5 souborů.
+- **Stav:** implementováno na `feature/signalmap-client-vision` (migrace
+  `0044`, formulář, karta na detailu, sbalitelný pruh na dashboardu,
+  nápověda). Nasazuje se společně s citation hardening jako v1.3.0.
 
 ## 24. Pojmenování workerů na `/schedules`
 
@@ -1086,7 +1089,7 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 20 | Provozní viditelnost fronty/kvóty | Zaznamenáno 2026-09-30, stejný pilot — ukazatel zbývající kvóty, banner přeskočených runů, popisek "LLM judge" dlaždice na `/ops` |
 | 21 | Scheduler: odolnost vůči chybám účtu providera | Zaznamenáno 2026-09-30 po vyčerpání kreditu OpenAI — kategorie chyb z adapterů, `deferred` místo `error` u billing, circuit breaker, sladění retry politiky (25 min krok nikdy nepoužit), History filtry + hromadný retry; neimplementováno |
 | 22 | Market: kód locale → názvy jazyka/země | Naplánováno 2026-09-30 — vydání 3 (v1.5.0), `docs/TASKS_MARKET_LOCALE_NAMES.md`; neimplementováno |
-| 23 | Vision u klienta | Naplánováno 2026-09-30 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md`; neimplementováno |
+| 23 | Vision u klienta | Implementováno 2026-09-30 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md`; nasazuje se s vydáním 1 |
 | 24 | Pojmenování workerů na `/schedules` | Naplánováno 2026-09-30 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md`; neimplementováno |
 | 25 | Export v2 | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_EXPORT_V2.md`; neimplementováno |
 | 26 | Vysvětlení metrik (ⓘ) | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_METRIC_DEFINITIONS.md`; neimplementováno |

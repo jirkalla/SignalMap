@@ -11,6 +11,14 @@ not a public API.
 
 ## [Unreleased]
 
+### Added
+
+- Clients have a Vision field — how the client wants AI assistants to
+  describe it (values, positioning, key messages). It is entered on the
+  client form above Notes (up to 4000 characters), shown as a card at the
+  top of the client page, and as a collapsible strip on the dashboard. It
+  is informational only: it does not affect runs, prompts or exports.
+
 ## [1.2.1] - 2026-09-30
 
 ### Fixed
