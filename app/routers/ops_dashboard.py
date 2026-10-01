@@ -62,8 +62,11 @@ def ops_page(request: Request):
     already covered by this router's own `require_role("admin", "editor")` dependency — a viewer
     hitting this route gets the same HTML 403 page as any other admin-only page route
     (app/errors.py's handler branches on "/api/" in the path, not on route-by-route special-casing).
+
+    The one thing it does pass in is `capture_reasons`, the values the capture-reason table needs a
+    label for — the template builds its JS label map from it (single source: `CAPTURE_REASONS`).
     """
-    return render(request, "ops/index.html")
+    return render(request, "ops/index.html", {"capture_reasons": ops_service.CAPTURE_REASONS})
 
 
 def _resolve_user_filter(request: Request, user_id: str | None) -> tuple[int | None, bool]:
