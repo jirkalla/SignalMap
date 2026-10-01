@@ -87,6 +87,8 @@ fix(adapters): resolve grounding redirects before checking robots.txt
 
 ## CH-2 — Timeout na voláních providerů
 
+### DONE — commit 784087f
+
 ```
 Úkol CH-T2 z docs/TASKS_CITATION_HARDENING.md (design decisions 4-5).
 
@@ -109,6 +111,8 @@ fix(adapters): bound every provider call with an explicit timeout
 
 ## CH-3 — Výpadek archive.org izolovaný na citaci
 
+### DONE — commit 6502257
+
 ```
 Úkol CH-T3 z docs/TASKS_CITATION_HARDENING.md (design decision 6).
 
@@ -130,6 +134,8 @@ fix(runs): keep one archive.org failure from failing the whole verification job
 
 ## CH-4 — Sanitizace NUL v extrahovaném textu
 
+### DONE — commit aa323ca
+
 ```
 Úkol CH-T4 z docs/TASKS_CITATION_HARDENING.md (design decision 7).
 
@@ -145,6 +151,8 @@ fix(runs): strip NUL bytes from extracted source text
 ---
 
 ## CH-5 — Test pokrytí překladů důvodů a verdiktů
+
+### DONE — commit 92148b7
 
 ```
 Úkol CH-T5 z docs/TASKS_CITATION_HARDENING.md (design decision 8).
@@ -206,6 +214,8 @@ fix(runs): show verification progress and ignore duplicate Verify citations clic
 ---
 
 ## CH-9 — Hromadné ověření u klienta nestackuje aktivní judge joby
+
+### DONE — commit cf2cae9
 
 ```
 Úkol CH-T9 z docs/TASKS_CITATION_HARDENING.md. Předpoklad: CH-8 je

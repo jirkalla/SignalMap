@@ -717,7 +717,11 @@ Knauf (`docs/TASKS_CITATION_VERIFICATION.md`, viz i `CHANGELOG.md [1.2.1]`)
 — pět nezávislých nálezů, žádný nebyl blokující pro nasazení, ale všechny
 reálně snižují míru úspěšně ověřených citací:
 
-- **Gemini citace se nedají ověřit vůbec, systémově** — appka kontroluje
+✅ **Implementováno 2026-10-01** (všech pět bodů, `docs/TASKS_CITATION_HARDENING.md`
+T1–T5, T9; větev `feature/signalmap-citation-hardening`) — **nasazení
+čeká na T7** (vydání v1.3.0 společně s Vision u klienta).
+
+- ✅ **Gemini citace se nedají ověřit vůbec, systémově** — appka kontroluje
   robots.txt na Googlově přesměrovací bráně
   (`vertexaisearch.cloud.google.com/grounding-api-redirect/...`; `Disallow:
   /grounding-api-redirect` a `/grounding-redirect` platí pro
@@ -725,27 +729,41 @@ reálně snižují míru úspěšně ověřených citací:
   (`app/services/source_capture.py`, pořadí: cache → robots.txt →
   fetch/redirect). Postihuje **100 % Gemini citací**, u všech klientů,
   natrvalo — ne dočasný jev. Oprava: vyřešit přesměrování první, robots.txt
-  kontrolovat až u cílové domény.
-- **Chybí timeout na volání AI providerů** — potvrzeno u
+  kontrolovat až u cílové domény. **→ T1** (přesměrování hop po hopu,
+  robots.txt u každého hostitele; Google brána je výjimka jen pro jeden
+  hop bez těla).
+- ✅ **Chybí timeout na volání AI providerů** — potvrzeno u
   `app/adapters/grok.py` (jen výchozí hodnota z OpenAI SDK, žádné
   explicitní `timeout=`), stojí za kontrolu i u ostatních adaptérů. Zaseklý
   Grok request zablokoval jeden ze 4 workerů na ~27 minut; appka to sama
   nepoznala (lease na `run_queue` se neuvolní, dokud má položka přiřazený
   `run_id` — design decision 13) ani nevyřešila (`reconcile_interrupted_runs`
   čeká 30 minut a pak jen označí `error`, žádný automatický retry).
-- **Jedna chyba archive.org shodí celý verification job, ne jen jednu
+  **→ T2** (všech šest adaptérů, `PROVIDER_TIMEOUT_SECONDS` 120 s
+  a `PROVIDER_JUDGE_TIMEOUT_SECONDS` 60 s; minimum 10 s, protože Gemini API
+  kratší deadline odmítá).
+- ✅ **Jedna chyba archive.org shodí celý verification job, ne jen jednu
   citaci** — záměr (design decision 19: `ArchiveUnavailable` je běžná
   `Exception`, job se odloží a zkusí znovu, max 3×), ale při výpadku
   archive.org (série `503`/timeout) to vzalo s sebou i ostatní citace ve
-  stejném jobu, co jinak byly v pořádku.
-- **NUL byte v extrahovaném PDF textu shazuje insert** — Postgres `text`
+  stejném jobu, co jinak byly v pořádku. **→ T3** (výjimka se chytá po
+  citaci, job se odloží a retry zpracuje jen odložené; na posledním pokusu
+  `unverifiable/archive_unavailable`).
+- ✅ **NUL byte v extrahovaném PDF textu shazuje insert** — Postgres `text`
   sloupec je striktně odmítá; jeden konkrétní PDF tímhle shodil celý job.
-  Chybí sanitizace před uložením do `source_texts`.
-- **Chybí i18n parity test pro `UNVERIFIABLE_REASONS`** — přesně tohle
+  Chybí sanitizace před uložením do `source_texts`. **→ T4**
+  (`sanitize_extracted_text` na vstupu extrakce a pojistka u obou insertů).
+- ✅ **Chybí i18n parity test pro `UNVERIFIABLE_REASONS`** — přesně tohle
   způsobilo produkční 500 na `/runs/<id>` opravené v `v1.2.1` (chyběly
   `run.reason_http_429`/`http_other`). Bez mechanické kontroly (analogické
   `tests/test_version.py`) se stejná třída chyby zopakuje při příštím
-  novém důvodu.
+  novém důvodu. **→ T5** (`tests/test_i18n_coverage.py`; mapa popisků
+  na `/ops` se generuje ze `CAPTURE_REASONS`).
+
+Při ověřování vyplynuly dva související nálezy, vyřešené v téže větvi:
+tlačítko „Verify citations" bez zpětné vazby a bez ochrany proti
+duplicitním (placeným) jobům (**T8**) a stejná díra u hromadného ověření
+na detailu klienta (**T9**).
 
 ## 20. Provozní viditelnost citační fronty a kvóty
 

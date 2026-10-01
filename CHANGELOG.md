@@ -27,6 +27,30 @@ not a public API.
   while a check for that run is already in progress (no duplicate paid
   LLM passes).
 
+### Fixed
+
+- Gemini citations can be verified again. Their links go through a Google
+  redirect page whose robots.txt forbids crawling it, so every Gemini
+  citation used to fail as "Blocked by robots.txt". The redirect is now
+  followed first and robots.txt is checked for the page the link actually
+  leads to. This is also stricter for ordinary links: a link that redirects
+  to a site disallowing crawlers is now reported as blocked, where before
+  only the original address was checked.
+- A hanging AI provider call no longer blocks a worker for up to half an
+  hour. Every provider call now has a timeout (`PROVIDER_TIMEOUT_SECONDS`,
+  default 120 seconds and at least 10, because the Gemini API rejects
+  shorter deadlines; `PROVIDER_JUDGE_TIMEOUT_SECONDS`, default 60 seconds,
+  for citation-verification verdicts), and the OpenAI-compatible and
+  Anthropic clients retry at most once on their own. The app refuses to
+  start with a timeout under 10 seconds.
+- An archive.org outage no longer stops verification of a run's other
+  citations. Citations whose archived copy could not be checked are retried
+  together with the job; if archive.org is still unavailable on the last
+  attempt they are recorded as "Archive copy unavailable".
+- A source document containing NUL bytes no longer fails verification.
+- Bulk verification on a client page no longer queues responses whose
+  verification is already queued or running.
+
 ## [1.2.1] - 2026-09-30
 
 ### Fixed

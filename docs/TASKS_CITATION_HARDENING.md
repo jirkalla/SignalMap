@@ -122,11 +122,13 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
    posledním pokusu se pro ně zapíše verdikt `unverifiable` s důvodem
    `archive_unavailable` (konečně se použije) a job skončí `done`.
 7. **NUL se odstraňuje na jednom místě, před hashem.** Helper
-   `sanitize_extracted_text(text)` v `source_extract.py` (odstraní `\x00`,
-   ostatní řídicí znaky kromě `\t\n\r` ponechat — mění offsety
-   `match_start/end` jen minimálně a jen u vadných dokumentů). Volá se
-   uvnitř `extract_html`/`extract_pdf` (jediný vstup textu do obou
-   insertů), takže sha256 i uložený text jsou konzistentní. Test i na
+   `sanitize_extracted_text(text)` v `source_extract.py` odstraní **jen**
+   `\x00` (PostgreSQL odmítá pouze NUL; ostatní řídicí znaky jsou legální
+   a mohou být pro porovnání citátů potřeba). Volá se na **vstupu**
+   `extract_html` a u každé stránky v `extract_pdf`, tedy dřív, než se
+   spočítají `locations`/`page_starts` — odstranění až z hotového textu
+   by všechny offsety za NUL posunulo. Navíc jako pojistka těsně před
+   oběma inserty, takže sha256 i uložený text jsou konzistentní. Test i na
    úrovni `_store`, že NUL projít nemůže.
 8. **Test pokrytí překladů je obecný.** Pro každou hodnotu
    `UNVERIFIABLE_REASONS` existuje `run.reason_<r>` i `ops.capture_reason_<r>`
@@ -149,14 +151,14 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | ID | Name | Status |
 |----|------|--------|
 | T1 | Přesměrování hop po hopu + robots cíle (Gemini) | ✅ |
-| T2 | Timeout na voláních providerů | ⏳ |
-| T3 | Výpadek archive.org izolovaný na citaci | ⏳ |
-| T4 | Sanitizace NUL v extrahovaném textu | ⏳ |
-| T5 | Test pokrytí překladů důvodů a verdiktů | ⏳ |
-| T6 | Dokumentace + CHANGELOG | ⏳ |
+| T2 | Timeout na voláních providerů | ✅ |
+| T3 | Výpadek archive.org izolovaný na citaci | ✅ |
+| T4 | Sanitizace NUL v extrahovaném textu | ✅ |
+| T5 | Test pokrytí překladů důvodů a verdiktů | ✅ |
+| T6 | Dokumentace + CHANGELOG | ✅ |
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
-| T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ⏳ |
+| T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ✅ |
 
 **Pořadí provedení** (ID úkolů jsou stabilní a nemění se, pořadí se od nich
 liší, protože T8 a T9 přibyly dodatečně):
@@ -196,6 +198,16 @@ T2–T5 jsou na sobě nezávislé. T9 musí být hotový před backfillem v T7
 Gemini citace (Skoda Auto, prompt 54, gemini-3.1-flash-lite) přes
 tlačítko „Verify citations" skončí jinak než `robots`.
 
+**Implementováno (upřesnění):** `final_url` je poslední dosažený hop,
+kdykoli se liší od `requested_url` — i při `robots`, `timeout` a `too_large`
+uprostřed řetězce (u zákazu hned na prvním hopu zůstává prázdné). Brána
+bez přesměrování (404/200) uloží svůj stavový kód s prázdným tělem. Brána
+se neškrtí, škrtí se až hostitel cíle. `robots.txt` se stahuje s
+přesměrováním (`http→https`, `www`), jinak by prázdné 3xx tělo znamenalo
+„vše povoleno“; přesměrování na jiné schéma než `http`/`https` končí
+chybou. Mimo rozsah zůstává ochrana proti přesměrování na interní adresy
+(SSRF) — kandidát do `docs/ROADMAP.md`.
+
 **Expected commit:** `fix(adapters): resolve grounding redirects before checking robots.txt`
 
 ---
@@ -206,8 +218,9 @@ tlačítko „Verify citations" skončí jinak než `robots`.
 `.env.example`, `docker-compose.yaml` (env u `app` i `worker`, s defaultem),
 `tests/test_adapters.py`, `tests/test_worker_queue.py`
 
-1. `provider_timeout_seconds: float = 120`, `provider_judge_timeout_seconds:
-   float = 60` + komentář (design decision 4).
+1. `provider_timeout_seconds: float = 120` (`Field(ge=10)`, viz Done when),
+   `provider_judge_timeout_seconds: float = 60` (`gt=0`) + komentář
+   (design decision 4).
 2. Každý adaptér: timeout a `max_retries=1` při konstrukci klienta
    (OpenAI-kompatibilní: `openai.OpenAI(..., timeout=, max_retries=)`;
    Anthropic obdobně; Google `http_options=types.HttpOptions(timeout=ms)`
@@ -222,9 +235,20 @@ tlačítko „Verify citations" skončí jinak než `robots`.
 4. Komentář u `reconcile_interrupted_runs`: 30 min je teď s rezervou nad
    timeout × (retry + 1); neměnit.
 
-**Done when:** testy projdou; lokálně s dočasně nastaveným
-`PROVIDER_TIMEOUT_SECONDS=1` spadne ruční run (fixture výše) na timeout
-a worker ho zařadí k opakování; nastavení vrátit.
+**Done when:** testy projdou; chování SDK ověřeno proti lokálnímu serveru,
+který nikdy neodpoví (timeout i jediný retry u openai/anthropic, jediný
+pokus u google, všechno retryable); nastavení vráceno. ✅ 2026-10-01.
+**Původní krok (ruční Gemini run s `PROVIDER_TIMEOUT_SECONDS=1`) nejde
+provést:** `google-genai` posílá timeout serveru jako deadline a Gemini API
+pod 10 s odmítne s HTTP 400 (terminální, worker ji neopakuje) — proto má
+`provider_timeout_seconds` `ge=10` a appka se s menší hodnotou nespustí.
+
+**Implementováno (upřesnění):** `judge()` implementuje jen Anthropic
+adaptér, ostatních pět vyhazuje `NotImplementedError` — judge timeout je
+per-request `timeout=` u `messages.create`, žádný druhý klient. Google
+nemá `retry_options` (SDK bez nich dělá jediný pokus), `max_retries=1`
+dostaly jen openai-kompatibilní adaptéry a Anthropic. HTTP 408 se ve
+workeru dál nepovažuje za retryable (decision 5 se nemění).
 
 **Expected commit:** `fix(adapters): bound every provider call with an explicit timeout`
 
@@ -237,12 +261,14 @@ a worker ho zařadí k opakování; nastavení vrátit.
 `tests/test_verification_queue.py`
 
 1. `verify_citations_by_quote`: `try/except ArchiveUnavailable` kolem
-   archivní zálohy **per citace**; výsledek funkce vrací i seznam
-   citací odložených kvůli archive.org (nebo počet).
-2. Nový parametr `final_attempt: bool` — při `True` se pro odložené
-   citace uloží `CitationVerification(verdict="unverifiable",
-   reason="archive_unavailable", check_type="reachability"` nebo jak
-   odpovídá stávající konvenci pro neověřitelné — **ověřit v kódu**).
+   archivní zálohy **per citace** (u obou spouštěčů: živé 404/410 i živé
+   `not_found`); funkce vrací `QuoteCheckOutcome(complete, archive_deferred)`
+   místo `bool`.
+2. Nový parametr `final_attempt: bool` — při `True` se pro odložené citace
+   uloží `CitationVerification(check_type='quote', verdict='unverifiable',
+   reason='archive_unavailable', source_document_id=<živý dokument>)`
+   (stejný tvar jako ostatní neověřitelné řádky téhle cesty; živé
+   404 / `not_found` se do verdiktu nekopíruje, zůstává na dokumentu).
 3. `process_verification_job`: když jsou odložené citace a
    `job.attempts < _MAX_ATTEMPTS` → job `deferred` s dnešním backoffem
    (bez výjimky, bez `logger.error` — je to očekávaný stav, `warning`);
@@ -263,8 +289,8 @@ a worker ho zařadí k opakování; nastavení vrátit.
 **Target:** `app/services/source_extract.py`, `app/services/source_capture.py`,
 `app/services/citation_verification.py`, `tests/test_source_extract.py`
 
-1. `sanitize_extracted_text` podle design decision 7, volaná na konci
-   `extract_html` i `extract_pdf`.
+1. `sanitize_extracted_text` podle design decision 7, volaná na vstupu
+   `extract_html` a u každé stránky v `extract_pdf` — před výpočtem offsetů.
 2. Pojistka v obou insertech (`_store`, `_store_archive_document`):
    `assert "\x00" not in text` není vhodné pro produkci → místo toho
    znovu zavolat helper (idempotentní, levné) — jeden řádek, komentář proč.
@@ -294,6 +320,14 @@ a worker ho zařadí k opakování; nastavení vrátit.
 
 **Done when:** test projde; `/ops` v prohlížeči ukazuje stejné popisky
 jako před změnou.
+
+**Implementováno (upřesnění):** seznam hodnot pro `/ops` je
+`CAPTURE_REASONS` (`ops_dashboard.py`) = `success`, `not_captured` +
+`UNVERIFIABLE_REASONS` (stránka zobrazuje i dvě syntetické hodnoty). Test
+navíc kryje `HUMAN_VERDICTS` (`verification.human_verdict_<v>`); „test
+testu“ předává kontrolní funkci seznam s fiktivním důvodem místo
+`monkeypatch`. Ostatní složené klíče (`account.role_…`, `queue_status_…`
+aj.) zůstávají mimo.
 
 **Expected commit:** `test(i18n): require a translation for every unverifiable reason`
 
@@ -439,6 +473,12 @@ frontu. **Musí být hotové před T7 krokem 5 (backfill).**
 **Done when:** testy + celá sada `pytest` projdou; lokálně po „Verify
 citations“ na runu z fixture (Skoda Auto, prompt 54) náhled u klienta tuhle
 odpověď nenabízí, dokud job neskončí.
+
+**Ověřeno 2026-10-01:** testy + celá sada; lokálně u klienta Kings&Queens
+náhled po simulovaném běžícím jobu ukázal 1 odpověď / 2 citace místo
+2 / 38. Známé omezení: kontrola před zápisem (check-then-insert) bez
+unikátního omezení v DB — dvě potvrzení ve stejné milisekundě by teoreticky
+obě prošla.
 
 **Expected commit:** `fix(clients): skip responses with a judge job in progress in bulk verify`
 
