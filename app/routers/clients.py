@@ -166,18 +166,18 @@ def _bulk_verify_candidate_raw_response_ids(db: Session, client_id: int, start: 
     placeholder would let a client whose judge model consistently returns malformed output for one
     citation get re-billed for it on every future bulk-verify run, forever, with no way to converge.
 
-    A response with a 'judge' job still IN PROGRESS (queued, leased, or deferred for a retry —
-    `ACTIVE_JOB_STATUSES`, the same definition the run page's "Verify citations" button uses) is
-    excluded too (docs/TASKS_CITATION_HARDENING.md T9): it has no verdict yet, so without this a
-    second bulk run, or a click on that run's own button, would stack another paid LLM pass on
-    citations a job is already about to judge. A finished job (`done`/`error`) does not exclude
-    anything — a response it left without a verdict is eligible again. Preview and confirm both
-    call this function, so the preview's count never includes a response the confirm would skip
-    for this reason.
+    A response with ANY verification job still IN PROGRESS — 'judge' or 'capture', queued, leased,
+    or deferred for a retry (`ACTIVE_JOB_STATUSES`, the same definition the run page's "Verify
+    citations" button uses) — is excluded too (docs/TASKS_CITATION_HARDENING.md T9, T10). It has no
+    verdict yet, so without this a second bulk run, or a click on that run's own button, would stack
+    another paid LLM pass on citations a job is already about to judge. A 'capture' job counts as
+    well: it is either still downloading the sources (a judge job over them would judge nothing) or,
+    for a client with `auto_verify_citations`, judges them itself right after capturing. A finished
+    job (`done`/`error`) does not exclude anything — a response it left without a verdict is
+    eligible again. Preview and confirm both call this function, so the preview's count never
+    includes a response the confirm would skip for this reason.
     """
-    judge_in_progress = select(VerificationJob.raw_response_id).where(
-        VerificationJob.kind == "judge", VerificationJob.status.in_(ACTIVE_JOB_STATUSES)
-    )
+    job_in_progress = select(VerificationJob.raw_response_id).where(VerificationJob.status.in_(ACTIVE_JOB_STATUSES))
     already_judged = (
         select(Citation.raw_response_id)
         .join(CitationVerification, CitationVerification.citation_id == Citation.id)
@@ -203,7 +203,7 @@ def _bulk_verify_candidate_raw_response_ids(db: Session, client_id: int, start: 
             Run.started_at >= start,
             Run.started_at <= end,
             RawResponse.id.not_in(already_judged),
-            RawResponse.id.not_in(judge_in_progress),
+            RawResponse.id.not_in(job_in_progress),
         )
     )
     return list(db.scalars(query).all())

@@ -60,6 +60,7 @@ from app.services.verification_display import (
     VERDICT_STYLES,
     ClaimGroup,
     build_verification_display,
+    last_llm_verification_at,
 )
 from app.services.verification_queue import ACTIVE_JOB_STATUSES, enqueue_judge, latest_judge_job
 from app.templating import get_t, render
@@ -372,7 +373,16 @@ def verify_citations_status(
     active = job is not None and job.status in ACTIVE_JOB_STATUSES
     if poll and not active:
         return Response(status_code=200, headers={"HX-Refresh": "true"})
-    return render(request, "runs/verify_status.html", {"run": run, "verify_job": job, "verify_active": active})
+    return render(
+        request,
+        "runs/verify_status.html",
+        {
+            "run": run,
+            "verify_job": job,
+            "verify_active": active,
+            "verify_last_at": last_llm_verification_at(db, raw_response.id),
+        },
+    )
 
 
 @router.post("/runs/{run_id}/verify-citations", dependencies=_editor_or_admin)
@@ -493,6 +503,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), use
     can_verify_citations = _can_verify_citations(run, raw_response)
     verify_job = latest_judge_job(db, raw_response.id) if can_verify_citations else None
     verify_active = verify_job is not None and verify_job.status in ACTIVE_JOB_STATUSES
+    verify_last_at = last_llm_verification_at(db, raw_response.id) if can_verify_citations else None
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
@@ -528,6 +539,7 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), use
             "can_verify_citations": can_verify_citations,
             "verify_job": verify_job,
             "verify_active": verify_active,
+            "verify_last_at": verify_last_at,
             "human_verdicts": HUMAN_VERDICTS,
             "my_review_labels": my_review_labels,
             "search_queries": search_queries,

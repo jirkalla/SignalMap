@@ -373,9 +373,11 @@ def extract_pdf(data: bytes) -> ExtractedPdf | None:
     known, permanent limitation, design decision 11, not something to raise an exception over).
     """
     reader = pypdf.PdfReader(io.BytesIO(data))
-    # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`).
+    # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`) and
+    # BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
+    # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
     pages = [
-        sanitize_extracted_text(_HYPHEN_LINEBREAK_RE.sub(r"\1\2", page.extract_text() or "")) for page in reader.pages
+        _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or "")) for page in reader.pages
     ]
 
     parts: list[str] = []

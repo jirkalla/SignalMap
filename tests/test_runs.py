@@ -1251,6 +1251,15 @@ def _raw_response_of(db_session: Session, run_id: int) -> RawResponse:
     return db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
 
 
+def _add_llm_verdict(db_session: Session, raw_response_id: int) -> CitationVerification:
+    """One LLM verdict row on the response's first citation."""
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response_id).order_by(Citation.id))
+    verification = CitationVerification(citation_id=citation.id, check_type="llm", verdict="llm_supported", verifier_version="1.0")
+    db_session.add(verification)
+    db_session.commit()
+    return verification
+
+
 def _judge_jobs(db_session: Session, raw_response_id: int) -> list[VerificationJob]:
     return list(
         db_session.scalars(
@@ -1315,6 +1324,7 @@ def test_run_detail_shows_last_verified_and_the_button_after_a_done_job(
     run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
     raw_response = _raw_response_of(db_session, run_id)
     _add_judge_job(db_session, raw_response.id, "done")
+    _add_llm_verdict(db_session, raw_response.id)
 
     page = authed_client.get(f"/runs/{run_id}").text
 
@@ -1391,9 +1401,64 @@ def test_a_viewer_sees_the_job_progress_but_no_verify_button(
     run_id, _, _ = _trigger_citation_run(client, seed, sample_prompt)
     raw_response = _raw_response_of(db_session, run_id)
     _add_judge_job(db_session, raw_response.id, "done")
+    _add_llm_verdict(db_session, raw_response.id)
     client.post("/auth/login", data={"username": viewer_user.email, "password": TEST_USER_PASSWORD})
 
     page = client.get(f"/runs/{run_id}").text
 
     assert "Last verified" in page
     assert f'action="/runs/{run_id}/verify-citations"' not in page
+
+
+# --- "Last verified" and polling details (docs/TASKS_CITATION_HARDENING.md T10) ----------------
+
+
+def test_a_done_judge_job_that_judged_nothing_does_not_claim_the_run_was_verified(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """The job finishes `done` when no source was captured yet, having written no verdict at all."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "done")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "Last verified" not in page
+    assert f'action="/runs/{run_id}/verify-citations"' in page  # and the button is still offered
+
+
+def test_last_verified_follows_the_verdict_rows_even_without_any_judge_job(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """Verification that rode along inside an automatic capture job has no judge job at all."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_llm_verdict(db_session, _raw_response_of(db_session, run_id).id)
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "Last verified" in page
+
+
+def test_a_failed_job_after_an_earlier_verification_shows_both_lines(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_llm_verdict(db_session, _raw_response_of(db_session, run_id).id)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "error")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "The last verification failed" in page
+    assert "Last verified" in page
+
+
+def test_a_job_waiting_out_a_retry_backoff_is_polled_less_often(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """A deferred job waits up to 25 minutes; polling it every 4 s would be ~375 requests per tab."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "deferred")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert 'hx-trigger="every 30s"' in page
+    assert 'hx-trigger="every 4s"' not in page

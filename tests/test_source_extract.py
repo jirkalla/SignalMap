@@ -180,3 +180,22 @@ def test_extract_pdf_strips_nul_and_keeps_page_starts_consistent(monkeypatch: py
     assert "\x00" not in result.text
     assert result.text == "Erste Seite\n\nZweite Seite"
     assert result.text[result.page_starts[1] :].startswith("Zweite Seite")
+
+
+def test_extract_pdf_joins_a_hyphenated_word_even_when_a_nul_follows_the_line_break(monkeypatch: pytest.MonkeyPatch):
+    """The NUL has to go BEFORE the hyphenation join, or `(\\w)-\\n(\\w)` cannot match across it."""
+
+    class _Page:
+        def extract_text(self) -> str:
+            return "Neue Techno-\n\x00logien im Leichtbau"
+
+    class _Reader:
+        def __init__(self, _stream):
+            self.pages = [_Page()]
+
+    monkeypatch.setattr(source_extract.pypdf, "PdfReader", _Reader)
+
+    result = extract_pdf(b"%PDF-stub")
+
+    assert result is not None
+    assert result.text == "Neue Technologien im Leichtbau"

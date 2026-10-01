@@ -635,8 +635,8 @@ def _client_with_one_verifiable_run(authed_client: TestClient, db_session: Sessi
     return client_id, raw
 
 
-def _add_judge_job(db_session: Session, raw_response_id: int, status: str) -> VerificationJob:
-    job = VerificationJob(raw_response_id=raw_response_id, kind="judge", status=status, scheduled_for=datetime.now(timezone.utc))
+def _add_judge_job(db_session: Session, raw_response_id: int, status: str, kind: str = "judge") -> VerificationJob:
+    job = VerificationJob(raw_response_id=raw_response_id, kind=kind, status=status, scheduled_for=datetime.now(timezone.utc))
     db_session.add(job)
     db_session.commit()
     return job
@@ -744,3 +744,30 @@ def test_a_viewer_sees_an_existing_vision(client: TestClient, editor_user: User,
     _login_as(client, viewer_user)
 
     assert "Seen by all." in client.get(f"/clients/{client_id}").text
+
+
+# --- a capture job in progress also keeps a response out of bulk verify (docs/TASKS_CITATION_HARDENING.md T10) --
+
+
+@pytest.mark.parametrize("active_status", ["queued", "leased", "deferred"])
+def test_verify_retroactively_confirm_skips_a_response_with_a_capture_job_in_progress(
+    authed_client: TestClient, db_session: Session, seed: dict, active_status: str
+):
+    """Its sources are still being downloaded (a judge job would judge nothing) or, for a client
+    with auto-verify, the capture job judges them itself.
+    """
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    _add_judge_job(db_session, raw.id, active_status, kind="capture")
+
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+
+    assert _judge_job_count(db_session, raw.id) == 0
+
+
+def test_verify_retroactively_confirm_enqueues_once_the_capture_job_is_done(authed_client: TestClient, db_session: Session, seed: dict):
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    _add_judge_job(db_session, raw.id, "done", kind="capture")
+
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+
+    assert _judge_job_count(db_session, raw.id) == 1
