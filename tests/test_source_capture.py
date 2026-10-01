@@ -444,6 +444,9 @@ def test_two_gateway_citations_in_a_row_wait_for_the_gateway_slot(db_session: Se
     within milliseconds of the first and must be made to wait out (most of) the short interval.
     """
     monkeypatch.setattr(source_capture, "MIN_DOMAIN_INTERVAL_SECONDS", 0.0)  # isolate the gateway
+    # A long interval, so the assertion does not depend on how quickly the second call arrives: with
+    # the real 0.2 s a slow machine could let the slot expire in between and no wait would be needed.
+    monkeypatch.setattr(source_capture, "GATEWAY_MIN_INTERVAL_SECONDS", 5.0)
     slept: list[float] = []
 
     for suffix in ("a", "b"):
@@ -453,7 +456,7 @@ def test_two_gateway_citations_in_a_row_wait_for_the_gateway_slot(db_session: Se
 
     gateway_waits = [seconds for seconds in slept if seconds > 0]
     assert len(gateway_waits) == 1
-    assert 0 < gateway_waits[0] <= source_capture.GATEWAY_MIN_INTERVAL_SECONDS
+    assert 0 < gateway_waits[0] <= 5.0
 
 
 def test_robots_txt_that_redirects_is_followed(db_session: Session):
