@@ -82,11 +82,14 @@ def _vendor_from_keyword(keyword: str) -> str:
     return "cloudflare"  # cloudflare, "just a moment", "checking your browser" all point here
 
 
-def build_capture_client() -> httpx.Client:
+def build_capture_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Client:
     """The one real `httpx.Client` production capture uses — honest UA, timeout, and redirect
 
     cap (design decisions 6/7/9) all live here, in one place, so nothing calling `capture_url`
-    can accidentally construct a client that skips them.
+    can accidentally construct a client that skips them. `transport` exists for tests only (a
+    `httpx.MockTransport`): they build THIS client rather than a hand-copied lookalike, so a change
+    to its settings shows up in the suite — the shared client also feeds archive.org lookups, and
+    a redirect setting that suits `capture_url` alone once broke those unnoticed.
     """
     # follow_redirects=False: `_resolve_and_fetch` walks redirects itself, hop by hop, so that
     # robots.txt is checked for every host the chain passes through (design decision 1).
@@ -94,6 +97,7 @@ def build_capture_client() -> httpx.Client:
         headers={"User-Agent": USER_AGENT},
         timeout=REQUEST_TIMEOUT_SECONDS,
         follow_redirects=False,
+        transport=transport,
     )
 
 

@@ -49,7 +49,10 @@ def _reset_module_state():
 
 
 def _client(handler) -> httpx.Client:
-    return httpx.Client(transport=httpx.MockTransport(handler))
+    """The REAL production capture client over a mock transport — archive.org lookups share it in
+    the worker, so they must be tested with its actual settings (no automatic redirects).
+    """
+    return source_capture.build_capture_client(transport=httpx.MockTransport(handler))
 
 
 _CDX_ROW = [
@@ -607,3 +610,42 @@ def test_archived_snapshot_text_with_a_nul_is_stored_without_it(db_session: Sess
 
     assert db_session.get(SourceText, document.text_sha256).text == "Archiv"
     assert document.text_sha256 == hashlib.sha256(b"Archiv").hexdigest()
+
+
+# --- redirecting snapshots (docs/TASKS_CITATION_HARDENING.md T10) -----------------------------
+
+
+def test_fetch_snapshot_content_follows_a_redirect_through_the_production_client(db_session: Session):
+    """Wayback often answers a snapshot URL with 301/302 first. The shared capture client does not
+    follow redirects by itself, so the lookup must — otherwise it extracts the empty redirect body
+    and the archive fallback silently never finds the quote.
+    """
+    snapshot = ArchiveSnapshot(
+        archive_timestamp="20260303091500",
+        fetch_url="https://web.archive.org/web/20260303091500id_/https://example.com/x",
+        view_url="https://web.archive.org/web/20260303091500/https://example.com/x",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/web/20260303091500id_/"):
+            return httpx.Response(302, headers={"location": "https://web.archive.org/web/20260303091512id_/https://example.com/x"})
+        return httpx.Response(200, content=b"<html><body><p>Archived text.</p></body></html>", headers={"content-type": "text/html"})
+
+    content = fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep)
+
+    assert content is not None
+    assert "Archived text." in content.text
+
+
+def test_find_closest_snapshot_follows_a_redirect_through_the_production_client(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/cdx/search/cdx" and "redirected=1" not in str(request.url):
+            return httpx.Response(302, headers={"location": str(request.url) + "&redirected=1"})
+        return httpx.Response(200, json=[_CDX_HEADER, _CDX_ROW])
+
+    snapshot = find_closest_snapshot(
+        db_session, _client(handler), "https://example.com/gone", target_date=TARGET_DATE, sleep=_no_sleep
+    )
+
+    assert snapshot is not None
+    assert snapshot.archive_timestamp == "20260303091500"

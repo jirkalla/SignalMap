@@ -50,11 +50,8 @@ def _reset_module_state():
 
 
 def _client(handler) -> httpx.Client:
-    return httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"User-Agent": source_capture.USER_AGENT},
-        follow_redirects=False,  # same as build_capture_client — redirects are walked by hand
-    )
+    """The REAL production client (honest UA, no automatic redirects, timeout) over a mock transport."""
+    return source_capture.build_capture_client(transport=httpx.MockTransport(handler))
 
 
 def _allow_robots(request: httpx.Request) -> httpx.Response | None:
@@ -480,3 +477,18 @@ def test_store_strips_a_nul_that_reaches_it_and_hashes_the_stored_text(db_sessio
     stored = db_session.get(SourceText, doc.text_sha256)
     assert stored.text == "ab"
     assert doc.text_sha256 == hashlib.sha256(b"ab").hexdigest()
+
+
+# --- the production client itself (docs/TASKS_CITATION_HARDENING.md T10) ----------------------
+
+
+def test_build_capture_client_settings():
+    """It never follows redirects on its own (capture_url walks them hop by hop so robots.txt is
+    checked per host) — which is exactly why every OTHER caller sharing it (archive.org lookups)
+    must ask for redirects per request. Pinned here so changing either side is a conscious act.
+    """
+    client = source_capture.build_capture_client()
+
+    assert client.follow_redirects is False
+    assert client.headers["user-agent"] == source_capture.USER_AGENT
+    assert client.timeout.read == source_capture.REQUEST_TIMEOUT_SECONDS

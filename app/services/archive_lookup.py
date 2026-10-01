@@ -93,7 +93,11 @@ def _request(db: Session, client: httpx.Client, url: str, *, sleep: Callable[[fl
     """
     throttle(db, _THROTTLE_KEY, interval_seconds=MIN_REQUEST_INTERVAL_SECONDS, sleep=sleep)
     try:
-        response = client.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+        # follow_redirects=True per request: the shared capture client (source_capture.
+        # build_capture_client) deliberately never follows redirects itself — it walks them hop by
+        # hop for robots.txt — but a Wayback snapshot URL routinely answers 301/302 (http->https,
+        # timestamp canonicalisation) and the snapshot content is what this call is after.
+        response = client.get(url, timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True)
     except httpx.TimeoutException as exc:
         raise ArchiveUnavailable(f"timeout requesting {url}") from exc
     except httpx.RequestError as exc:

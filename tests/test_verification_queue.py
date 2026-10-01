@@ -16,6 +16,7 @@ from app.adapters.base import JudgePayload
 from app.models import AIModel, Citation, Prompt, RawResponse, Run, User
 from app.models.verification import CitationVerification, SourceDocument, SourceText, VerificationJob
 from app.services.claim_judge import DEFAULT_JUDGE_MODEL_NAME
+from app.services.source_capture import build_capture_client
 from app.services.verification_queue import (
     DEFAULT_LEASE_MINUTES,
     _MAX_ATTEMPTS,
@@ -108,7 +109,7 @@ def _make_raw_response(db_session: Session, seed: dict, sample_prompt: Prompt, *
 
 
 def _client(handler) -> httpx.Client:
-    return httpx.Client(transport=httpx.MockTransport(handler))
+    return build_capture_client(transport=httpx.MockTransport(handler))
 
 
 def _allow_all_200(request: httpx.Request) -> httpx.Response:
