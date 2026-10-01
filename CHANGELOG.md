@@ -49,7 +49,7 @@ not a public API.
   attempt they are recorded as "Archive copy unavailable".
 - A source document containing NUL bytes no longer fails verification.
 - Bulk verification on a client page no longer queues responses whose
-  verification is already queued or running.
+  verification (or source download) is already queued or running.
 
 ## [1.2.1] - 2026-09-30
 

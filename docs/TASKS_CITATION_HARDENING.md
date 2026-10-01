@@ -160,12 +160,12 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
 | T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ✅ |
-| T10 | Opravy z code review (archive.org redirecty, brána, bulk-verify, drobnosti) | ⏳ |
+| T10 | Opravy z code review (archive.org redirecty, brána, bulk-verify, drobnosti) | ✅ |
 
 **Pořadí provedení** (ID úkolů jsou stabilní a nemění se, pořadí se od nich
 liší, protože T8 a T9 přibyly dodatečně):
 
-`T1 ✅ → T8 ✅ → T2 ✅ → T3 ✅ → T4 ✅ → T5 ✅ → T9 ✅ → T6 ✅ → T10 → T7`
+`T1 ✅ → T8 ✅ → T2 ✅ → T3 ✅ → T4 ✅ → T5 ✅ → T9 ✅ → T6 ✅ → T10 ✅ → T7`
 
 T2–T5 jsou na sobě nezávislé. T9 musí být hotový před backfillem v T7
 (krok 5), T6 dokumentuje hotové opravy, T10 opravuje nálezy z code review
@@ -535,9 +535,30 @@ T7** — body 1–3 před backfillem, protože ten vytváří stovky trvalých
 8. **Polling při odložení** — stav `deferred` se dotazuje každých 30 s, ne
    každé 4 s (backoff trvá až 25 minut).
 
+**Výsledek bodu 4 (2026-10-01, lokální DB, 10 modelů):** nejpomalejší je
+`grok-4.7` s maximem 86,5 s (p95 78,8 s, 28 běhů), dál `gpt-5.6-terra` 73,4 s,
+`deepseek-flash` 63,5 s, `gpt-5.6-luna` 61,3 s; ostatní pod 40 s. Pravidlo
+(výjimka při > ~90 s) se nespouští, **120 s zůstává**. Vzorky u pomalejších
+modelů jsou tenké (Claude Sonnet 5 jen 3 běhy, DeepSeek Pro žádný), proto
+**kontrola po nasazení** (T7 krok 6): počet běhů s chybou `timed out` v
+`runs.error_message`; hodnotu lze změnit v `.env` (`PROVIDER_TIMEOUT_SECONDS`)
+bez nasazení, jen restartem `app` a `worker`. Produkční čísla stejným
+dotazem před T7:
+
+```sql
+select p.code provider, m.model_name, count(*) runs,
+       round((max(r.latency_ms)/1000.0)::numeric,1) max_s,
+       round(((percentile_cont(0.95) within group (order by r.latency_ms))/1000.0)::numeric,1) p95_s
+from runs r join ai_models m on m.id = r.model_id join providers p on p.id = m.provider_id
+where r.status = 'success' and r.latency_ms is not null
+group by 1, 2 order by max_s desc;
+```
+
 **Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
 kódu před opravou; bod 4 vyhodnocen a zapsán; lokálně „Last verified" po
-jobu bez verdiktů nezobrazeno.
+jobu bez verdiktů nezobrazeno. ✅ 2026-10-01 (710 passed; jediné selhání je
+nesouvisející `test_check_budget_thresholds_fires_again_next_month`,
+závislý na datu).
 
 **Expected commits:**
 - `fix(adapters): follow redirects when fetching archive.org snapshots` (1, 2)

@@ -173,6 +173,8 @@ test(i18n): require a translation for every unverifiable reason
 
 ## CH-6 — Dokumentace + CHANGELOG
 
+### DONE — commit f05abdc
+
 ```
 Úkol CH-T6 z docs/TASKS_CITATION_HARDENING.md.
 
@@ -238,6 +240,8 @@ fix(clients): skip responses with a judge job in progress in bulk verify
 ---
 
 ## CH-10 — Opravy z code review
+
+### DONE — commits 1b25f7e, 22db6e3, a433d6f
 
 ```
 Úkol CH-T10 z docs/TASKS_CITATION_HARDENING.md (nálezy z /code-review high).
