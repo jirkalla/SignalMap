@@ -11,6 +11,8 @@ not a public API.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-01
+
 ### Added
 
 - Clients have a Vision field — how the client wants AI assistants to
