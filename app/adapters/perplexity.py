@@ -99,7 +99,14 @@ class PerplexityAdapter:
     supports_geo_targeting = False
 
     def __init__(self) -> None:
-        self._client = openai.OpenAI(base_url=_BASE_URL, api_key=get_settings().perplexity_api_key)
+        settings = get_settings()
+        # max_retries=1 (SDK default 2): see config.py's `provider_timeout_seconds`.
+        self._client = openai.OpenAI(
+            base_url=_BASE_URL,
+            api_key=settings.perplexity_api_key,
+            timeout=settings.provider_timeout_seconds,
+            max_retries=1,
+        )
 
     def run(
         self,

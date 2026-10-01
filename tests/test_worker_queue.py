@@ -9,6 +9,9 @@ on the row" shape as tests/test_cost.py and tests/test_scheduling_recurrence.py.
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import anthropic
+import httpx
+import openai
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,7 +30,7 @@ from app.services.queue import (
     release_expired_leases,
     retry_all_errors,
 )
-from app.worker import deregister_heartbeat, process_claimed_item
+from app.worker import _is_retryable_error, deregister_heartbeat, process_claimed_item
 from tests.conftest import TestSessionLocal
 from tests.fake_adapter import FakeAdapter
 
@@ -365,6 +368,39 @@ def test_retryable_error_requeues_with_backoff_and_keeps_the_run_as_error(db_ses
     assert item.scheduled_for == NOW + timedelta(minutes=1)
     run = db_session.get(Run, item.run_id)
     assert run.status == "error"  # execute_run always records the Run's own outcome regardless
+
+
+_TIMEOUT_REQUEST = httpx.Request("POST", "https://provider.example/v1")
+
+
+def _timeout_errors() -> list[Exception]:
+    """What each SDK raises when `timeout=` expires (docs/TASKS_CITATION_HARDENING.md T2) — none
+    of them carries a `status_code`/`code`, which is exactly what `_is_retryable_error` keys on.
+    """
+    return [
+        openai.APITimeoutError(request=_TIMEOUT_REQUEST),
+        anthropic.APITimeoutError(request=_TIMEOUT_REQUEST),
+        httpx.ReadTimeout("timed out", request=_TIMEOUT_REQUEST),  # google-genai lets this through raw
+    ]
+
+
+@pytest.mark.parametrize("error", _timeout_errors(), ids=lambda e: type(e).__module__ + "." + type(e).__name__)
+def test_provider_timeouts_are_retryable(error):
+    assert _is_retryable_error(error) is True
+
+
+@pytest.mark.parametrize("error", _timeout_errors(), ids=lambda e: type(e).__module__ + "." + type(e).__name__)
+def test_a_provider_timeout_requeues_the_item_with_backoff(db_session, seed, sample_prompt, prompt_client, error):
+    FakeAdapter.error_to_raise = error
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=0
+    )
+
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
+
+    assert item.status == "queued"
+    assert item.transport_attempts == 1
+    assert item.scheduled_for == NOW + timedelta(minutes=1)
 
 
 def test_terminal_error_marks_item_error_immediately(db_session, seed, sample_prompt, prompt_client):

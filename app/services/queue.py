@@ -381,6 +381,11 @@ def reconcile_interrupted_runs(db: Session, *, now: datetime) -> int:
     to sweep for it periodically. Deliberately records the *uncertainty*, never a guessed
     success or silent retry (design decision 13) — the alternative, calling the adapter again,
     risks paying for the same occurrence twice with no way to tell.
+
+    The 30-minute cutoff sits well above the longest a healthy provider call can now take: every
+    adapter call is bounded by `provider_timeout_seconds` (120 s) x (at most one SDK retry + 1),
+    i.e. ~4 minutes (docs/TASKS_CITATION_HARDENING.md T2) — so a run still `pending` after 30
+    minutes means the process really died, not that a call is merely slow. Kept as is on purpose.
     """
     stale_cutoff = now - timedelta(minutes=30)
     stale_runs = db.scalars(select(Run).where(Run.status == "pending", Run.started_at < stale_cutoff)).all()

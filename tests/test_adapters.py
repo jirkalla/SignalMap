@@ -23,7 +23,9 @@ import subprocess
 import sys
 
 import pytest
+from pydantic import ValidationError
 
+from app.adapters.anthropic import AnthropicAdapter
 from app.adapters.anthropic import _map_citations as anthropic_map_citations
 from app.adapters.anthropic import _map_judge_response as anthropic_map_judge_response
 from app.adapters.anthropic import _map_search_queries as anthropic_map_search_queries
@@ -41,6 +43,7 @@ from app.adapters.openai import _map_citations as openai_map_citations
 from app.adapters.perplexity import PerplexityAdapter
 from app.adapters.perplexity import _map_citations as perplexity_map_citations
 from app.adapters.perplexity import _map_search_queries as perplexity_map_search_queries
+from app.config import Settings, get_settings
 
 
 def test_google_returns_web_search_queries_in_order():
@@ -693,3 +696,97 @@ def test_importing_app_adapters_preloads_the_lazy_sdk_resource_modules():
     )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# --- provider call timeouts (docs/TASKS_CITATION_HARDENING.md T2) -------------------------------
+
+
+@pytest.fixture
+def custom_timeouts(monkeypatch):
+    """Non-default timeouts, so a test can tell the wiring from the defaults (120 s / 60 s).
+
+    `get_settings()` is lru_cached, so the cache is cleared before AND after — the changed values
+    must neither be ignored nor leak into later tests.
+    """
+    monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "33")
+    monkeypatch.setenv("PROVIDER_JUDGE_TIMEOUT_SECONDS", "7")
+    get_settings.cache_clear()
+    yield
+    monkeypatch.undo()
+    get_settings.cache_clear()
+
+
+def test_provider_timeout_defaults():
+    settings = get_settings()
+
+    assert settings.provider_timeout_seconds == 120
+    assert settings.provider_judge_timeout_seconds == 60
+
+
+@pytest.mark.parametrize("value", [0, 1, 9.9])
+def test_provider_timeout_below_the_gemini_minimum_is_rejected_at_startup(value):
+    """Gemini's API returns a terminal HTTP 400 for a deadline under 10 s (found 2026-10-01 with
+    PROVIDER_TIMEOUT_SECONDS=1) — better a loud validation error than every Gemini run failing.
+    """
+    with pytest.raises(ValidationError):
+        Settings(database_url="postgresql://x", secret_key="x", provider_timeout_seconds=value)
+
+
+def test_provider_timeout_of_exactly_ten_seconds_is_accepted():
+    settings = Settings(database_url="postgresql://x", secret_key="x", provider_timeout_seconds=10)
+
+    assert settings.provider_timeout_seconds == 10
+
+
+def test_provider_judge_timeout_must_be_positive():
+    with pytest.raises(ValidationError):
+        Settings(database_url="postgresql://x", secret_key="x", provider_judge_timeout_seconds=0)
+
+
+@pytest.mark.parametrize(
+    "adapter_cls",
+    [OpenAIAdapter, GrokAdapter, PerplexityAdapter, DeepSeekAdapter, AnthropicAdapter],
+)
+def test_openai_and_anthropic_clients_get_the_configured_timeout_and_one_retry(adapter_cls, custom_timeouts):
+    """SDK default is max_retries=2 — pinned to 1 so timeout x (retries + 1) stays small; the
+    worker's own backoff does the repeating (config.py's `provider_timeout_seconds`).
+    """
+    client = adapter_cls()._client
+
+    assert client.timeout == 33
+    assert client.max_retries == 1
+
+
+def test_google_client_timeout_is_in_milliseconds(custom_timeouts):
+    """google-genai is the one SDK here that takes milliseconds, not seconds."""
+    client = GoogleGeminiAdapter()._client
+
+    assert client._api_client._http_options.timeout == 33_000
+
+
+def test_google_client_makes_a_single_attempt_by_default(custom_timeouts):
+    """No `retry_options` = one attempt in google-genai (verified in its `retry_args`), so there
+    is no SDK-side retry multiplying the timeout.
+    """
+    assert GoogleGeminiAdapter()._client._api_client._http_options.retry_options is None
+
+
+def test_anthropic_judge_call_uses_the_shorter_judge_timeout(custom_timeouts):
+    """`judge()` overrides the client's run timeout per request — a verdict is a short reply."""
+    seen: dict = {}
+
+    class _Response:
+        def model_dump(self, mode="json"):
+            return {"content": [{"type": "text", "text": "supported | ok"}], "usage": {}}
+
+    class _Messages:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            return _Response()
+
+    adapter = AnthropicAdapter()
+    adapter._client = type("_FakeClient", (), {"messages": _Messages()})()
+
+    adapter.judge("system prompt", "user prompt", "some-model")
+
+    assert seen["timeout"] == 7
