@@ -57,6 +57,14 @@ MAX_BYTES = 20 * 1024 * 1024
 # aggregate rate by however many of them collided (code-review finding, 2026-09-30).
 MIN_DOMAIN_INTERVAL_SECONDS = 1.0
 
+# Spacing for the one header-only request a known redirect gateway (`_REDIRECT_GATEWAYS`) gets —
+# much shorter than a normal domain's, because every Gemini citation passes through the SAME gateway
+# host and a full second each would serialize a run's 25-40 citations (and all four workers) behind
+# one slot, which is exactly what pacing by the target domain instead was meant to avoid (design
+# decision 3). But not zero: unpaced, a batch of citations (or a backfill) hammers the gateway, and
+# a 429/5xx from it would be recorded against a target page that was never reached.
+GATEWAY_MIN_INTERVAL_SECONDS = 0.2
+
 _robots_cache: dict[str, RobotFileParser] = {}
 
 # Short body (design decision 8: "< 1500 characters") matching a known bot-protection interstitial,
@@ -101,14 +109,20 @@ def build_capture_client(*, transport: httpx.BaseTransport | None = None) -> htt
     )
 
 
-def _throttle_domain(db: Session, domain: str, *, sleep: Callable[[float], None]) -> None:
-    """Block (via `sleep`) until at least `MIN_DOMAIN_INTERVAL_SECONDS` have passed since the
+def _throttle_domain(
+    db: Session, domain: str, *, sleep: Callable[[float], None], interval_seconds: float | None = None
+) -> None:
+    """Block (via `sleep`) until at least `interval_seconds` (default `MIN_DOMAIN_INTERVAL_SECONDS`)
 
-    last request to `domain` from ANY worker process sharing this database (code-review finding,
-    2026-09-30 — see `MIN_DOMAIN_INTERVAL_SECONDS`'s own comment). `sleep` is injected (defaults
-    to `time.sleep` in `capture_url`) so tests can pass a no-op and never actually wait.
+    have passed since the last request to `domain` from ANY worker process sharing this database
+    (code-review finding, 2026-09-30 — see `MIN_DOMAIN_INTERVAL_SECONDS`'s own comment). `sleep` is
+    injected (defaults to `time.sleep` in `capture_url`) so tests can pass a no-op and never
+    actually wait. The default is looked up at call time, not bound as a default argument, so a
+    test that patches the module constant is honoured.
     """
-    throttle(db, domain, interval_seconds=MIN_DOMAIN_INTERVAL_SECONDS, sleep=sleep)
+    if interval_seconds is None:
+        interval_seconds = MIN_DOMAIN_INTERVAL_SECONDS
+    throttle(db, domain, interval_seconds=interval_seconds, sleep=sleep)
 
 
 def _robots_allowed(client: httpx.Client, url: str) -> bool:
@@ -272,14 +286,18 @@ def _resolve_and_fetch(
     """Follow redirects by hand, hop by hop (design decisions 1-3).
 
     Every hop except a known gateway (`_REDIRECT_GATEWAYS`) is checked against robots.txt of ITS
-    host and paced per that host — so a Gemini citation is throttled as its target domain, not as
-    the shared `vertexaisearch` gateway. `trace.last_url` tracks the hop in progress. Raises
+    host and paced per that host — so a Gemini citation's page is throttled as its target domain,
+    not as the shared `vertexaisearch` gateway. The gateway hop skips robots.txt but is still paced,
+    briefly (`GATEWAY_MIN_INTERVAL_SECONDS`). `trace.last_url` tracks the hop in progress. Raises
     `_RobotsBlocked`, `_TooLarge`, or an `httpx.RequestError` (incl. `TooManyRedirects`).
     """
     current = url
     for _ in range(MAX_REDIRECTS + 1):
         trace.last_url = current
         if _is_redirect_gateway(current):
+            _throttle_domain(
+                db, urlsplit(current).netloc, sleep=sleep, interval_seconds=GATEWAY_MIN_INTERVAL_SECONDS
+            )
             result = _peek(client, current)
         else:
             if not _robots_allowed(client, current):

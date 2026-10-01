@@ -419,15 +419,41 @@ def test_gateway_that_does_not_redirect_records_its_status(db_session: Session):
     assert doc.bytes == 0
 
 
-def test_throttle_uses_target_host_not_gateway(db_session: Session, monkeypatch: pytest.MonkeyPatch):
-    throttled: list[str] = []
+def test_throttle_paces_the_gateway_briefly_and_the_target_normally(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """The gateway hop is paced (docs/TASKS_CITATION_HARDENING.md T10 — unpaced, a batch of Gemini
+    citations hammers it) but with its own short interval; the target page keeps the normal one
+    under ITS host, so all Gemini citations still do not share one 1 s slot.
+    """
+    throttled: list[tuple[str, float | None]] = []
     monkeypatch.setattr(
-        source_capture, "_throttle_domain", lambda db, domain, *, sleep: throttled.append(domain)
+        source_capture,
+        "_throttle_domain",
+        lambda db, domain, *, sleep, interval_seconds=None: throttled.append((domain, interval_seconds)),
     )
 
     capture_url(db_session, GATEWAY, now=NOW, client=_client(_gateway_handler()), sleep=_no_sleep)
 
-    assert throttled == ["real-source.example"]
+    assert throttled == [
+        ("vertexaisearch.cloud.google.com", source_capture.GATEWAY_MIN_INTERVAL_SECONDS),
+        ("real-source.example", None),  # None = the normal per-domain interval
+    ]
+
+
+def test_two_gateway_citations_in_a_row_wait_for_the_gateway_slot(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """The real DB-backed throttle, not a stub: the second citation's gateway request arrives
+    within milliseconds of the first and must be made to wait out (most of) the short interval.
+    """
+    monkeypatch.setattr(source_capture, "MIN_DOMAIN_INTERVAL_SECONDS", 0.0)  # isolate the gateway
+    slept: list[float] = []
+
+    for suffix in ("a", "b"):
+        capture_url(
+            db_session, f"{GATEWAY}-{suffix}", now=NOW, client=_client(_gateway_handler()), sleep=slept.append
+        )
+
+    gateway_waits = [seconds for seconds in slept if seconds > 0]
+    assert len(gateway_waits) == 1
+    assert 0 < gateway_waits[0] <= source_capture.GATEWAY_MIN_INTERVAL_SECONDS
 
 
 def test_robots_txt_that_redirects_is_followed(db_session: Session):
