@@ -5,9 +5,12 @@
 ## Task ID prefix: CH
 ## Cílová verze: v1.3.0 (MINOR) — společně s `feature/signalmap-client-vision`
 
-Status: navrženo 2026-09-30 jako **vydání 1** z plánu vydání
+## Status: 🔜 Merged (PR #26, 2026-10-01) — release pending, v1.3.0 together with client vision (CH-T7)
+
+Navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
-Sedm úkolů, bez migrace.
+Deset úkolů (T8 a T9 přibyly 2026-09-30 při lokálním ověřování T1, T10 z code review
+2026-10-01), bez migrace.
 
 **Nasazuje se společně s Vision u klienta** (`docs/TASKS_CLIENT_VISION.md`,
 #23): větev `feature/signalmap-client-vision` se smerguje do `master`
@@ -122,11 +125,13 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
    posledním pokusu se pro ně zapíše verdikt `unverifiable` s důvodem
    `archive_unavailable` (konečně se použije) a job skončí `done`.
 7. **NUL se odstraňuje na jednom místě, před hashem.** Helper
-   `sanitize_extracted_text(text)` v `source_extract.py` (odstraní `\x00`,
-   ostatní řídicí znaky kromě `\t\n\r` ponechat — mění offsety
-   `match_start/end` jen minimálně a jen u vadných dokumentů). Volá se
-   uvnitř `extract_html`/`extract_pdf` (jediný vstup textu do obou
-   insertů), takže sha256 i uložený text jsou konzistentní. Test i na
+   `sanitize_extracted_text(text)` v `source_extract.py` odstraní **jen**
+   `\x00` (PostgreSQL odmítá pouze NUL; ostatní řídicí znaky jsou legální
+   a mohou být pro porovnání citátů potřeba). Volá se na **vstupu**
+   `extract_html` a u každé stránky v `extract_pdf`, tedy dřív, než se
+   spočítají `locations`/`page_starts` — odstranění až z hotového textu
+   by všechny offsety za NUL posunulo. Navíc jako pojistka těsně před
+   oběma inserty, takže sha256 i uložený text jsou konzistentní. Test i na
    úrovni `_store`, že NUL projít nemůže.
 8. **Test pokrytí překladů je obecný.** Pro každou hodnotu
    `UNVERIFIABLE_REASONS` existuje `run.reason_<r>` i `ops.capture_reason_<r>`
@@ -148,13 +153,25 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Přesměrování hop po hopu + robots cíle (Gemini) | ⏳ |
-| T2 | Timeout na voláních providerů | ⏳ |
-| T3 | Výpadek archive.org izolovaný na citaci | ⏳ |
-| T4 | Sanitizace NUL v extrahovaném textu | ⏳ |
-| T5 | Test pokrytí překladů důvodů a verdiktů | ⏳ |
-| T6 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | Přesměrování hop po hopu + robots cíle (Gemini) | ✅ |
+| T2 | Timeout na voláních providerů | ✅ |
+| T3 | Výpadek archive.org izolovaný na citaci | ✅ |
+| T4 | Sanitizace NUL v extrahovaném textu | ✅ |
+| T5 | Test pokrytí překladů důvodů a verdiktů | ✅ |
+| T6 | Dokumentace + CHANGELOG | ✅ |
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
+| T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
+| T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ✅ |
+| T10 | Opravy z code review (archive.org redirecty, brána, bulk-verify, drobnosti) | ✅ |
+
+**Pořadí provedení** (ID úkolů jsou stabilní a nemění se, pořadí se od nich
+liší, protože T8 a T9 přibyly dodatečně):
+
+`T1 ✅ → T8 ✅ → T2 ✅ → T3 ✅ → T4 ✅ → T5 ✅ → T9 ✅ → T6 ✅ → T10 ✅ → T7`
+
+T2–T5 jsou na sobě nezávislé. T9 musí být hotový před backfillem v T7
+(krok 5), T6 dokumentuje hotové opravy, T10 opravuje nálezy z code review
+části T1–T9 a T7 (nasazení) je vždy poslední.
 
 ---
 
@@ -186,6 +203,16 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 Gemini citace (Skoda Auto, prompt 54, gemini-3.1-flash-lite) přes
 tlačítko „Verify citations" skončí jinak než `robots`.
 
+**Implementováno (upřesnění):** `final_url` je poslední dosažený hop,
+kdykoli se liší od `requested_url` — i při `robots`, `timeout` a `too_large`
+uprostřed řetězce (u zákazu hned na prvním hopu zůstává prázdné). Brána
+bez přesměrování (404/200) uloží svůj stavový kód s prázdným tělem. Brána
+se neškrtí, škrtí se až hostitel cíle. `robots.txt` se stahuje s
+přesměrováním (`http→https`, `www`), jinak by prázdné 3xx tělo znamenalo
+„vše povoleno“; přesměrování na jiné schéma než `http`/`https` končí
+chybou. Mimo rozsah zůstává ochrana proti přesměrování na interní adresy
+(SSRF) — kandidát do `docs/ROADMAP.md`.
+
 **Expected commit:** `fix(adapters): resolve grounding redirects before checking robots.txt`
 
 ---
@@ -196,8 +223,9 @@ tlačítko „Verify citations" skončí jinak než `robots`.
 `.env.example`, `docker-compose.yaml` (env u `app` i `worker`, s defaultem),
 `tests/test_adapters.py`, `tests/test_worker_queue.py`
 
-1. `provider_timeout_seconds: float = 120`, `provider_judge_timeout_seconds:
-   float = 60` + komentář (design decision 4).
+1. `provider_timeout_seconds: float = 120` (`Field(ge=10)`, viz Done when),
+   `provider_judge_timeout_seconds: float = 60` (`gt=0`) + komentář
+   (design decision 4).
 2. Každý adaptér: timeout a `max_retries=1` při konstrukci klienta
    (OpenAI-kompatibilní: `openai.OpenAI(..., timeout=, max_retries=)`;
    Anthropic obdobně; Google `http_options=types.HttpOptions(timeout=ms)`
@@ -212,9 +240,20 @@ tlačítko „Verify citations" skončí jinak než `robots`.
 4. Komentář u `reconcile_interrupted_runs`: 30 min je teď s rezervou nad
    timeout × (retry + 1); neměnit.
 
-**Done when:** testy projdou; lokálně s dočasně nastaveným
-`PROVIDER_TIMEOUT_SECONDS=1` spadne ruční run (fixture výše) na timeout
-a worker ho zařadí k opakování; nastavení vrátit.
+**Done when:** testy projdou; chování SDK ověřeno proti lokálnímu serveru,
+který nikdy neodpoví (timeout i jediný retry u openai/anthropic, jediný
+pokus u google, všechno retryable); nastavení vráceno. ✅ 2026-10-01.
+**Původní krok (ruční Gemini run s `PROVIDER_TIMEOUT_SECONDS=1`) nejde
+provést:** `google-genai` posílá timeout serveru jako deadline a Gemini API
+pod 10 s odmítne s HTTP 400 (terminální, worker ji neopakuje) — proto má
+`provider_timeout_seconds` `ge=10` a appka se s menší hodnotou nespustí.
+
+**Implementováno (upřesnění):** `judge()` implementuje jen Anthropic
+adaptér, ostatních pět vyhazuje `NotImplementedError` — judge timeout je
+per-request `timeout=` u `messages.create`, žádný druhý klient. Google
+nemá `retry_options` (SDK bez nich dělá jediný pokus), `max_retries=1`
+dostaly jen openai-kompatibilní adaptéry a Anthropic. HTTP 408 se ve
+workeru dál nepovažuje za retryable (decision 5 se nemění).
 
 **Expected commit:** `fix(adapters): bound every provider call with an explicit timeout`
 
@@ -227,12 +266,14 @@ a worker ho zařadí k opakování; nastavení vrátit.
 `tests/test_verification_queue.py`
 
 1. `verify_citations_by_quote`: `try/except ArchiveUnavailable` kolem
-   archivní zálohy **per citace**; výsledek funkce vrací i seznam
-   citací odložených kvůli archive.org (nebo počet).
-2. Nový parametr `final_attempt: bool` — při `True` se pro odložené
-   citace uloží `CitationVerification(verdict="unverifiable",
-   reason="archive_unavailable", check_type="reachability"` nebo jak
-   odpovídá stávající konvenci pro neověřitelné — **ověřit v kódu**).
+   archivní zálohy **per citace** (u obou spouštěčů: živé 404/410 i živé
+   `not_found`); funkce vrací `QuoteCheckOutcome(complete, archive_deferred)`
+   místo `bool`.
+2. Nový parametr `final_attempt: bool` — při `True` se pro odložené citace
+   uloží `CitationVerification(check_type='quote', verdict='unverifiable',
+   reason='archive_unavailable', source_document_id=<živý dokument>)`
+   (stejný tvar jako ostatní neověřitelné řádky téhle cesty; živé
+   404 / `not_found` se do verdiktu nekopíruje, zůstává na dokumentu).
 3. `process_verification_job`: když jsou odložené citace a
    `job.attempts < _MAX_ATTEMPTS` → job `deferred` s dnešním backoffem
    (bez výjimky, bez `logger.error` — je to očekávaný stav, `warning`);
@@ -253,8 +294,8 @@ a worker ho zařadí k opakování; nastavení vrátit.
 **Target:** `app/services/source_extract.py`, `app/services/source_capture.py`,
 `app/services/citation_verification.py`, `tests/test_source_extract.py`
 
-1. `sanitize_extracted_text` podle design decision 7, volaná na konci
-   `extract_html` i `extract_pdf`.
+1. `sanitize_extracted_text` podle design decision 7, volaná na vstupu
+   `extract_html` a u každé stránky v `extract_pdf` — před výpočtem offsetů.
 2. Pojistka v obou insertech (`_store`, `_store_archive_document`):
    `assert "\x00" not in text` není vhodné pro produkci → místo toho
    znovu zavolat helper (idempotentní, levné) — jeden řádek, komentář proč.
@@ -284,6 +325,14 @@ a worker ho zařadí k opakování; nastavení vrátit.
 
 **Done when:** test projde; `/ops` v prohlížeči ukazuje stejné popisky
 jako před změnou.
+
+**Implementováno (upřesnění):** seznam hodnot pro `/ops` je
+`CAPTURE_REASONS` (`ops_dashboard.py`) = `success`, `not_captured` +
+`UNVERIFIABLE_REASONS` (stránka zobrazuje i dvě syntetické hodnoty). Test
+navíc kryje `HUMAN_VERDICTS` (`verification.human_verdict_<v>`); „test
+testu“ předává kontrolní funkci seznam s fiktivním důvodem místo
+`monkeypatch`. Ostatní složené klíče (`account.role_…`, `queue_status_…`
+aj.) zůstávají mimo.
 
 **Expected commit:** `test(i18n): require a translation for every unverifiable reason`
 
@@ -353,6 +402,170 @@ jako před změnou.
 **Done when:** kroky 4–6 ověřené a uživatel potvrdil.
 
 **Expected commit:** `docs(docs): record citation hardening deploy and close the branch`
+
+---
+
+## T8 — Průběh „Verify citations“ a ochrana proti duplicitním jobům
+
+Přibylo 2026-09-30 při lokálním ověřování T1: tlačítko „Verify citations“
+po kliknutí nic neukázalo a server ho nechránil — každý klik zařadil další
+placený `judge` job (nad runem 401 jich vznikly tři). Nejde o opravu citací
+jako T1–T5, ale o stejné riziko zbytečných nákladů, a mění jen UI a router,
+takže patří do téhož vydání. **Musí být hotové před T7.**
+
+**Target:** `app/services/verification_queue.py`, `app/routers/runs.py`,
+`app/templates/runs/detail.html`, `app/templates/runs/verify_status.html` (nový),
+`app/i18n/{en,de}.json`, `tests/test_runs.py`
+
+1. `verification_queue.py`: `ACTIVE_JOB_STATUSES = ("queued", "leased", "deferred")`
+   a `latest_judge_job(db, raw_response_id)`. Jen `judge` — `capture` má
+   vlastní stav „čeká na capture“ (`verification_display.is_capture_pending`).
+2. `verify_run_citations`: když poslední `judge` job je aktivní, nový se
+   nezařadí (odpověď je dál přesměrování, stránka ukáže průběh). Podmínku
+   způsobilosti sdílí s tlačítkem (`_can_verify_citations`).
+3. Nová route `GET /runs/{id}/verify-status` (HTML fragment): tlačítko, nebo
+   průběh jobu; s `?poll=true` a dokončeným jobem vrací `HX-Refresh: true`,
+   takže se stránka jednou sama obnoví a ukáže nové verdikty. Fragment se
+   při aktivním jobu sám dotazuje každé 4 s (vzor `schedules/index.html`).
+4. `runs/verify_status.html` + pět klíčů `run.verify_status_*` (en/de). Stavy:
+   čeká / běží / opakuje se po chybě / selhalo (+ tlačítko) / „Last verified“
+   (+ tlačítko). Viewer vidí průběh, ale ne tlačítko. Čas se vykresluje přes
+   makro `local_time` mimo `str.format` (jinak by se escapoval).
+5. Testy: druhý POST při `queued`/`leased`/`deferred` nevytvoří job, po
+   `done`/`error` ano; fragment pro každý stav, `HX-Refresh` po dokončení,
+   409 pro run bez citací, viewer bez tlačítka.
+
+**Done when:** testy + celá sada `pytest` projdou; v prohlížeči (run 401) se
+průběh objeví po kliknutí, po dokončení se stránka sama obnoví, druhá záložka
+tlačítko nevidí; 640/1024 px bez horizontálního posuvníku. ✅ ověřeno
+2026-09-30.
+
+**Vědomě mimo rozsah:** hromadné ověření na detailu klienta
+(`clients.py::verify_retroactively_confirm`) dál zařazuje joby bez téhle
+kontroly — řeší T9. Během ověřování narazil soudce na limit
+útraty účtu Anthropic (job zůstal `deferred` a po navýšení limitu doběhl) —
+kategorizace takových chyb je vydání 2 (#21).
+
+**Expected commit:** `fix(runs): show verification progress and ignore duplicate Verify citations clicks`
+
+---
+
+## T9 — Hromadné ověření u klienta nestackuje aktivní judge joby
+
+Přibylo 2026-09-30 jako dotažení T8. Hromadné zpětné ověření na detailu
+klienta (`/clients/{id}`: rozsah dat → náhled → potvrzení) vybírá odpovědi
+přes `clients.py::_bulk_verify_candidate_raw_response_ids`, která vynechá
+jen odpovědi **s už zapsaným** LLM verdiktem. Odpověď s `judge` jobem, který
+je teprve ve frontě nebo běží, verdikt ještě nemá — druhé spuštění nebo klik
+na „Verify citations“ během dávky ji proto zařadí znovu a za stejné citace
+se zaplatí dvakrát. U malé dávky jde o centy (run 401 ≈ 0,03 USD), po
+backfillu v T7 (desítky až stovky odpovědí) o jednotky dolarů a dlouhou
+frontu. **Musí být hotové před T7 krokem 5 (backfill).**
+
+**Target:** `app/routers/clients.py`, `tests/test_clients.py`
+
+1. `_bulk_verify_candidate_raw_response_ids`: vyloučit odpovědi, které mají
+   `judge` job ve stavu z `ACTIVE_JOB_STATUSES` (`verification_queue.py`,
+   z T8) — stejná definice „běží“ jako u tlačítka na run detailu. Náhled
+   i potvrzení používají tutéž funkci, takže se počty nerozejdou. Docstring
+   doplnit o tohle pravidlo.
+2. Žádná změna šablon ani překladů. Potvrzení dál jen zařadí méně jobů než
+   náhled, nikdy více (beze změny oproti dnešku).
+3. Testy: odpověď s `judge` jobem `queued`/`leased`/`deferred` mimo náhled
+   i potvrzení; po `done`/`error` bez verdiktu znovu způsobilá; druhé
+   potvrzení hned po prvním nezařadí nic.
+
+**Done when:** testy + celá sada `pytest` projdou; lokálně po „Verify
+citations“ na runu z fixture (Skoda Auto, prompt 54) náhled u klienta tuhle
+odpověď nenabízí, dokud job neskončí.
+
+**Ověřeno 2026-10-01:** testy + celá sada; lokálně u klienta Kings&Queens
+náhled po simulovaném běžícím jobu ukázal 1 odpověď / 2 citace místo
+2 / 38. Známé omezení: kontrola před zápisem (check-then-insert) bez
+unikátního omezení v DB — dvě potvrzení ve stejné milisekundě by teoreticky
+obě prošla.
+
+**Expected commit:** `fix(clients): skip responses with a judge job in progress in bulk verify`
+
+---
+
+## T10 — Opravy z code review (2026-10-01)
+
+`/code-review high` nad celou větví našlo 9 nálezů. T10 opravuje osm z nich;
+devátý (SSRF při přesměrování na interní adresy, staré chování, mimo toto
+vydání) je samostatná položka `docs/ROADMAP.md` #27. **Musí být hotové před
+T7** — body 1–3 před backfillem, protože ten vytváří stovky trvalých
+(append-only) evidenčních řádků.
+
+**Target:** `app/services/archive_lookup.py`, `app/services/source_capture.py`,
+`app/services/source_extract.py`, `app/routers/clients.py`,
+`app/routers/runs.py`, `app/services/verification_display.py`,
+`app/templates/runs/verify_status.html` a jejich testy.
+
+1. **Archive.org fallback sleduje přesměrování** (vysoká). T1 nastavil
+   sdílenému `build_capture_client()` `follow_redirects=False`, ale stejného
+   klienta dostává i `archive_lookup._request`, který na přesměrování
+   spoléhal — Wayback 301/302 by se přestalo následovat a archivní záloha by
+   tiše nikdy nepovýšila 404/„nenalezeno". Oprava: `follow_redirects=True`
+   per požadavek v `_request`.
+2. **Testy používají skutečného klienta.** `build_capture_client()` dostane
+   volitelný `transport` (jen pro testy); pomocné `_client()` v
+   `test_source_capture.py` a `test_archive_lookup.py` ho používají místo
+   ručně opsaných nastavení, takže změna produkčního klienta se v testech
+   projeví. Nový test: archivní snapshot odpovídající 302.
+3. **Brána se škrtí.** Požadavek na přesměrovací bránu dostane vlastní,
+   krátký interval (`GATEWAY_MIN_INTERVAL_SECONDS = 0.2`; sdílený mezi workery
+   přes `rate_limit.throttle`), takže dávka Gemini citací nezahltí
+   `vertexaisearch.cloud.google.com` a 429/5xx brány nevznikne jako
+   „zdroj má 429". Cíl se dál škrtí zvlášť (decision 3 platí). Upravit test
+   `test_throttle_uses_target_host_not_gateway`.
+4. **Timeout providerů podle dat.** Před nasazením změřit latence z produkce
+   (`runs.latency_ms` podle modelu, p95 a maximum). Když nejpomalejší model
+   přesáhne ~90 s, přidat výjimku nebo zvýšit hodnotu; jinak ponechat 120 s.
+   Výsledek zapsat sem.
+5. **Hromadné ověření vynechá odpověď s jakýmkoli aktivním jobem**
+   (`capture` i `judge`). Běžící `capture` job buď teprve stahuje zdroje
+   (judge nad nimi by nic neposoudil), nebo u klienta s
+   `auto_verify_citations` posuzuje sám — v obou případech je další placený
+   job zbytečný.
+6. **„Last verified" z verdiktů, ne z jobu.** Čas se bere z nejnovějšího
+   `check_type='llm'` řádku odpovědi. `judge` job, který nic neposoudil
+   (zdroje ještě nestažené), už netvrdí, že je run ověřený; a ověření
+   z automatického capture jobu se zobrazí také.
+7. **NUL se odstraňuje před spojením rozdělených slov** v `extract_pdf`
+   (`_HYPHEN_LINEBREAK_RE`), jinak NUL za zalomením spojení zabrání.
+8. **Polling při odložení** — stav `deferred` se dotazuje každých 30 s, ne
+   každé 4 s (backoff trvá až 25 minut).
+
+**Výsledek bodu 4 (2026-10-01, lokální DB, 10 modelů):** nejpomalejší je
+`grok-4.7` s maximem 86,5 s (p95 78,8 s, 28 běhů), dál `gpt-5.6-terra` 73,4 s,
+`deepseek-flash` 63,5 s, `gpt-5.6-luna` 61,3 s; ostatní pod 40 s. Pravidlo
+(výjimka při > ~90 s) se nespouští, **120 s zůstává**. Vzorky u pomalejších
+modelů jsou tenké (Claude Sonnet 5 jen 3 běhy, DeepSeek Pro žádný), proto
+**kontrola po nasazení** (T7 krok 6): počet běhů s chybou `timed out` v
+`runs.error_message`; hodnotu lze změnit v `.env` (`PROVIDER_TIMEOUT_SECONDS`)
+bez nasazení, jen restartem `app` a `worker`. Produkční čísla stejným
+dotazem před T7:
+
+```sql
+select p.code provider, m.model_name, count(*) runs,
+       round((max(r.latency_ms)/1000.0)::numeric,1) max_s,
+       round(((percentile_cont(0.95) within group (order by r.latency_ms))/1000.0)::numeric,1) p95_s
+from runs r join ai_models m on m.id = r.model_id join providers p on p.id = m.provider_id
+where r.status = 'success' and r.latency_ms is not null
+group by 1, 2 order by max_s desc;
+```
+
+**Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
+kódu před opravou; bod 4 vyhodnocen a zapsán; lokálně „Last verified" po
+jobu bez verdiktů nezobrazeno. ✅ 2026-10-01 (710 passed; jediné selhání je
+nesouvisející `test_check_budget_thresholds_fires_again_next_month`,
+závislý na datu).
+
+**Expected commits:**
+- `fix(adapters): follow redirects when fetching archive.org snapshots` (1, 2)
+- `fix(adapters): pace requests to redirect gateways` (3)
+- `fix(runs): tidy verification status and bulk verify edge cases` (5–8)
 
 ---
 

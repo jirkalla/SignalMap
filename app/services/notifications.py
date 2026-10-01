@@ -38,16 +38,26 @@ _EXPIRING_SOON_DAYS = 7
 _EXPIRING_SOON_OCCURRENCES = 3
 
 
-def notify(db: Session, event_type: str, payload: dict, *, recipient_user_id: int | None = None) -> NotificationOutbox:
+def notify(
+    db: Session, event_type: str, payload: dict, *, recipient_user_id: int | None = None, now: datetime | None = None
+) -> NotificationOutbox:
     """Write one `notification_outbox` row and immediately attempt delivery through every
 
     registered channel (app/notifications/CHANNELS) — always writes and logs, even with zero
     channels registered or every channel failing, since the outbox row itself is the durable
     record (design decision 25); a channel is only a way to surface what's already there.
+
+    `now`, when given, becomes the row's `created_at` instead of the database clock. Callers that
+    dedup against an injected `now` (`_already_notified(since=...)`, e.g. `check_budget_thresholds`)
+    pass it so the row and the check agree on what time it is — in production the two are the same
+    instant, but a test that simulates "next month" would otherwise compare a simulated cutoff with
+    the real clock and fail for as long as the real month happens to be the simulated one.
     """
     notification = NotificationOutbox(
         event_type=event_type, payload=payload, recipient_user_id=recipient_user_id, status="pending"
     )
+    if now is not None:
+        notification.created_at = now
     db.add(notification)
     db.commit()
     db.refresh(notification)
@@ -160,6 +170,7 @@ def check_budget_thresholds(db: Session, *, now: datetime) -> None:
             db,
             "budget.threshold_exceeded",
             {"client_id": client.id, "client_name": client.name, "spend_usd": round(spend, 2), "budget_usd": float(client.monthly_budget_usd)},
+            now=now,
         )
 
 

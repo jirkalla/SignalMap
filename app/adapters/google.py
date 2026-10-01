@@ -191,7 +191,15 @@ class GoogleGeminiAdapter:
     supports_geo_targeting = False
 
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=get_settings().google_api_key)
+        settings = get_settings()
+        # google-genai takes the timeout in MILLISECONDS (every other SDK here takes seconds).
+        # No `retry_options` on purpose: with none set the SDK makes a single attempt (verified in
+        # google/genai/_api_client.py `retry_args`), so there is no SDK default to lower — the
+        # worker's backoff does the repeating, see config.py's `provider_timeout_seconds`.
+        self._client = genai.Client(
+            api_key=settings.google_api_key,
+            http_options=types.HttpOptions(timeout=int(settings.provider_timeout_seconds * 1000)),
+        )
 
     def run(
         self,

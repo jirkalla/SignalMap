@@ -4,6 +4,7 @@ import socket
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,23 @@ class Settings(BaseSettings):
     xai_api_key: str = ""
     perplexity_api_key: str = ""
     deepseek_api_key: str = ""
+    # Upper bound for ONE provider API call (docs/TASKS_CITATION_HARDENING.md T2, design decision
+    # 4) — until this existed no adapter passed a timeout, so a hung provider blocked a worker for
+    # the SDK default (~600 s) times its own retries (a stuck Grok call held one for 27 minutes).
+    # 120 s leaves headroom over the slowest measured run (73 s, docs/TASKS_WORKER_THROUGHPUT.md).
+    # Seconds here; google-genai takes milliseconds, the Google adapter converts. Worst case for a
+    # single call is timeout x (SDK retries + 1): the openai/anthropic adapters pin max_retries=1
+    # (SDK default is 2) and the google-genai default is no retries at all — the worker's own
+    # backoff does the repeating (`_is_retryable_error`, app/worker.py), so one call stays well
+    # under the 15-minute lease and the 30-minute `reconcile_interrupted_runs` cutoff.
+    # ge=10: google-genai forwards this to the Gemini API as a server-side deadline and the API
+    # rejects anything under 10 s with a terminal HTTP 400 (found 2026-10-01 running with 1 s) —
+    # the worker does not retry a 400, so a too-small value would fail every Gemini run. Failing
+    # at startup with a clear validation error is better than that.
+    provider_timeout_seconds: float = Field(120, ge=10)
+    # Same, for a `judge()` call (a short verdict, not a full grounded answer) — only the
+    # Anthropic adapter implements judge() today.
+    provider_judge_timeout_seconds: float = Field(60, gt=0)
     # JWT signing key for the login session cookie (app/auth.py). No default — a missing value
     # must fail app startup loudly, never silently fall back to a weak, guessable secret.
     secret_key: str

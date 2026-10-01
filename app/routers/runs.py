@@ -60,8 +60,9 @@ from app.services.verification_display import (
     VERDICT_STYLES,
     ClaimGroup,
     build_verification_display,
+    last_llm_verification_at,
 )
-from app.services.verification_queue import enqueue_judge
+from app.services.verification_queue import ACTIVE_JOB_STATUSES, enqueue_judge, latest_judge_job
 from app.templating import get_t, render
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,54 @@ def trigger_run(
     return RedirectResponse(url=target_url, status_code=303)
 
 
+def _can_verify_citations(run: Run, raw_response: RawResponse | None) -> bool:
+    """Whether a 'Verify citations' judge job could do anything for this run — shared by the
+    button's visibility, the status fragment, and `verify_run_citations`' own 409 guard.
+    """
+    return bool(raw_response and raw_response.has_citations and run.model.provider.code in LLM_JUDGE_PROVIDERS)
+
+
+@router.get("/runs/{run_id}/verify-status")
+def verify_citations_status(
+    request: Request,
+    run_id: int,
+    poll: bool = Query(
+        False,
+        description="Set by the status line's own auto-refresh: once the job is no longer in progress, answer with an HX-Refresh so the whole page reloads and shows the new verdicts.",
+    ),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_active_user),
+):
+    """HTML fragment with the "Verify citations" button or the progress of its judge job.
+
+    Rendered inline by the run detail page and then re-fetched every few seconds by the fragment
+    itself while the job is queued/running/retrying. When a polling request finds the job finished
+    (done or error), the response is an empty 200 with `HX-Refresh: true` — the browser reloads
+    the whole page once, so the highlighted answer and the summary card pick up the new verdicts.
+    """
+    t = get_t(request)
+    run = _get_run_or_404(db, request, run_id)
+    raw_response = db.scalars(select(RawResponse).where(RawResponse.run_id == run_id)).first()
+    if not _can_verify_citations(run, raw_response):
+        raise AppError(
+            "citation_verification_not_supported", t("errors.citation_verification_not_supported"), status_code=409
+        )
+    job = latest_judge_job(db, raw_response.id)
+    active = job is not None and job.status in ACTIVE_JOB_STATUSES
+    if poll and not active:
+        return Response(status_code=200, headers={"HX-Refresh": "true"})
+    return render(
+        request,
+        "runs/verify_status.html",
+        {
+            "run": run,
+            "verify_job": job,
+            "verify_active": active,
+            "verify_last_at": last_llm_verification_at(db, raw_response.id),
+        },
+    )
+
+
 @router.post("/runs/{run_id}/verify-citations", dependencies=_editor_or_admin)
 def verify_run_citations(request: Request, run_id: int, db: Session = Depends(get_db), user: User = Depends(current_active_user)):
     """Queue an on-demand LLM paraphrase check for this run's citations (docs/TASKS_CITATION_
@@ -350,16 +399,22 @@ def verify_run_citations(request: Request, run_id: int, db: Session = Depends(ge
     already get the free quote check, xAI/DeepSeek have no claim to judge at all). The template
     only ever shows this button when that check already passes, so reaching this 409 means the
     request bypassed the UI (a stale tab, a direct POST) rather than a normal click.
+
+    Does nothing (still redirects, to the page showing the job's progress) when a judge job for
+    this response is already queued, running, or waiting to retry — a second click, a second tab,
+    or a second user must not stack another paid LLM pass on the same citations.
     """
     t = get_t(request)
     run = _get_run_or_404(db, request, run_id)
     raw_response = db.scalars(select(RawResponse).where(RawResponse.run_id == run_id)).first()
-    if raw_response is None or not raw_response.has_citations or run.model.provider.code not in LLM_JUDGE_PROVIDERS:
+    if not _can_verify_citations(run, raw_response):
         raise AppError(
             "citation_verification_not_supported", t("errors.citation_verification_not_supported"), status_code=409
         )
 
-    enqueue_judge(db, raw_response.id, now=datetime.now(timezone.utc), requested_by_user_id=user.id)
+    job = latest_judge_job(db, raw_response.id)
+    if job is None or job.status not in ACTIVE_JOB_STATUSES:
+        enqueue_judge(db, raw_response.id, now=datetime.now(timezone.utc), requested_by_user_id=user.id)
 
     target_url = f"/runs/{run_id}"
     if request.headers.get("HX-Request") == "true":
@@ -445,7 +500,10 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), use
     # docs/TASKS_CITATION_VERIFICATION.md T13 — the "Verify citations" button only shows when
     # verify_run_citations could actually do something; the route's own 409 guard repeats this
     # exact check server-side rather than trusting a hidden/disabled button never gets bypassed.
-    can_verify_citations = bool(raw_response and raw_response.has_citations and run.model.provider.code in LLM_JUDGE_PROVIDERS)
+    can_verify_citations = _can_verify_citations(run, raw_response)
+    verify_job = latest_judge_job(db, raw_response.id) if can_verify_citations else None
+    verify_active = verify_job is not None and verify_job.status in ACTIVE_JOB_STATUSES
+    verify_last_at = last_llm_verification_at(db, raw_response.id) if can_verify_citations else None
     raw_payload_json = json.dumps(raw_response.raw_payload, indent=2, ensure_ascii=False) if raw_response else None
     request_payload_json = (
         json.dumps(run.request_payload, indent=2, ensure_ascii=False) if run.request_payload else None
@@ -479,6 +537,9 @@ def run_detail(request: Request, run_id: int, db: Session = Depends(get_db), use
             "verdict_styles": VERDICT_STYLES,
             "tone_badge_classes": TONE_BADGE_CLASSES,
             "can_verify_citations": can_verify_citations,
+            "verify_job": verify_job,
+            "verify_active": verify_active,
+            "verify_last_at": verify_last_at,
             "human_verdicts": HUMAN_VERDICTS,
             "my_review_labels": my_review_labels,
             "search_queries": search_queries,

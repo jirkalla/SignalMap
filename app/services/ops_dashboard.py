@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.models import AIModel, Client, Prompt, PromptSet, Provider, RawResponse, Run, User
 from app.models.run import Citation
-from app.models.verification import CitationVerification, SourceDocument, VerificationJob
+from app.models.verification import UNVERIFIABLE_REASONS, CitationVerification, SourceDocument, VerificationJob
 from app.services.cost import run_cost_sql_expr, run_token_sql_expr
 from app.services.date_ranges import day_starts, month_starts, week_starts
 
@@ -670,6 +670,14 @@ def recent_runs(db: Session, run_ids_query: Select, *, with_client_name: bool, l
             )
         )
     return result
+
+
+# Every `reason` value a `CaptureReasonRow` can carry, i.e. what `/ops` needs a label for: the two
+# synthetic buckets this module adds itself plus every capture-failure reason. Handed to the page
+# (app/routers/ops_dashboard.py's `ops_page`), which builds its label map from it rather than
+# spelling the values out by hand — and tests/test_i18n_coverage.py requires a translation for each
+# (docs/TASKS_CITATION_HARDENING.md T5, design decision 8).
+CAPTURE_REASONS: tuple[str, ...] = ("success", "not_captured") + UNVERIFIABLE_REASONS
 
 
 @dataclass

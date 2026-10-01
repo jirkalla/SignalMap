@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.models.verification import UNVERIFIABLE_REASONS, SourceDocument, SourceText
 from app.services.rate_limit import throttle
-from app.services.source_extract import extract_html, extract_pdf
+from app.services.source_extract import extract_html, extract_pdf, sanitize_extracted_text
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,14 @@ MAX_BYTES = 20 * 1024 * 1024
 # aggregate rate by however many of them collided (code-review finding, 2026-09-30).
 MIN_DOMAIN_INTERVAL_SECONDS = 1.0
 
+# Spacing for the one header-only request a known redirect gateway (`_REDIRECT_GATEWAYS`) gets —
+# much shorter than a normal domain's, because every Gemini citation passes through the SAME gateway
+# host and a full second each would serialize a run's 25-40 citations (and all four workers) behind
+# one slot, which is exactly what pacing by the target domain instead was meant to avoid (design
+# decision 3). But not zero: unpaced, a batch of citations (or a backfill) hammers the gateway, and
+# a 429/5xx from it would be recorded against a target page that was never reached.
+GATEWAY_MIN_INTERVAL_SECONDS = 0.2
+
 _robots_cache: dict[str, RobotFileParser] = {}
 
 # Short body (design decision 8: "< 1500 characters") matching a known bot-protection interstitial,
@@ -82,28 +90,39 @@ def _vendor_from_keyword(keyword: str) -> str:
     return "cloudflare"  # cloudflare, "just a moment", "checking your browser" all point here
 
 
-def build_capture_client() -> httpx.Client:
+def build_capture_client(*, transport: httpx.BaseTransport | None = None) -> httpx.Client:
     """The one real `httpx.Client` production capture uses — honest UA, timeout, and redirect
 
     cap (design decisions 6/7/9) all live here, in one place, so nothing calling `capture_url`
-    can accidentally construct a client that skips them.
+    can accidentally construct a client that skips them. `transport` exists for tests only (a
+    `httpx.MockTransport`): they build THIS client rather than a hand-copied lookalike, so a change
+    to its settings shows up in the suite — the shared client also feeds archive.org lookups, and
+    a redirect setting that suits `capture_url` alone once broke those unnoticed.
     """
+    # follow_redirects=False: `_resolve_and_fetch` walks redirects itself, hop by hop, so that
+    # robots.txt is checked for every host the chain passes through (design decision 1).
     return httpx.Client(
         headers={"User-Agent": USER_AGENT},
         timeout=REQUEST_TIMEOUT_SECONDS,
-        follow_redirects=True,
-        max_redirects=MAX_REDIRECTS,
+        follow_redirects=False,
+        transport=transport,
     )
 
 
-def _throttle_domain(db: Session, domain: str, *, sleep: Callable[[float], None]) -> None:
-    """Block (via `sleep`) until at least `MIN_DOMAIN_INTERVAL_SECONDS` have passed since the
+def _throttle_domain(
+    db: Session, domain: str, *, sleep: Callable[[float], None], interval_seconds: float | None = None
+) -> None:
+    """Block (via `sleep`) until at least `interval_seconds` (default `MIN_DOMAIN_INTERVAL_SECONDS`)
 
-    last request to `domain` from ANY worker process sharing this database (code-review finding,
-    2026-09-30 — see `MIN_DOMAIN_INTERVAL_SECONDS`'s own comment). `sleep` is injected (defaults
-    to `time.sleep` in `capture_url`) so tests can pass a no-op and never actually wait.
+    have passed since the last request to `domain` from ANY worker process sharing this database
+    (code-review finding, 2026-09-30 — see `MIN_DOMAIN_INTERVAL_SECONDS`'s own comment). `sleep` is
+    injected (defaults to `time.sleep` in `capture_url`) so tests can pass a no-op and never
+    actually wait. The default is looked up at call time, not bound as a default argument, so a
+    test that patches the module constant is honoured.
     """
-    throttle(db, domain, interval_seconds=MIN_DOMAIN_INTERVAL_SECONDS, sleep=sleep)
+    if interval_seconds is None:
+        interval_seconds = MIN_DOMAIN_INTERVAL_SECONDS
+    throttle(db, domain, interval_seconds=interval_seconds, sleep=sleep)
 
 
 def _robots_allowed(client: httpx.Client, url: str) -> bool:
@@ -119,7 +138,10 @@ def _robots_allowed(client: httpx.Client, url: str) -> bool:
     if parser is None:
         parser = RobotFileParser()
         try:
-            response = client.get(urljoin(origin, "/robots.txt"))
+            # follow_redirects=True per request: the client itself never follows redirects, but
+            # a robots.txt that 301s (http -> https, bare -> www) must still be read — otherwise
+            # the empty 3xx body would parse as "allow everything" (RFC 9309 §2.3.1.2).
+            response = client.get(urljoin(origin, "/robots.txt"), follow_redirects=True)
         except httpx.RequestError:
             response = None
         if response is not None and response.status_code < 400:
@@ -193,9 +215,117 @@ class _TooLarge(Exception):
     """
 
 
+_REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
+# Known redirect gateways: (host, path prefix). robots.txt is deliberately NOT applied to these,
+# and only for ONE hop with no body read (design decision 2). Gemini grounding citations are
+# `vertexaisearch.cloud.google.com/grounding-api-redirect/...` links whose robots.txt says
+# `Disallow: /grounding-api-redirect` — that stops the gateway from being INDEXED, not a person
+# from clicking the one link a provider handed them as a citation. Fetching only its `Location`
+# header is exactly what the user's own browser would do, and robots.txt of the page the link
+# leads to is still enforced in full. This is a URL pattern, not a provider list.
+_REDIRECT_GATEWAYS: tuple[tuple[str, str], ...] = (
+    ("vertexaisearch.cloud.google.com", "/grounding-api-redirect/"),
+)
+
+
+def _is_redirect_gateway(url: str) -> bool:
+    parts = urlsplit(url)
+    return any(
+        parts.hostname == host and parts.path.startswith(prefix) for host, prefix in _REDIRECT_GATEWAYS
+    )
+
+
+class _RobotsBlocked(Exception):
+    """Raised internally when robots.txt disallows a hop — caught in `capture_url`."""
+
+
+@dataclass
+class _Trace:
+    """The last URL a capture attempt reached or tried, updated as `_resolve_and_fetch` walks the
+    chain — so a failure part-way (robots, timeout, too large) can still record where it ended.
+    """
+
+    last_url: str
+
+
+def _redirect_target(current: str, status: int, headers: httpx.Headers) -> str | None:
+    """The absolute next URL when this response is a redirect, else None."""
+    location = headers.get("location")
+    if status not in _REDIRECT_STATUSES or not location:
+        return None
+    target = urljoin(current, location)
+    if urlsplit(target).scheme not in ("http", "https"):
+        raise httpx.UnsupportedProtocol(
+            f"redirect to unsupported scheme: {target!r}", request=httpx.Request("GET", current)
+        )
+    return target
+
+
+def _peek(client: httpx.Client, url: str) -> _FetchResult:
+    """One GET whose body is never read — enough for a gateway's status and `Location` header."""
+    started = time.perf_counter()
+    with client.stream("GET", url, follow_redirects=False) as response:
+        return _FetchResult(
+            final_url=url,
+            status=response.status_code,
+            headers=response.headers,
+            body=b"",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+
+
+def _resolve_and_fetch(
+    db: Session,
+    client: httpx.Client,
+    url: str,
+    *,
+    trace: _Trace,
+    sleep: Callable[[float], None],
+) -> _FetchResult:
+    """Follow redirects by hand, hop by hop (design decisions 1-3).
+
+    Every hop except a known gateway (`_REDIRECT_GATEWAYS`) is checked against robots.txt of ITS
+    host and paced per that host — so a Gemini citation's page is throttled as its target domain,
+    not as the shared `vertexaisearch` gateway. The gateway hop skips robots.txt but is still paced,
+    briefly (`GATEWAY_MIN_INTERVAL_SECONDS`). `trace.last_url` tracks the hop in progress. Raises
+    `_RobotsBlocked`, `_TooLarge`, or an `httpx.RequestError` (incl. `TooManyRedirects`).
+    """
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        trace.last_url = current
+        if _is_redirect_gateway(current):
+            _throttle_domain(
+                db, urlsplit(current).netloc, sleep=sleep, interval_seconds=GATEWAY_MIN_INTERVAL_SECONDS
+            )
+            result = _peek(client, current)
+        else:
+            if not _robots_allowed(client, current):
+                raise _RobotsBlocked()
+            _throttle_domain(db, urlsplit(current).netloc, sleep=sleep)
+            result = _fetch(client, current)
+        target = _redirect_target(current, result.status, result.headers)
+        if target is None:
+            return result
+        current = target
+    trace.last_url = current
+    raise httpx.TooManyRedirects(
+        f"more than {MAX_REDIRECTS} redirects", request=httpx.Request("GET", url)
+    )
+
+
 def _fetch(client: httpx.Client, url: str) -> _FetchResult:
     started = time.perf_counter()
-    with client.stream("GET", url) as response:
+    with client.stream("GET", url, follow_redirects=False) as response:
+        if response.status_code in _REDIRECT_STATUSES and response.headers.get("location"):
+            # A redirect's own body is irrelevant — only the next hop matters.
+            return _FetchResult(
+                final_url=str(response.url),
+                status=response.status_code,
+                headers=response.headers,
+                body=b"",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
         content_length = response.headers.get("content-length")
         if content_length and int(content_length) > MAX_BYTES:
             raise _TooLarge()
@@ -273,6 +403,10 @@ def _store(
 
     text_sha256 = None
     if text is not None:
+        # Safety net (docs/TASKS_CITATION_HARDENING.md T4): extraction already strips NUL, but a
+        # NUL reaching this insert would raise a DataError and fail the whole job — and the hash
+        # below must describe exactly the text that gets stored.
+        text = sanitize_extracted_text(text)
         text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         db.execute(
             pg_insert(SourceText)
@@ -312,8 +446,9 @@ def capture_url(
 ) -> SourceDocument:
     """Fetch and extract `url`, returning a `SourceDocument` — always, whether it succeeded or
 
-    not (design decisions 6-13). Order of operations: 24h cache, then `robots.txt`, then the
-    per-domain pacing, then the fetch itself, then challenge detection, then extraction.
+    not (design decisions 6-13). Order of operations: 24h cache, then the redirect chain hop by
+    hop (`_resolve_and_fetch`: per hop `robots.txt` then per-domain pacing then fetch — known
+    gateways excepted), then challenge detection, then extraction.
 
     `now` drives both the cache check and the row's own `fetched_at` (never `datetime.now()`
     internally) — deterministic and test-injectable, same convention as
@@ -324,25 +459,33 @@ def capture_url(
     if cached is not None:
         return cached
 
-    if not _robots_allowed(client, url):
-        return _store(db, requested_url=url, now=now, error_reason="robots")
+    trace = _Trace(last_url=url)
 
-    domain = urlsplit(url).netloc
-    _throttle_domain(db, domain, sleep=sleep)
+    def _failed(reason: str) -> SourceDocument:
+        # `final_url` = the last hop reached/attempted, when that isn't the requested URL itself.
+        return _store(
+            db,
+            requested_url=url,
+            now=now,
+            final_url=trace.last_url if trace.last_url != url else None,
+            error_reason=reason,
+        )
 
     try:
-        fetched = _fetch(client, url)
+        fetched = _resolve_and_fetch(db, client, url, trace=trace, sleep=sleep)
+    except _RobotsBlocked:
+        return _failed("robots")
     except _TooLarge:
-        return _store(db, requested_url=url, now=now, error_reason="too_large")
+        return _failed("too_large")
     except httpx.TimeoutException:
-        return _store(db, requested_url=url, now=now, error_reason="timeout")
+        return _failed("timeout")
     except httpx.RequestError as exc:
         # No dedicated code for a generic connection failure (DNS, connection refused, too many
         # redirects, ...) in design decision 28's reason list — bucketed under "timeout" rather
         # than inventing a new one, since both mean the same thing to an analyst: this source
         # could not be reached this time.
         logger.info("capture_url: connection error for %s: %s", url, exc)
-        return _store(db, requested_url=url, now=now, error_reason="timeout")
+        return _failed("timeout")
 
     content_type = fetched.headers.get("content-type", "")
     is_pdf = "pdf" in content_type.lower() or fetched.final_url.lower().split("?")[0].endswith(".pdf")

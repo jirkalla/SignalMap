@@ -3,6 +3,7 @@
 import hashlib
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -1241,3 +1242,223 @@ def test_verify_run_citations_is_forbidden_for_a_viewer(client: TestClient, edit
     client.post("/auth/login", data={"username": viewer_user.email, "password": TEST_USER_PASSWORD})
 
     assert client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False).status_code == 403
+
+
+# --- "Verify citations" progress + duplicate guard ---------------------------------------------
+
+
+def _raw_response_of(db_session: Session, run_id: int) -> RawResponse:
+    return db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+
+
+def _add_llm_verdict(db_session: Session, raw_response_id: int) -> CitationVerification:
+    """One LLM verdict row on the response's first citation."""
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response_id).order_by(Citation.id))
+    verification = CitationVerification(citation_id=citation.id, check_type="llm", verdict="llm_supported", verifier_version="1.0")
+    db_session.add(verification)
+    db_session.commit()
+    return verification
+
+
+def _judge_jobs(db_session: Session, raw_response_id: int) -> list[VerificationJob]:
+    return list(
+        db_session.scalars(
+            select(VerificationJob).where(VerificationJob.raw_response_id == raw_response_id, VerificationJob.kind == "judge")
+        )
+    )
+
+
+def _add_judge_job(db_session: Session, raw_response_id: int, status: str) -> VerificationJob:
+    job = VerificationJob(raw_response_id=raw_response_id, kind="judge", status=status, scheduled_for=datetime.now(timezone.utc))
+    if status in ("done", "error"):
+        job.finished_at = datetime.now(timezone.utc)
+    db_session.add(job)
+    db_session.commit()
+    return job
+
+
+@pytest.mark.parametrize("active_status", ["queued", "leased", "deferred"])
+def test_verify_run_citations_ignores_a_click_while_a_judge_job_is_active(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt, active_status: str
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, active_status)
+
+    response = authed_client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False)
+
+    assert response.status_code == 303  # still redirects to the page that shows the progress
+    assert len(_judge_jobs(db_session, raw_response.id)) == 1
+
+
+@pytest.mark.parametrize("finished_status", ["done", "error"])
+def test_verify_run_citations_enqueues_again_once_the_previous_job_finished(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt, finished_status: str
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, finished_status)
+
+    authed_client.post(f"/runs/{run_id}/verify-citations", follow_redirects=False)
+
+    assert len(_judge_jobs(db_session, raw_response.id)) == 2
+
+
+def test_run_detail_shows_progress_instead_of_the_button_while_a_judge_job_is_active(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, "leased")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert f'action="/runs/{run_id}/verify-citations"' not in page
+    assert f'hx-get="/runs/{run_id}/verify-status?poll=true"' in page
+    assert 'hx-trigger="every 4s"' in page
+
+
+def test_run_detail_shows_last_verified_and_the_button_after_a_done_job(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, "done")
+    _add_llm_verdict(db_session, raw_response.id)
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert f'action="/runs/{run_id}/verify-citations"' in page
+    assert "hx-trigger" not in page.split('id="verify-status"', 1)[1].split("</div>", 1)[0]  # no polling once idle
+    assert "Last verified" in page
+    assert "&lt;time" not in page  # the local_time() markup must render as a <time> element, not as escaped text
+
+
+def test_run_detail_shows_an_error_message_and_the_button_after_a_failed_job(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, "error")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "The last verification failed" in page
+    assert f'action="/runs/{run_id}/verify-citations"' in page
+
+
+def test_verify_status_poll_returns_hx_refresh_once_the_job_finished(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    job = _add_judge_job(db_session, raw_response.id, "leased")
+
+    still_running = authed_client.get(f"/runs/{run_id}/verify-status?poll=true")
+    assert still_running.status_code == 200
+    assert "HX-Refresh" not in still_running.headers
+    assert 'hx-trigger="every 4s"' in still_running.text
+
+    job.status = "done"
+    job.finished_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    finished = authed_client.get(f"/runs/{run_id}/verify-status?poll=true")
+    assert finished.status_code == 200
+    assert finished.headers["HX-Refresh"] == "true"
+
+
+def test_verify_status_without_poll_renders_the_idle_state_even_when_no_job_exists(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+
+    response = authed_client.get(f"/runs/{run_id}/verify-status")
+
+    assert response.status_code == 200
+    assert f'action="/runs/{run_id}/verify-citations"' in response.text
+
+
+def test_verify_status_409s_for_a_run_with_nothing_to_verify(authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt):
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "No sources here."}, rendered_text="No sources here.", has_citations=False, citations=[],
+        token_usage={"input_tokens": 5, "output_tokens": 3},
+    )
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+
+    assert authed_client.get(f"/runs/{run_id}/verify-status").status_code == 409
+
+
+def test_a_viewer_sees_the_job_progress_but_no_verify_button(
+    client: TestClient, editor_user, viewer_user, db_session: Session, seed, sample_prompt: Prompt
+):
+    client.post("/auth/login", data={"username": editor_user.email, "password": TEST_USER_PASSWORD})
+    run_id, _, _ = _trigger_citation_run(client, seed, sample_prompt)
+    raw_response = _raw_response_of(db_session, run_id)
+    _add_judge_job(db_session, raw_response.id, "done")
+    _add_llm_verdict(db_session, raw_response.id)
+    client.post("/auth/login", data={"username": viewer_user.email, "password": TEST_USER_PASSWORD})
+
+    page = client.get(f"/runs/{run_id}").text
+
+    assert "Last verified" in page
+    assert f'action="/runs/{run_id}/verify-citations"' not in page
+
+
+# --- "Last verified" and polling details (docs/TASKS_CITATION_HARDENING.md T10) ----------------
+
+
+def test_a_done_judge_job_that_judged_nothing_does_not_claim_the_run_was_verified(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """The job finishes `done` when no source was captured yet, having written no verdict at all."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "done")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "Last verified" not in page
+    assert f'action="/runs/{run_id}/verify-citations"' in page  # and the button is still offered
+
+
+def test_last_verified_follows_the_verdict_rows_even_without_any_judge_job(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """Verification that rode along inside an automatic capture job has no judge job at all."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_llm_verdict(db_session, _raw_response_of(db_session, run_id).id)
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "Last verified" in page
+
+
+def test_a_failed_job_after_an_earlier_verification_shows_both_lines(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_llm_verdict(db_session, _raw_response_of(db_session, run_id).id)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "error")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert "The last verification failed" in page
+    assert "Last verified" in page
+
+
+def test_a_job_waiting_out_a_retry_backoff_is_polled_less_often(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """A deferred job waits up to 25 minutes; polling it every 4 s would be ~375 requests per tab."""
+    run_id, _, _ = _trigger_citation_run(authed_client, seed, sample_prompt)
+    _add_judge_job(db_session, _raw_response_of(db_session, run_id).id, "deferred")
+
+    page = authed_client.get(f"/runs/{run_id}").text
+
+    assert 'hx-trigger="every 30s"' in page
+    assert 'hx-trigger="every 4s"' not in page

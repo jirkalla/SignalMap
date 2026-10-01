@@ -60,6 +60,10 @@ services:
       # needed here too, not just on `worker` below, since a manual trigger (this service) must
       # enforce the exact same cap the scheduler does (design decision 26).
       SCHEDULER_DEFAULT_DAILY_RUN_LIMIT: ${SCHEDULER_DEFAULT_DAILY_RUN_LIMIT:-50}
+      # Upper bound for ONE provider API call, in seconds (docs/TASKS_CITATION_HARDENING.md T2).
+      # A manual run executes inside this service, so it needs them as much as `worker` does.
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-120}
+      PROVIDER_JUDGE_TIMEOUT_SECONDS: ${PROVIDER_JUDGE_TIMEOUT_SECONDS:-60}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 15s
@@ -102,6 +106,9 @@ services:
       SCHEDULER_DEFAULT_DAILY_RUN_LIMIT: ${SCHEDULER_DEFAULT_DAILY_RUN_LIMIT:-50}
       SCHEDULER_MAX_QUEUE_DEPTH_PER_CLIENT: ${SCHEDULER_MAX_QUEUE_DEPTH_PER_CLIENT:-500}
       SCHEDULER_PROVIDER_CONCURRENCY: ${SCHEDULER_PROVIDER_CONCURRENCY:-1}
+      # Same bounds as `app` above — scheduled runs and verification judge calls run in this process.
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-120}
+      PROVIDER_JUDGE_TIMEOUT_SECONDS: ${PROVIDER_JUDGE_TIMEOUT_SECONDS:-60}
       # No `:-default` fallback here, deliberately (docs/TASKS_SCHEDULER.md T10) — a bare `KEY:`
       # passes the host's own WORKER_NAME through only if it's actually set there, otherwise the
       # container gets no WORKER_NAME env var at all, and app/config.py's own default (the

@@ -1067,3 +1067,20 @@ def test_verification_queue_snapshot_ignores_client_and_range_filters(authed_cli
     by_bucket = {(row["kind"], row["status"]): row["count"] for row in body}
 
     assert by_bucket.get(("capture", "queued")) == 1, "a job outside this client/range filter must still be counted"
+
+
+def test_ops_page_labels_every_capture_reason(authed_client: TestClient):
+    """docs/TASKS_CITATION_HARDENING.md T5 — the capture-reason label map in the page's JS is
+    generated from `CAPTURE_REASONS`, so a reason added there (or to `UNVERIFIABLE_REASONS`) gets
+    its translated label on the page without anyone also editing the template.
+    """
+    import json
+
+    from app.i18n import get_translator
+    from app.services.ops_dashboard import CAPTURE_REASONS
+
+    t = get_translator("en")
+    page = authed_client.get("/ops").text
+
+    for reason in CAPTURE_REASONS:
+        assert f"{json.dumps(reason)}: {json.dumps(t(f'ops.capture_reason_{reason}'))}" in page

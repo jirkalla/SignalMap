@@ -85,6 +85,26 @@ def enqueue_capture(db: Session, raw_response_id: int, *, now: datetime) -> None
     db.commit()
 
 
+# A job in any of these states still has work ahead of it (`deferred` = failed once, waiting out
+# its backoff) — the statuses the run detail page shows as "in progress" and the ones a second
+# "Verify citations" click must not stack another paid judge job on top of.
+ACTIVE_JOB_STATUSES = ("queued", "leased", "deferred")
+
+
+def latest_judge_job(db: Session, raw_response_id: int) -> VerificationJob | None:
+    """The newest 'judge' job for `raw_response_id`, in any state — None if nobody ever asked.
+
+    Only 'judge' jobs: a 'capture' job has its own "waiting for capture" state on the run page
+    (`verification_display.is_capture_pending`), and only a judge job costs LLM money.
+    """
+    return db.scalar(
+        select(VerificationJob)
+        .where(VerificationJob.raw_response_id == raw_response_id, VerificationJob.kind == "judge")
+        .order_by(VerificationJob.id.desc())
+        .limit(1)
+    )
+
+
 def enqueue_judge(db: Session, raw_response_id: int, *, now: datetime, requested_by_user_id: int | None = None) -> None:
     """Queue a 'judge' job for `raw_response_id` (docs/TASKS_CITATION_VERIFICATION.md T13) — the
 
@@ -240,11 +260,14 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
       their own `SourceDocument` rows; they are not reasons to fail the JOB.
     - `deferred` with backoff, or `error` once `_MAX_ATTEMPTS` is exhausted — only for an
       UNEXPECTED exception (a DB error, a bug), never for an ordinary capture outcome (see
-      module docstring). `verify_citations_by_quote`'s archive.org fallback (T10, design
-      decision 19) deliberately reuses this exact path: `archive_lookup.ArchiveUnavailable`
-      (a 429/5xx/timeout/connection error from archive.org) is an ordinary `Exception` too, so a
-      rate-limited archive.org defers-and-retries the whole job here, same as any other
-      unexpected failure — never recorded as a verdict.
+      module docstring).
+    - `deferred` with the exception path's backoff (1/5/25 min) when `verify_citations_by_quote`
+      left citations without a verdict because archive.org was unavailable (T10, design decision
+      19; docs/TASKS_CITATION_HARDENING.md T3, design decision 6). That is an expected state, not
+      an exception: only the unlucky citations are affected, the rest of the response was
+      verified normally, and the retry (`job_since`) re-processes just those. The job's LAST
+      attempt passes `final_attempt=True`, so they get `unverifiable`/`archive_unavailable`
+      instead and the job ends `done` — never `error` because archive.org was down.
     """
     if job.kind not in ("capture", "judge"):
         raise NotImplementedError(f"verification job {job.id}: kind={job.kind!r} has no processor yet")
@@ -270,6 +293,7 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
     job_since = job.created_at if job.attempts > 1 else None
     job_deadline = time.monotonic() + JOB_TIME_BUDGET_SECONDS
     incomplete = False
+    archive_deferred = 0
     try:
         if job.kind == "capture":
             urls = _citation_urls(db, job.raw_response_id)
@@ -291,9 +315,18 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
             # round) — the free quote check and any auto-judge should still cover whatever WAS
             # captured this pass, not wait for a fully-complete capture loop.
             raw_response = db.get(RawResponse, job.raw_response_id)
-            verify_ok = verify_citations_by_quote(db, raw_response, now=now, client=client, since=job_since, deadline=job_deadline)
+            quote_outcome = verify_citations_by_quote(
+                db,
+                raw_response,
+                now=now,
+                client=client,
+                since=job_since,
+                deadline=job_deadline,
+                final_attempt=job.attempts >= _MAX_ATTEMPTS,
+            )
             judge_ok = _maybe_auto_judge(db, raw_response, now=now, since=job_since, deadline=job_deadline)
-            incomplete = incomplete or not (verify_ok and judge_ok)
+            incomplete = incomplete or not (quote_outcome.complete and judge_ok)
+            archive_deferred = quote_outcome.archive_deferred
         else:
             raw_response = db.get(RawResponse, job.raw_response_id)
             incomplete = not judge_citations(
@@ -344,6 +377,18 @@ def process_verification_job(db: Session, job: VerificationJob, *, now: datetime
             # budget, so it should resume soon, not wait a full retry cycle.
             job.status = "deferred"
             job.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES[0])
+    elif archive_deferred:
+        # Never reached on the last attempt (`final_attempt` turns every such citation into an
+        # `archive_unavailable` verdict instead, so `archive_deferred` is 0 there) — so the index
+        # below is always in range, same as the exception path's. The longer exception-path
+        # backoff, not the 1-minute "ran out of budget" one: archive.org rate limits last a while.
+        logger.warning(
+            "verification job %s: archive.org unavailable for %d citation(s) — deferring the job to retry just those",
+            job.id,
+            archive_deferred,
+        )
+        job.status = "deferred"
+        job.scheduled_for = now + timedelta(minutes=_BACKOFF_MINUTES[job.attempts - 1])
     else:
         job.status = "done"
         job.finished_at = now

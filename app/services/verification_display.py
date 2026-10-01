@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.models.run import Citation, RawResponse
@@ -112,6 +112,22 @@ def latest_verification_query() -> Select:
         select(CitationVerification)
         .distinct(CitationVerification.citation_id)
         .order_by(CitationVerification.citation_id, CitationVerification.created_at.desc())
+    )
+
+
+def last_llm_verification_at(db: Session, raw_response_id: int) -> datetime | None:
+    """When any of this response's citations last got an LLM verification row, or None.
+
+    What the run page's "Last verified" line reports (docs/TASKS_CITATION_HARDENING.md T10) — taken
+    from the verdict rows themselves, not from a `judge` job's `done` status: a judge job whose
+    sources were not captured yet finishes `done` having written nothing, and the page must not
+    then claim the run was verified. It also covers verification that rode along inside an
+    automatic capture job, which has no judge job at all.
+    """
+    return db.scalar(
+        select(func.max(CitationVerification.created_at))
+        .join(Citation, Citation.id == CitationVerification.citation_id)
+        .where(Citation.raw_response_id == raw_response_id, CitationVerification.check_type == "llm")
     )
 
 

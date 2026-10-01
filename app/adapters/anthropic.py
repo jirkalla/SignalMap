@@ -146,7 +146,12 @@ class AnthropicAdapter:
     supports_geo_targeting = True
 
     def __init__(self) -> None:
-        self._client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
+        settings = get_settings()
+        # max_retries=1 (SDK default 2): worker backoff does the repeating, see config.py's
+        # `provider_timeout_seconds` for the bound this keeps a call under.
+        self._client = anthropic.Anthropic(
+            api_key=settings.anthropic_api_key, timeout=settings.provider_timeout_seconds, max_retries=1
+        )
 
     def run(
         self,
@@ -233,6 +238,8 @@ class AnthropicAdapter:
             max_tokens=_JUDGE_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user}],
+            # Per-request override of the client's (longer) run timeout — a judge reply is short.
+            timeout=get_settings().provider_judge_timeout_seconds,
         )
         payload = response.model_dump(mode="json")
         return _map_judge_response(payload)

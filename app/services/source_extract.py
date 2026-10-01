@@ -45,6 +45,22 @@ _VOID_TAGS = {
 _DISPLAY_NONE_RE = re.compile(r"display\s*:\s*none", re.IGNORECASE)
 
 
+def sanitize_extracted_text(text: str) -> str:
+    """Strip NUL (`\\x00`) characters — the one thing a PostgreSQL `text` column cannot hold.
+
+    A source PDF/HTML with a NUL in its text layer used to fail the `source_texts` insert with a
+    DataError, taking the whole verification job down (docs/TASKS_CITATION_HARDENING.md T4, design
+    decision 7; seen in the Knauf pilot). Only NUL is removed: every other control character is
+    legal in PostgreSQL, and quote matching may well depend on them (tabs, newlines).
+
+    Idempotent and cheap, so it is applied at the source — on `extract_html`'s input and on each
+    `extract_pdf` page, BEFORE any offset is computed, which keeps `locations`/`page_starts`
+    consistent with the final text — and once more right before each `SourceText` insert as a
+    safety net (`source_capture._store`, `citation_verification._store_archive_document`).
+    """
+    return text.replace("\x00", "")
+
+
 @dataclass(frozen=True)
 class ExtractedHtml:
     """The result of `extract_html`: the page's full text (visible and hidden/collapsed), plus
@@ -317,8 +333,10 @@ def extract_html(html: str) -> ExtractedHtml:
 
     Never raises on malformed markup — `html.parser.HTMLParser` is lenient by design, and this
     extractor's own tag-stack handling silently ignores stray/mismatched end tags rather than
-    erroring (real captured pages are not guaranteed well-formed).
+    erroring (real captured pages are not guaranteed well-formed). NUL characters are stripped from
+    `html` first (`sanitize_extracted_text`) so the returned `text` and `locations` offsets agree.
     """
+    html = sanitize_extracted_text(html)
     id_collector = _IdTextCollector()
     id_collector.feed(html)
     id_collector.close()
@@ -355,7 +373,12 @@ def extract_pdf(data: bytes) -> ExtractedPdf | None:
     known, permanent limitation, design decision 11, not something to raise an exception over).
     """
     reader = pypdf.PdfReader(io.BytesIO(data))
-    pages = [_HYPHEN_LINEBREAK_RE.sub(r"\1\2", page.extract_text() or "") for page in reader.pages]
+    # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`) and
+    # BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
+    # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
+    pages = [
+        _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or "")) for page in reader.pages
+    ]
 
     parts: list[str] = []
     page_starts: list[int] = []

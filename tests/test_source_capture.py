@@ -6,6 +6,7 @@ test). `sleep` is always a no-op fake here, so the per-domain 1s pacing (design 
 actually slows the suite down.
 """
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,11 +50,8 @@ def _reset_module_state():
 
 
 def _client(handler) -> httpx.Client:
-    return httpx.Client(
-        transport=httpx.MockTransport(handler),
-        headers={"User-Agent": source_capture.USER_AGENT},
-        follow_redirects=True,
-    )
+    """The REAL production client (honest UA, no automatic redirects, timeout) over a mock transport."""
+    return source_capture.build_capture_client(transport=httpx.MockTransport(handler))
 
 
 def _allow_robots(request: httpx.Request) -> httpx.Response | None:
@@ -280,3 +278,246 @@ def test_capture_url_connection_error_is_bucketed_as_timeout(db_session: Session
     doc = capture_url(db_session, "https://unreachable.example/page", now=NOW, client=_client(handler), sleep=_no_sleep)
 
     assert doc.error_reason == "timeout"
+
+
+# --- redirects hop by hop (docs/TASKS_CITATION_HARDENING.md T1) -------------------------------
+
+GATEWAY = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"
+GATEWAY_ROBOTS = b"User-agent: *\nDisallow: /grounding-api-redirect\n"
+HTML_OK = b"<html><body><p>Real content.</p></body></html>"
+
+
+def _gateway_handler(target_robots: bytes | None = None, *, log: list[str] | None = None):
+    """Gateway (robots.txt: Disallow) -> https://real-source.example/article."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if log is not None:
+            log.append(f"{request.url.host}{request.url.path}")
+        if request.url.host == "vertexaisearch.cloud.google.com":
+            if request.url.path == "/robots.txt":
+                return httpx.Response(200, content=GATEWAY_ROBOTS)
+            return httpx.Response(302, headers={"location": "https://real-source.example/article"})
+        if request.url.path == "/robots.txt":
+            if target_robots is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=target_robots)
+        return httpx.Response(200, content=HTML_OK, headers={"content-type": "text/html"})
+
+    return handler
+
+
+def test_gateway_with_disallow_resolves_to_allowed_target(db_session: Session):
+    log: list[str] = []
+    doc = capture_url(
+        db_session, GATEWAY, now=NOW, client=_client(_gateway_handler(log=log)), sleep=_no_sleep
+    )
+
+    assert doc.error_reason is None
+    assert doc.method == "live"
+    assert doc.requested_url == GATEWAY
+    assert doc.final_url == "https://real-source.example/article"
+    assert "vertexaisearch.cloud.google.com/robots.txt" not in log  # gateway robots never read
+
+
+def test_gateway_to_target_with_disallow_is_robots(db_session: Session):
+    client = _client(_gateway_handler(b"User-agent: *\nDisallow: /article\n"))
+    doc = capture_url(db_session, GATEWAY, now=NOW, client=client, sleep=_no_sleep)
+
+    assert doc.error_reason == "robots"
+    assert doc.requested_url == GATEWAY
+    assert doc.final_url == "https://real-source.example/article"  # the hop that blocked
+
+
+def test_redirect_to_other_domain_checks_that_domains_robots(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "old.example":
+            if request.url.path == "/robots.txt":
+                return httpx.Response(404)
+            return httpx.Response(301, headers={"location": "https://new.example/page"})
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
+        return httpx.Response(200, content=HTML_OK)
+
+    doc = capture_url(db_session, "https://old.example/page", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "robots"
+    assert doc.final_url == "https://new.example/page"
+
+
+def test_first_hop_robots_block_leaves_final_url_empty(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
+
+    doc = capture_url(db_session, "https://example.com/x", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "robots"
+    assert doc.final_url is None
+
+
+def test_relative_location_is_resolved_against_current_hop(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "/moved/here"})
+        return httpx.Response(200, content=HTML_OK, headers={"content-type": "text/html"})
+
+    doc = capture_url(db_session, "https://example.com/start", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason is None
+    assert doc.final_url == "https://example.com/moved/here"
+
+
+def test_redirect_loop_hits_limit_and_records_last_hop(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(302, headers={"location": "/loop"})
+
+    doc = capture_url(db_session, "https://example.com/loop", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "timeout"  # same bucket as the old TooManyRedirects
+    assert doc.text_sha256 is None
+
+
+def test_redirect_to_unsupported_scheme_is_a_failure_not_a_crash(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(302, headers={"location": "ftp://example.com/file"})
+
+    doc = capture_url(db_session, "https://example.com/go", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "timeout"
+
+
+def test_timeout_at_target_records_target_as_final_url(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        if request.url.host == "vertexaisearch.cloud.google.com":
+            return httpx.Response(302, headers={"location": "https://slow.example/a"})
+        raise httpx.ReadTimeout("slow", request=request)
+
+    doc = capture_url(db_session, GATEWAY, now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "timeout"
+    assert doc.final_url == "https://slow.example/a"
+
+
+def test_gateway_that_does_not_redirect_records_its_status(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, content=b"expired")
+
+    doc = capture_url(db_session, GATEWAY, now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "http_404"
+    assert doc.http_status == 404
+    assert doc.bytes == 0
+
+
+def test_throttle_paces_the_gateway_briefly_and_the_target_normally(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """The gateway hop is paced (docs/TASKS_CITATION_HARDENING.md T10 — unpaced, a batch of Gemini
+    citations hammers it) but with its own short interval; the target page keeps the normal one
+    under ITS host, so all Gemini citations still do not share one 1 s slot.
+    """
+    throttled: list[tuple[str, float | None]] = []
+    monkeypatch.setattr(
+        source_capture,
+        "_throttle_domain",
+        lambda db, domain, *, sleep, interval_seconds=None: throttled.append((domain, interval_seconds)),
+    )
+
+    capture_url(db_session, GATEWAY, now=NOW, client=_client(_gateway_handler()), sleep=_no_sleep)
+
+    assert throttled == [
+        ("vertexaisearch.cloud.google.com", source_capture.GATEWAY_MIN_INTERVAL_SECONDS),
+        ("real-source.example", None),  # None = the normal per-domain interval
+    ]
+
+
+def test_two_gateway_citations_in_a_row_wait_for_the_gateway_slot(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """The real DB-backed throttle, not a stub: the second citation's gateway request arrives
+    within milliseconds of the first and must be made to wait out (most of) the short interval.
+    """
+    monkeypatch.setattr(source_capture, "MIN_DOMAIN_INTERVAL_SECONDS", 0.0)  # isolate the gateway
+    # A long interval, so the assertion does not depend on how quickly the second call arrives: with
+    # the real 0.2 s a slow machine could let the slot expire in between and no wait would be needed.
+    monkeypatch.setattr(source_capture, "GATEWAY_MIN_INTERVAL_SECONDS", 5.0)
+    slept: list[float] = []
+
+    for suffix in ("a", "b"):
+        capture_url(
+            db_session, f"{GATEWAY}-{suffix}", now=NOW, client=_client(_gateway_handler()), sleep=slept.append
+        )
+
+    gateway_waits = [seconds for seconds in slept if seconds > 0]
+    assert len(gateway_waits) == 1
+    assert 0 < gateway_waits[0] <= 5.0
+
+
+def test_robots_txt_that_redirects_is_followed(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            if request.url.host == "example.com":
+                return httpx.Response(301, headers={"location": "https://www.example.com/robots.txt"})
+            return httpx.Response(200, content=b"User-agent: *\nDisallow: /private\n")
+        return httpx.Response(200, content=HTML_OK)
+
+    doc = capture_url(db_session, "https://example.com/private", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "robots"
+
+
+# --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
+
+
+def test_capture_url_survives_a_nul_byte_in_the_page(db_session: Session):
+    """The pilot failure: a NUL in a source's text failed the `source_texts` insert and, with it,
+    the whole verification job. The capture must succeed and store the text without it.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(
+            200, content=b"<html><body><p>Vor\x00der Text.</p></body></html>", headers={"content-type": "text/html"}
+        )
+
+    doc = capture_url(db_session, "https://example.com/nul", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason is None
+    stored = db_session.get(SourceText, doc.text_sha256)
+    assert stored.text == "Vorder Text."
+    assert "\x00" not in stored.text
+    assert stored.chars == len("Vorder Text.")
+
+
+def test_store_strips_a_nul_that_reaches_it_and_hashes_the_stored_text(db_session: Session):
+    """Safety net: even a caller that bypasses extraction cannot get a NUL into the database, and
+    `text_sha256` always describes exactly the text that was stored.
+    """
+    doc = source_capture._store(db_session, requested_url="https://example.com/direct", now=NOW, text="a\x00b")
+
+    stored = db_session.get(SourceText, doc.text_sha256)
+    assert stored.text == "ab"
+    assert doc.text_sha256 == hashlib.sha256(b"ab").hexdigest()
+
+
+# --- the production client itself (docs/TASKS_CITATION_HARDENING.md T10) ----------------------
+
+
+def test_build_capture_client_settings():
+    """It never follows redirects on its own (capture_url walks them hop by hop so robots.txt is
+    checked per host) — which is exactly why every OTHER caller sharing it (archive.org lookups)
+    must ask for redirects per request. Pinned here so changing either side is a conscious act.
+    """
+    client = source_capture.build_capture_client()
+
+    assert client.follow_redirects is False
+    assert client.headers["user-agent"] == source_capture.USER_AGENT
+    assert client.timeout.read == source_capture.REQUEST_TIMEOUT_SECONDS
