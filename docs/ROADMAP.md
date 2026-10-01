@@ -967,6 +967,27 @@ budoucí klientský portál (#14) nutnost.
   změny výpočtů.
 - Plán: `docs/TASKS_METRIC_DEFINITIONS.md` — vydání 4, před Export v2.
 
+## 27. Ochrana před přesměrováním na interní adresy při stahování zdrojů (SSRF)
+
+**Zaznamenáno 2026-10-01** z code review větve `citation-hardening`
+(`docs/TASKS_CITATION_HARDENING.md`, nález mimo T10). Stahování citovaných
+zdrojů (`app/services/source_capture.py`, `_resolve_and_fetch`) následuje
+přesměrování na libovolného hostitele — URL citované providerem, nebo
+přesměrování uprostřed řetězce, může vést na `http://169.254.169.254/...`
+(metadata serveru), na `localhost` nebo na jméno v docker síti (`postgres`).
+Tělo odpovědi se uloží do `source_texts` a zobrazí v panelu důkazů
+přihlášeným uživatelům. Staré chování (dřív `follow_redirects=True`), ne
+regrese; smyčka po hopech z T1 je ale přirozené místo pro kontrolu.
+
+- Před každým požadavkem (i `robots.txt`) rozložit hostitele a odmítnout
+  loopback, privátní, link-local a rezervované rozsahy; odmítnutí zapsat
+  jako důvod neověřitelnosti (nový důvod = migrace + překlady + test pokrytí
+  z T5).
+- Pozor na DNS rebinding (kontrola a spojení musí použít stejnou adresu) a
+  na IPv6 / mapované IPv4 adresy.
+- Nepatří do v1.3.0 (vyžaduje migraci pro nový důvod); samostatná větev po
+  vydání.
+
 ## Plán vydání (2026-09-30)
 
 Položky #19–26 (a předstupeň #18 — Worker Throughput) se nasazují ve

@@ -6,12 +6,12 @@
 ## 0. NEJDŘÍV větev feature/signalmap-client-vision (docs/PROMPTS_CLIENT_VISION.md,
 ##    VI-1 až VI-4), merge do master BEZ nasazení — nasadí se v CH-7.
 ## 1. git checkout -b feature/signalmap-citation-hardening (z master po merge Vision)
-## 2. Devět promptů (CH-1 až CH-9). CH-1 až CH-5 jsou na sobě nezávislé
+## 2. Deset promptů (CH-1 až CH-10). CH-1 až CH-5 jsou na sobě nezávislé
 ##    (pořadí doporučené — CH-1 má největší dopad), CH-6 dokumentuje,
 ##    CH-7 nasazuje. CH-8 a CH-9 přibyly 2026-09-30 při ověřování CH-1
 ##    a dělají se PŘED CH-7 (CH-9 nejpozději před backfillem v CH-7).
-##    POŘADÍ PROVEDENÍ: CH-1 ✅ → CH-8 ✅ → CH-2 → CH-3 → CH-4 → CH-5 →
-##    CH-9 → CH-6 → CH-7. (Čísla promptů jsou stabilní ID, ne pořadí;
+##    POŘADÍ PROVEDENÍ: CH-1 ✅ → CH-8 ✅ → CH-2 ✅ → CH-3 ✅ → CH-4 ✅ → CH-5 ✅ →
+##    CH-9 ✅ → CH-6 ✅ → CH-10 → CH-7. (Čísla promptů jsou stabilní ID, ne pořadí;
 ##    CH-7 = nasazení je vždy poslední.)
 ## 3. SESSION HEADER vlož jen JEDNOU na začátku nové konverzace pro tuhle větev.
 ## 4. Po každém promptu: git commit (message navržená na konci promptu,
@@ -233,6 +233,24 @@ commitnutý (používá ACTIVE_JOB_STATUSES z verification_queue.py).
 
 Na konci: shrnutí, testy, výsledek ověření, navržený commit:
 fix(clients): skip responses with a judge job in progress in bulk verify
+```
+
+---
+
+## CH-10 — Opravy z code review
+
+```
+Úkol CH-T10 z docs/TASKS_CITATION_HARDENING.md (nálezy z /code-review high).
+
+1. Přečti T10 celé a soubory z „Target".
+2. Řekni mi co/kde/proč (§2) pro každý z bodů 1-3 a 5-8.
+3. Implementuj ve třech commitech podle „Expected commits"; před každým
+   commitem celá sada pytest, nové testy musí selhat na starém kódu.
+4. Bod 4 (timeouty): spusť SQL na latence podle modelu (lokálně; produkční
+   čísla mi dej jako příkaz) a doporuč, jestli 120 s stačí.
+
+Na konci: shrnutí, testy, navržené commity (commity provádí uživatel,
+pokud neřekl jinak).
 ```
 
 ---

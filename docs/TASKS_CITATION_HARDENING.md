@@ -7,7 +7,8 @@
 
 Status: navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
-Devět úkolů (T8 a T9 přibyly 2026-09-30 při lokálním ověřování T1), bez migrace.
+Deset úkolů (T8 a T9 přibyly 2026-09-30 při lokálním ověřování T1, T10 z code review
+2026-10-01), bez migrace.
 
 **Nasazuje se společně s Vision u klienta** (`docs/TASKS_CLIENT_VISION.md`,
 #23): větev `feature/signalmap-client-vision` se smerguje do `master`
@@ -159,14 +160,16 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
 | T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ✅ |
+| T10 | Opravy z code review (archive.org redirecty, brána, bulk-verify, drobnosti) | ⏳ |
 
 **Pořadí provedení** (ID úkolů jsou stabilní a nemění se, pořadí se od nich
 liší, protože T8 a T9 přibyly dodatečně):
 
-`T1 ✅ → T8 ✅ → T2 → T3 → T4 → T5 → T9 → T6 → T7`
+`T1 ✅ → T8 ✅ → T2 ✅ → T3 ✅ → T4 ✅ → T5 ✅ → T9 ✅ → T6 ✅ → T10 → T7`
 
 T2–T5 jsou na sobě nezávislé. T9 musí být hotový před backfillem v T7
-(krok 5), T6 dokumentuje až hotové opravy a T7 (nasazení) je vždy poslední.
+(krok 5), T6 dokumentuje hotové opravy, T10 opravuje nálezy z code review
+části T1–T9 a T7 (nasazení) je vždy poslední.
 
 ---
 
@@ -481,6 +484,65 @@ unikátního omezení v DB — dvě potvrzení ve stejné milisekundě by teoret
 obě prošla.
 
 **Expected commit:** `fix(clients): skip responses with a judge job in progress in bulk verify`
+
+---
+
+## T10 — Opravy z code review (2026-10-01)
+
+`/code-review high` nad celou větví našlo 9 nálezů. T10 opravuje osm z nich;
+devátý (SSRF při přesměrování na interní adresy, staré chování, mimo toto
+vydání) je samostatná položka `docs/ROADMAP.md` #27. **Musí být hotové před
+T7** — body 1–3 před backfillem, protože ten vytváří stovky trvalých
+(append-only) evidenčních řádků.
+
+**Target:** `app/services/archive_lookup.py`, `app/services/source_capture.py`,
+`app/services/source_extract.py`, `app/routers/clients.py`,
+`app/routers/runs.py`, `app/services/verification_display.py`,
+`app/templates/runs/verify_status.html` a jejich testy.
+
+1. **Archive.org fallback sleduje přesměrování** (vysoká). T1 nastavil
+   sdílenému `build_capture_client()` `follow_redirects=False`, ale stejného
+   klienta dostává i `archive_lookup._request`, který na přesměrování
+   spoléhal — Wayback 301/302 by se přestalo následovat a archivní záloha by
+   tiše nikdy nepovýšila 404/„nenalezeno". Oprava: `follow_redirects=True`
+   per požadavek v `_request`.
+2. **Testy používají skutečného klienta.** `build_capture_client()` dostane
+   volitelný `transport` (jen pro testy); pomocné `_client()` v
+   `test_source_capture.py` a `test_archive_lookup.py` ho používají místo
+   ručně opsaných nastavení, takže změna produkčního klienta se v testech
+   projeví. Nový test: archivní snapshot odpovídající 302.
+3. **Brána se škrtí.** Požadavek na přesměrovací bránu dostane vlastní,
+   krátký interval (`GATEWAY_MIN_INTERVAL_SECONDS = 0.2`; sdílený mezi workery
+   přes `rate_limit.throttle`), takže dávka Gemini citací nezahltí
+   `vertexaisearch.cloud.google.com` a 429/5xx brány nevznikne jako
+   „zdroj má 429". Cíl se dál škrtí zvlášť (decision 3 platí). Upravit test
+   `test_throttle_uses_target_host_not_gateway`.
+4. **Timeout providerů podle dat.** Před nasazením změřit latence z produkce
+   (`runs.latency_ms` podle modelu, p95 a maximum). Když nejpomalejší model
+   přesáhne ~90 s, přidat výjimku nebo zvýšit hodnotu; jinak ponechat 120 s.
+   Výsledek zapsat sem.
+5. **Hromadné ověření vynechá odpověď s jakýmkoli aktivním jobem**
+   (`capture` i `judge`). Běžící `capture` job buď teprve stahuje zdroje
+   (judge nad nimi by nic neposoudil), nebo u klienta s
+   `auto_verify_citations` posuzuje sám — v obou případech je další placený
+   job zbytečný.
+6. **„Last verified" z verdiktů, ne z jobu.** Čas se bere z nejnovějšího
+   `check_type='llm'` řádku odpovědi. `judge` job, který nic neposoudil
+   (zdroje ještě nestažené), už netvrdí, že je run ověřený; a ověření
+   z automatického capture jobu se zobrazí také.
+7. **NUL se odstraňuje před spojením rozdělených slov** v `extract_pdf`
+   (`_HYPHEN_LINEBREAK_RE`), jinak NUL za zalomením spojení zabrání.
+8. **Polling při odložení** — stav `deferred` se dotazuje každých 30 s, ne
+   každé 4 s (backoff trvá až 25 minut).
+
+**Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
+kódu před opravou; bod 4 vyhodnocen a zapsán; lokálně „Last verified" po
+jobu bez verdiktů nezobrazeno.
+
+**Expected commits:**
+- `fix(adapters): follow redirects when fetching archive.org snapshots` (1, 2)
+- `fix(adapters): pace requests to redirect gateways` (3)
+- `fix(runs): tidy verification status and bulk verify edge cases` (5–8)
 
 ---
 
