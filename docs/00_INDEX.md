@@ -26,6 +26,7 @@ Nothing in progress right now.
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
+| TASKS_CITATION_HARDENING | CH | feature/signalmap-citation-hardening | #26 | 2026-10-01 | Not deployed yet; ships with client vision as v1.3.0 (CH-T7). Version bump, tag and deploy pending |
 | TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | #25 | 2026-09-30 | Not deployed on its own; ships with citation hardening as v1.3.0 (CH-T7) |
 | TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
 | TASKS_PEEC_COMPARISON | PC | feature/signalmap-peec-comparison | #23 | 2026-09-28 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |

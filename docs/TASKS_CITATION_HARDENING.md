@@ -5,7 +5,9 @@
 ## Task ID prefix: CH
 ## Cílová verze: v1.3.0 (MINOR) — společně s `feature/signalmap-client-vision`
 
-Status: navrženo 2026-09-30 jako **vydání 1** z plánu vydání
+## Status: 🔜 Merged (PR #26, 2026-10-01) — release pending, v1.3.0 together with client vision (CH-T7)
+
+Navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
 Deset úkolů (T8 a T9 přibyly 2026-09-30 při lokálním ověřování T1, T10 z code review
 2026-10-01), bez migrace.
