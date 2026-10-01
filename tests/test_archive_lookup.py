@@ -576,3 +576,34 @@ def test_one_archive_outage_defers_the_job_and_each_retry_resumes_only_the_unluc
     assert len(verdicts[ok_a.source_url]) == 1 and len(verdicts[ok_c.source_url]) == 1
     [verification] = verdicts[gone.source_url]
     assert (verification.verdict, verification.reason) == ("unverifiable", "archive_unavailable")
+
+
+# --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
+
+
+def test_archived_snapshot_text_with_a_nul_is_stored_without_it(db_session: Session):
+    """The second `SourceText` insert (`_store_archive_document`) has the same NUL hazard as the
+    live one: a snapshot's content must never put a \\x00 into the database.
+    """
+    import hashlib
+
+    from app.models.verification import SourceText
+    from app.services.archive_lookup import ArchivedContent
+    from app.services.citation_verification import _store_archive_document
+
+    snapshot = ArchiveSnapshot(
+        archive_timestamp="20260303091500",
+        fetch_url="https://web.archive.org/web/20260303091500id_/https://example.com/x",
+        view_url="https://web.archive.org/web/20260303091500/https://example.com/x",
+    )
+
+    document = _store_archive_document(
+        db_session,
+        requested_url="https://example.com/x",
+        snapshot=snapshot,
+        now=NOW,
+        content=ArchivedContent(text="Ar\x00chiv", page_starts=None, locations=None),
+    )
+
+    assert db_session.get(SourceText, document.text_sha256).text == "Archiv"
+    assert document.text_sha256 == hashlib.sha256(b"Archiv").hexdigest()

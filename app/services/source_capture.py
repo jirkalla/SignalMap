@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.models.verification import UNVERIFIABLE_REASONS, SourceDocument, SourceText
 from app.services.rate_limit import throttle
-from app.services.source_extract import extract_html, extract_pdf
+from app.services.source_extract import extract_html, extract_pdf, sanitize_extracted_text
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +381,10 @@ def _store(
 
     text_sha256 = None
     if text is not None:
+        # Safety net (docs/TASKS_CITATION_HARDENING.md T4): extraction already strips NUL, but a
+        # NUL reaching this insert would raise a DataError and fail the whole job — and the hash
+        # below must describe exactly the text that gets stored.
+        text = sanitize_extracted_text(text)
         text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         db.execute(
             pg_insert(SourceText)

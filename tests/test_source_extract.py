@@ -9,7 +9,10 @@ are not guessed.
 
 from pathlib import Path
 
-from app.services.source_extract import extract_html, extract_pdf
+import pytest
+
+from app.services import source_extract
+from app.services.source_extract import extract_html, extract_pdf, sanitize_extracted_text
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sources"
 
@@ -122,3 +125,58 @@ def test_extract_pdf_records_page_starts_for_every_page():
 
 def test_extract_pdf_returns_none_when_no_text_layer():
     assert extract_pdf(_pdf("blank.pdf")) is None
+
+
+# --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
+# PostgreSQL `text` cannot hold \x00; one such character in a source used to fail the whole insert.
+
+
+def test_sanitize_strips_only_nul_and_is_idempotent():
+    text = "a\x00b\tc\nd\re\x0bf\x1fg"
+
+    cleaned = sanitize_extracted_text(text)
+
+    assert cleaned == "ab\tc\nd\re\x0bf\x1fg"  # every other control character stays
+    assert sanitize_extracted_text(cleaned) == cleaned
+    assert sanitize_extracted_text("") == ""
+
+
+def test_extract_html_strips_nul_and_keeps_location_offsets_consistent():
+    """Sanitizing the INPUT (not the finished text) is what keeps `locations` pointing at the
+    right characters — stripping afterwards would shift every offset after the NUL.
+    """
+    html = "<h1>Titel</h1><p>Vor\x00der Text</p><details><summary>Mehr</summary><p>Ver\x00steckt</p></details>"
+
+    result = extract_html(html)
+
+    assert "\x00" not in result.text
+    assert "Vorder Text" in result.text
+    hidden = next(loc for loc in result.locations if loc["collapsed"] and loc["start"] > result.text.index("Vorder"))
+    assert result.text[hidden["start"] : hidden["end"]] == "Versteckt"
+    assert _locations_are_consistent(result)
+
+
+def test_extract_pdf_strips_nul_and_keeps_page_starts_consistent(monkeypatch: pytest.MonkeyPatch):
+    """`pypdf` is replaced by a stub: a real PDF whose text layer yields a NUL is hard to build by
+    hand, and what is under test is this module's handling of whatever `extract_text()` returns.
+    """
+
+    class _Page:
+        def __init__(self, text: str):
+            self._text = text
+
+        def extract_text(self) -> str:
+            return self._text
+
+    class _Reader:
+        def __init__(self, _stream):
+            self.pages = [_Page("Erste\x00 Seite"), _Page("Zweite Seite\x00")]
+
+    monkeypatch.setattr(source_extract.pypdf, "PdfReader", _Reader)
+
+    result = extract_pdf(b"%PDF-stub")
+
+    assert result is not None
+    assert "\x00" not in result.text
+    assert result.text == "Erste Seite\n\nZweite Seite"
+    assert result.text[result.page_starts[1] :].startswith("Zweite Seite")

@@ -39,6 +39,7 @@ from app.services import archive_lookup
 from app.services.archive_lookup import ArchivedContent, ArchiveSnapshot
 from app.services.claims import derive_claim
 from app.services.quote_match import ChunkMatch, QuoteMatchResult, match_quote
+from app.services.source_extract import sanitize_extracted_text
 from app.services.verification_display import has_verification_since, latest_source_document as _latest_source_document, locate as _locate, locate_page as _locate_page
 
 logger = logging.getLogger(__name__)
@@ -126,10 +127,13 @@ def _store_archive_document(
     `requested_url` here is deliberately still the original (now gone/changed) live URL, kept for
     identity/lookup, not for linking to.
     """
-    text_sha256 = hashlib.sha256(content.text.encode("utf-8")).hexdigest()
+    # Safety net (docs/TASKS_CITATION_HARDENING.md T4) — same reason as source_capture._store:
+    # a NUL must never reach the insert, and the hash must describe the stored text.
+    text = sanitize_extracted_text(content.text)
+    text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     db.execute(
         pg_insert(SourceText)
-        .values(sha256=text_sha256, text=content.text, chars=len(content.text))
+        .values(sha256=text_sha256, text=text, chars=len(text))
         .on_conflict_do_nothing(index_elements=["sha256"])
     )
     document = SourceDocument(

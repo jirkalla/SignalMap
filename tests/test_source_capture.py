@@ -6,6 +6,7 @@ test). `sleep` is always a no-op fake here, so the per-domain 1s pacing (design 
 actually slows the suite down.
 """
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -443,3 +444,39 @@ def test_robots_txt_that_redirects_is_followed(db_session: Session):
     doc = capture_url(db_session, "https://example.com/private", now=NOW, client=_client(handler), sleep=_no_sleep)
 
     assert doc.error_reason == "robots"
+
+
+# --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
+
+
+def test_capture_url_survives_a_nul_byte_in_the_page(db_session: Session):
+    """The pilot failure: a NUL in a source's text failed the `source_texts` insert and, with it,
+    the whole verification job. The capture must succeed and store the text without it.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(
+            200, content=b"<html><body><p>Vor\x00der Text.</p></body></html>", headers={"content-type": "text/html"}
+        )
+
+    doc = capture_url(db_session, "https://example.com/nul", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason is None
+    stored = db_session.get(SourceText, doc.text_sha256)
+    assert stored.text == "Vorder Text."
+    assert "\x00" not in stored.text
+    assert stored.chars == len("Vorder Text.")
+
+
+def test_store_strips_a_nul_that_reaches_it_and_hashes_the_stored_text(db_session: Session):
+    """Safety net: even a caller that bypasses extraction cannot get a NUL into the database, and
+    `text_sha256` always describes exactly the text that was stored.
+    """
+    doc = source_capture._store(db_session, requested_url="https://example.com/direct", now=NOW, text="a\x00b")
+
+    stored = db_session.get(SourceText, doc.text_sha256)
+    assert stored.text == "ab"
+    assert doc.text_sha256 == hashlib.sha256(b"ab").hexdigest()
