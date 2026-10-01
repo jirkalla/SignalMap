@@ -620,6 +620,92 @@ def test_verify_retroactively_preview_excludes_providers_with_no_llm_judge_path(
     assert 'action="/clients/%d/verify-retroactively/confirm"' % client_id not in response.text
 
 
+# --- bulk verify skips responses whose judge job is still in progress (docs/TASKS_CITATION_HARDENING.md T9) --
+
+
+_JUNE = {"date_from": "2026-06-01", "date_to": "2026-06-30"}
+
+
+def _client_with_one_verifiable_run(authed_client: TestClient, db_session: Session, seed: dict) -> tuple[int, RawResponse]:
+    client_id = _create_client(authed_client)
+    prompt_set = PromptSet(client_id=client_id, name="Set")
+    db_session.add(prompt_set)
+    db_session.commit()
+    raw = _make_verifiable_run(db_session, prompt_set_id=prompt_set.id, seed=seed, started_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
+    return client_id, raw
+
+
+def _add_judge_job(db_session: Session, raw_response_id: int, status: str) -> VerificationJob:
+    job = VerificationJob(raw_response_id=raw_response_id, kind="judge", status=status, scheduled_for=datetime.now(timezone.utc))
+    db_session.add(job)
+    db_session.commit()
+    return job
+
+
+def _judge_job_count(db_session: Session, raw_response_id: int) -> int:
+    return len(list(db_session.scalars(select(VerificationJob).where(VerificationJob.raw_response_id == raw_response_id, VerificationJob.kind == "judge"))))
+
+
+@pytest.mark.parametrize("active_status", ["queued", "leased", "deferred"])
+def test_verify_retroactively_confirm_skips_a_response_with_a_judge_job_in_progress(
+    authed_client: TestClient, db_session: Session, seed: dict, active_status: str
+):
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    _add_judge_job(db_session, raw.id, active_status)
+
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+
+    assert _judge_job_count(db_session, raw.id) == 1  # the existing one, nothing stacked on top
+
+
+@pytest.mark.parametrize("finished_status", ["done", "error"])
+def test_verify_retroactively_confirm_retries_a_response_whose_judge_job_finished_without_a_verdict(
+    authed_client: TestClient, db_session: Session, seed: dict, finished_status: str
+):
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    _add_judge_job(db_session, raw.id, finished_status)
+
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+
+    assert _judge_job_count(db_session, raw.id) == 2
+
+
+def test_verify_retroactively_preview_does_not_count_a_response_with_a_judge_job_in_progress(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    """Preview and confirm share one query, so the preview's count is what confirm would enqueue."""
+    client_id, busy = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    prompt_set = db_session.scalar(select(PromptSet).where(PromptSet.client_id == client_id))
+    _make_verifiable_run(db_session, prompt_set_id=prompt_set.id, seed=seed, started_at=datetime(2026, 6, 16, tzinfo=timezone.utc), citation_count=4)
+    _add_judge_job(db_session, busy.id, "leased")
+
+    response = authed_client.post(f"/clients/{client_id}/verify-retroactively/preview", data=_JUNE)
+
+    assert ">1</dd>" in response.text  # one response left (the idle one) ...
+    assert ">4</dd>" in response.text  # ... with its 4 citations; the busy run's citation is not counted
+
+
+def test_verify_retroactively_preview_offers_nothing_when_every_response_is_in_progress(
+    authed_client: TestClient, db_session: Session, seed: dict
+):
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+    _add_judge_job(db_session, raw.id, "queued")
+
+    response = authed_client.post(f"/clients/{client_id}/verify-retroactively/preview", data=_JUNE)
+
+    assert 'action="/clients/%d/verify-retroactively/confirm"' % client_id not in response.text
+
+
+def test_verify_retroactively_confirm_twice_in_a_row_enqueues_only_once(authed_client: TestClient, db_session: Session, seed: dict):
+    """The scenario behind T9: a second bulk run fired before the first batch has been judged."""
+    client_id, raw = _client_with_one_verifiable_run(authed_client, db_session, seed)
+
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+    authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
+
+    assert _judge_job_count(db_session, raw.id) == 1
+
+
 def test_detail_shows_the_vision_card_above_the_metadata(authed_client: TestClient):
     client_id = _create_client(authed_client)
     authed_client.post(
