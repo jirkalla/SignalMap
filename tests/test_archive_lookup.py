@@ -407,3 +407,172 @@ def test_rate_limited_archive_lookup_defers_the_whole_job(db_session: Session, s
     assert job.status == "deferred"
     assert job.scheduled_for == NOW + timedelta(minutes=1)
     assert db_session.scalar(select(CitationVerification).where(CitationVerification.citation_id == citation.id)) is None
+
+
+# --- archive.org outage isolated to the citation (docs/TASKS_CITATION_HARDENING.md T3) ----------
+
+_BASE = "https://www.karriere-familienunternehmen.de/firmenprofile"
+
+
+def _add_citation_at(db_session: Session, raw: RawResponse, *, url: str, position: int) -> Citation:
+    citation = Citation(
+        raw_response_id=raw.id, source_url=url, source_domain="karriere-familienunternehmen.de",
+        citation_position=position, source_passage=_QUOTE,
+    )
+    db_session.add(citation)
+    db_session.commit()
+    db_session.refresh(citation)
+    return citation
+
+
+def _archive_down_for(down_url: str) -> httpx.Client:
+    """CDX lookups answer 429 for `down_url` only; every other URL has a snapshot with the quote."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/cdx/search/cdx" in str(request.url):
+            if request.url.params["url"] == down_url:
+                return httpx.Response(429)
+            return httpx.Response(200, json=[_CDX_HEADER, _CDX_ROW])
+        return httpx.Response(
+            200, content=f"<html><body><p>{_QUOTE}</p></body></html>".encode("utf-8"), headers={"content-type": "text/html"}
+        )
+
+    return _client(handler)
+
+
+def _verdicts_by_url(db_session: Session, citations: list[Citation]) -> dict[str, list[CitationVerification]]:
+    return {
+        c.source_url: list(db_session.scalars(select(CitationVerification).where(CitationVerification.citation_id == c.id)))
+        for c in citations
+    }
+
+
+def _three_page_gone_citations(db_session: Session, seed, sample_prompt: Prompt):
+    raw = _make_run_and_response(db_session, seed, sample_prompt, rendered_text="...", raw_payload=_RAW_PAYLOAD)
+    citations = [_add_citation_at(db_session, raw, url=f"{_BASE}/{name}", position=i) for i, name in enumerate("abc")]
+    documents = [_add_source_document(db_session, url=c.source_url, error_reason="http_404") for c in citations]
+    return raw, citations, documents
+
+
+def test_archive_unavailable_for_one_citation_leaves_the_others_verified(db_session: Session, seed, sample_prompt: Prompt):
+    raw, citations, _ = _three_page_gone_citations(db_session, seed, sample_prompt)
+
+    outcome = verify_citations_by_quote(
+        db_session, raw, now=NOW, client=_archive_down_for(citations[1].source_url), sleep=_no_sleep
+    )
+
+    verdicts = _verdicts_by_url(db_session, citations)
+    assert [v.verdict for v in verdicts[citations[0].source_url]] == ["archive_only"]
+    assert [v.verdict for v in verdicts[citations[2].source_url]] == ["archive_only"]  # AFTER the failing one
+    assert verdicts[citations[1].source_url] == []  # no verdict yet — left for the job's retry
+    assert outcome.complete is True
+    assert outcome.archive_deferred == 1
+
+
+def test_archive_unavailable_on_the_final_attempt_becomes_a_verdict(db_session: Session, seed, sample_prompt: Prompt):
+    raw, citations, documents = _three_page_gone_citations(db_session, seed, sample_prompt)
+
+    outcome = verify_citations_by_quote(
+        db_session, raw, now=NOW, client=_archive_down_for(citations[1].source_url), sleep=_no_sleep, final_attempt=True
+    )
+
+    [verification] = _verdicts_by_url(db_session, citations)[citations[1].source_url]
+    assert verification.check_type == "quote"
+    assert verification.verdict == "unverifiable"
+    assert verification.reason == "archive_unavailable"
+    assert verification.source_document_id == documents[1].id  # the LIVE document, still http_404
+    assert verification.similarity is None and verification.matched_text is None
+    assert outcome.archive_deferred == 0
+
+
+@pytest.mark.parametrize("final_attempt", [False, True])
+def test_archive_unavailable_after_a_live_quote_not_found(db_session: Session, seed, sample_prompt: Prompt, final_attempt: bool):
+    """The other archive.org trigger: the live page is reachable but doesn't contain the quote.
+
+    A live `not_found` is NOT turned into a verdict while the archive check that could overturn it
+    (-> `page_changed`) never completed; on the last attempt it is recorded as `unverifiable`.
+    """
+    raw = _make_run_and_response(db_session, seed, sample_prompt, rendered_text="...", raw_payload=_RAW_PAYLOAD)
+    citation = _add_citation_at(db_session, raw, url=f"{_BASE}/changed", position=0)
+    document = _add_source_document(
+        db_session, url=citation.source_url, text="<p>Ein ganz anderer Text ohne das gesuchte Zitat.</p>"
+    )
+
+    outcome = verify_citations_by_quote(
+        db_session, raw, now=NOW, client=_archive_down_for(citation.source_url), sleep=_no_sleep, final_attempt=final_attempt
+    )
+
+    verifications = _verdicts_by_url(db_session, [citation])[citation.source_url]
+    if final_attempt:
+        [verification] = verifications
+        assert (verification.verdict, verification.reason) == ("unverifiable", "archive_unavailable")
+        assert verification.source_document_id == document.id
+        assert outcome.archive_deferred == 0
+    else:
+        assert verifications == []
+        assert outcome.archive_deferred == 1
+
+
+def test_one_archive_outage_defers_the_job_and_each_retry_resumes_only_the_unlucky_citation(
+    db_session: Session, seed, sample_prompt: Prompt, monkeypatch: pytest.MonkeyPatch
+):
+    """docs/TASKS_CITATION_HARDENING.md T3, end to end through `process_verification_job`.
+
+    Three citations; the middle one's page is gone and archive.org is down for it. Attempts 1-2:
+    the job is deferred (backoff 1 then 5 minutes), the other two citations keep their verdicts
+    and are NOT duplicated by the retries. Attempt 3 (`_MAX_ATTEMPTS`): the middle one gets
+    `unverifiable/archive_unavailable` and the job ends `done`, not `error`.
+    """
+    monkeypatch.setattr(source_capture, "MIN_DOMAIN_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(archive_lookup, "MIN_REQUEST_INTERVAL_SECONDS", 0.0)
+    raw = _make_run_and_response(db_session, seed, sample_prompt, rendered_text="...", raw_payload=_RAW_PAYLOAD)
+    citations = [_add_citation_at(db_session, raw, url=f"{_BASE}/{name}", position=i) for i, name in enumerate("abc")]
+    gone, ok_a, ok_c = citations[1], citations[0], citations[2]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        if "/cdx/search/cdx" in str(request.url):
+            return httpx.Response(429)
+        if request.url.path.endswith("/b"):
+            return httpx.Response(404)  # the live capture: page is gone, triggering the archive lookup
+        return httpx.Response(
+            200, content=f"<html><body><p>{_QUOTE}</p></body></html>".encode("utf-8"), headers={"content-type": "text/html"}
+        )
+
+    client = _client(handler)
+    enqueue_capture(db_session, raw.id, now=NOW)
+
+    # attempt 1
+    job = claim_next_job(db_session, worker_name="w1", now=NOW, lease_minutes=DEFAULT_LEASE_MINUTES)
+    assert job.attempts == 1
+    process_verification_job(db_session, job, now=NOW, client=client)
+    assert job.status == "deferred"
+    assert job.scheduled_for == NOW + timedelta(minutes=1)
+    verdicts = _verdicts_by_url(db_session, citations)
+    assert [v.verdict for v in verdicts[ok_a.source_url]] == ["verified_exact"]
+    assert [v.verdict for v in verdicts[ok_c.source_url]] == ["verified_exact"]
+    assert verdicts[gone.source_url] == []
+
+    # attempt 2 — resumes: only the unlucky citation is looked at again, nothing is duplicated
+    retry_at = NOW + timedelta(minutes=1)
+    job = claim_next_job(db_session, worker_name="w1", now=retry_at, lease_minutes=DEFAULT_LEASE_MINUTES)
+    assert job.attempts == 2
+    process_verification_job(db_session, job, now=retry_at, client=client)
+    assert job.status == "deferred"
+    assert job.scheduled_for == retry_at + timedelta(minutes=5)
+    verdicts = _verdicts_by_url(db_session, citations)
+    assert len(verdicts[ok_a.source_url]) == 1 and len(verdicts[ok_c.source_url]) == 1
+    assert verdicts[gone.source_url] == []
+
+    # attempt 3 = _MAX_ATTEMPTS — no more retries, so the outage is recorded and the job is done
+    last_at = retry_at + timedelta(minutes=5)
+    job = claim_next_job(db_session, worker_name="w1", now=last_at, lease_minutes=DEFAULT_LEASE_MINUTES)
+    assert job.attempts == 3
+    process_verification_job(db_session, job, now=last_at, client=client)
+    assert job.status == "done"
+    assert job.error is None
+    verdicts = _verdicts_by_url(db_session, citations)
+    assert len(verdicts[ok_a.source_url]) == 1 and len(verdicts[ok_c.source_url]) == 1
+    [verification] = verdicts[gone.source_url]
+    assert (verification.verdict, verification.reason) == ("unverifiable", "archive_unavailable")

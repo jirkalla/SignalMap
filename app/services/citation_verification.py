@@ -22,7 +22,9 @@ i.e. from `process_verification_job`.
 """
 
 import hashlib
+import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
@@ -39,6 +41,8 @@ from app.services.claims import derive_claim
 from app.services.quote_match import ChunkMatch, QuoteMatchResult, match_quote
 from app.services.verification_display import has_verification_since, latest_source_document as _latest_source_document, locate as _locate, locate_page as _locate_page
 
+logger = logging.getLogger(__name__)
+
 VERIFIER_VERSION = "1.0"
 
 _QUOTE_PROVIDERS = ("anthropic", "perplexity")
@@ -49,6 +53,21 @@ _QUOTE_PROVIDERS = ("anthropic", "perplexity")
 # migration 0038 (found while wiring this up — see that migration's own docstring); source_capture
 # .py (T4) has always been able to produce it on source_documents, which has no such constraint.
 _PAGE_GONE_REASONS = ("http_404", "http_410")
+
+
+@dataclass(frozen=True)
+class QuoteCheckOutcome:
+    """What one `verify_citations_by_quote` pass got through.
+
+    `complete` — every citation was checked (False when the shared `deadline` cut the pass short).
+    `archive_deferred` — how many citations were left WITHOUT a verdict because archive.org could
+    not be asked right now (`ArchiveUnavailable`); the caller must retry the job for those
+    (docs/TASKS_CITATION_HARDENING.md T3, design decision 6). Always 0 on a `final_attempt`, where
+    they get an `unverifiable`/`archive_unavailable` verdict instead.
+    """
+
+    complete: bool
+    archive_deferred: int = 0
 
 
 def _perplexity_snippet(raw_payload: dict, url: str) -> str | None:
@@ -150,8 +169,8 @@ def _try_archive_fallback(
     archive.org has no snapshot at all, or its snapshot doesn't fully verify either — in both
     cases the caller keeps whatever verdict the live check already produced. Lets
     `archive_lookup.ArchiveUnavailable` propagate unchanged (see that module's docstring): a
-    429/5xx/timeout from archive.org must defer the whole verification job, never get recorded
-    as a verdict here.
+    429/5xx/timeout from archive.org is never recorded as a verdict here — `verify_citations_by_
+    quote` catches it per citation and decides (retry later, or a final `archive_unavailable`).
     """
     snapshot = archive_lookup.find_closest_snapshot(db, client, citation.source_url, target_date=target_date, sleep=sleep)
     if snapshot is None:
@@ -175,7 +194,8 @@ def verify_citations_by_quote(
     sleep: Callable[[float], None] = time.sleep,
     since: datetime | None = None,
     deadline: float | None = None,
-) -> bool:
+    final_attempt: bool = False,
+) -> QuoteCheckOutcome:
     """Run the literal-quote check for every citation on `raw_response` that has one to run
 
     (design decisions 1-3): Anthropic/Perplexity citations whose source has already been
@@ -189,9 +209,19 @@ def verify_citations_by_quote(
     a citation-heavy response's verify phase can run long enough to approach the job's lease
     expiry — without it, a long-running job could still be `leased` past `lease_expires_at` while
     genuinely still working, letting a second worker reclaim and concurrently double-process the
-    same job. Returns `True` when every citation was checked, `False` when the deadline cut the
-    pass short (caller must treat that as incomplete, not done — the per-citation `since` check
-    above means a later pass resumes rather than restarts).
+    same job. `QuoteCheckOutcome.complete` is True when every citation was checked, False when the
+    deadline cut the pass short (caller must treat that as incomplete, not done — the per-citation
+    `since` check above means a later pass resumes rather than restarts).
+
+    `archive_lookup.ArchiveUnavailable` (archive.org rate-limiting/erroring) is handled PER CITATION
+    (docs/TASKS_CITATION_HARDENING.md T3, design decision 6) — it used to escape this function and
+    fail the whole job, so every citation after the unlucky one was lost once the job ran out of
+    attempts. Now that citation is left without a verdict, counted in `archive_deferred`, and the
+    loop carries on; the caller defers the job, and the retry's `since` check re-processes only
+    those. On `final_attempt=True` (the job's last try) there is no later retry, so such a
+    citation gets `unverifiable`/`archive_unavailable` against its LIVE source document instead —
+    the live outcome (404, or a quote not found) is not repeated into the verdict, since the check
+    that could have confirmed or overturned it never completed; it stays on the linked document.
 
     `since` (typically `job.created_at`, passed by `process_verification_job`) skips a citation
     that already has a `check_type='quote'` row created at/after `since` — this is what makes a
@@ -213,7 +243,7 @@ def verify_citations_by_quote(
     """
     provider_code = raw_response.run.model.provider.code
     if provider_code not in _QUOTE_PROVIDERS:
-        return True
+        return QuoteCheckOutcome(complete=True)
 
     target_date = raw_response.run.started_at
     # Captured once, up front, rather than read via `raw_response.raw_payload`/`.rendered_text`
@@ -252,10 +282,28 @@ def verify_citations_by_quote(
             verifier_version=VERIFIER_VERSION,
         )
 
+    archive_deferred = 0
+
+    def _archive_unavailable(citation: Citation, derived_claim, document: SourceDocument) -> None:
+        """archive.org could not be asked for this citation: record it (last attempt) or leave it
+        for the job's retry (every earlier attempt) — see this function's docstring.
+        """
+        nonlocal archive_deferred
+        if final_attempt:
+            db.add(_row(citation, derived_claim, source_document=document, verdict="unverifiable", reason="archive_unavailable"))
+            db.commit()
+        else:
+            archive_deferred += 1
+            logger.warning(
+                "verify_citations_by_quote: archive.org unavailable for citation %s (%s) — leaving it for the job's retry",
+                citation.id,
+                citation.source_url,
+            )
+
     citations = db.scalars(select(Citation).where(Citation.raw_response_id == response_id)).all()
     for citation in citations:
         if deadline is not None and time.monotonic() > deadline:
-            return False
+            return QuoteCheckOutcome(complete=False, archive_deferred=archive_deferred)
         if not citation.source_url:
             continue
         quote_text = _cited_text(citation, provider_code, raw_payload)
@@ -273,10 +321,14 @@ def verify_citations_by_quote(
         if document.error_reason is not None:
             archived = None
             if client is not None and document.error_reason in _PAGE_GONE_REASONS:
-                archived = _try_archive_fallback(
-                    db, client, citation=citation, quote_text=quote_text, provider_code=provider_code,
-                    target_date=target_date, now=now, sleep=sleep,
-                )
+                try:
+                    archived = _try_archive_fallback(
+                        db, client, citation=citation, quote_text=quote_text, provider_code=provider_code,
+                        target_date=target_date, now=now, sleep=sleep,
+                    )
+                except archive_lookup.ArchiveUnavailable:
+                    _archive_unavailable(citation, derived_claim, document)
+                    continue
             if archived is not None:
                 archive_document, result = archived
                 db.add(_row(citation, derived_claim, source_document=archive_document, verdict="archive_only", result=result))
@@ -302,10 +354,14 @@ def verify_citations_by_quote(
             continue
 
         if result.verdict == "not_found" and client is not None:
-            archived = _try_archive_fallback(
-                db, client, citation=citation, quote_text=quote_text, provider_code=provider_code,
-                target_date=target_date, now=now, sleep=sleep,
-            )
+            try:
+                archived = _try_archive_fallback(
+                    db, client, citation=citation, quote_text=quote_text, provider_code=provider_code,
+                    target_date=target_date, now=now, sleep=sleep,
+                )
+            except archive_lookup.ArchiveUnavailable:
+                _archive_unavailable(citation, derived_claim, document)
+                continue
             if archived is not None:
                 archive_document, archive_result = archived
                 db.add(_row(citation, derived_claim, source_document=archive_document, verdict="page_changed", result=archive_result))
@@ -314,4 +370,4 @@ def verify_citations_by_quote(
 
         db.add(_row(citation, derived_claim, source_document=document, verdict=result.verdict, result=result))
         db.commit()
-    return True
+    return QuoteCheckOutcome(complete=True, archive_deferred=archive_deferred)

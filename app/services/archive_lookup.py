@@ -12,11 +12,11 @@ rule behind this whole task):
   - "archive.org was reached and genuinely has no snapshot of this URL" — a confirmed negative,
     returned as `None`. The caller keeps whatever verdict the live check already produced.
   - "archive.org could not be asked right now" (429, 5xx, timeout, connection error) — raised as
-    `ArchiveUnavailable` and never caught here. The caller (app/services/verification_queue.py's
-    `process_verification_job`) already defers and retries a whole job on an unexpected
-    exception; letting this propagate reuses that machinery rather than inventing a second one,
-    and guarantees a rate-limited archive.org can never get silently recorded as "the quote
-    doesn't exist".
+    `ArchiveUnavailable` and never caught here. The caller (app/services/citation_verification.py's
+    `verify_citations_by_quote`) catches it PER CITATION: that citation is left for the job's retry
+    (app/services/verification_queue.py defers the job), and only on the job's last attempt does it
+    get an `unverifiable`/`archive_unavailable` verdict — so a rate-limited archive.org can never
+    get silently recorded as "the quote doesn't exist", nor fail the whole job for one citation.
 
 Rate limiting (1 request / 3s, design decision 19) is a single shared budget across both the CDX
 lookup and the snapshot download, unlike app/services/source_capture.py's per-*target*-domain
