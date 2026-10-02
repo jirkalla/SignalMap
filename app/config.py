@@ -99,13 +99,15 @@ class Settings(BaseSettings):
     # ceiling is enough to catch "the queue is growing unbounded" regardless of which client caused
     # it.
     scheduler_max_queue_depth_per_client: int = 500
-    # Reserved for a future worker that processes several queue items in parallel per provider —
-    # today's worker is strictly sequential (one item per loop iteration, no threads/asyncio), so
-    # this is not read anywhere yet. Left at 1 (matching that real behavior) rather than removed,
-    # so the setting exists and is documented before anything depends on it (T10 point 3: the
-    # realistic run volume for this app doesn't need concurrency yet — see docs/TASKS_SCHEDULER.md
-    # T10 for the capacity math; horizontal scaling via `worker_name` above is the intended growth
-    # path, not in-process concurrency).
+    # Reserved for a per-provider concurrency limit — not read anywhere yet. Each worker process
+    # is still strictly sequential (one item per loop iteration, no threads/asyncio); concurrency
+    # comes from running several worker processes (`WORKER_REPLICAS`, docker-compose.yaml;
+    # docs/TASKS_WORKER_THROUGHPUT.md). The capacity math in docs/TASKS_SCHEDULER.md T10 assumed
+    # ~15 s per run; measured is ~20 s per run (2026-09-26), which is why a single worker no
+    # longer suffices for a Knauf-sized batch and horizontal scaling is the real growth path.
+    # A limit per provider (so N workers cannot all hit one provider at once) is
+    # docs/ROADMAP.md #18; this setting would be its default value. Left at 1 rather than
+    # removed so it exists and is documented before anything depends on it.
     scheduler_provider_concurrency: int = 1
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

@@ -174,8 +174,9 @@ Zmeškané plánované runy se nevytratí: po startu workeru (4.2) je ticker
 dožene, dokud nejsou starší než `SCHEDULER_GRACE_PERIOD_MINUTES` (výchozí
 360 min).
 
-**Čekaný výstup:** `✔ Container signalmap-worker-1 Stopped` — může trvat až
-dvě minuty, pokud worker zrovna čeká na providera.
+**Čekaný výstup:** `✔ Container signalmap-worker-1 Stopped` — při více replikách
+řádek pro každou (`-1` až `-4`). Může trvat až dvě minuty, pokud worker zrovna
+čeká na providera.
 
 ### 2.3 Ověřit, že neběží žádný run
 
@@ -348,19 +349,31 @@ ssh signalmap 'cd /opt/signalmap && docker compose up -d --wait worker && docker
 ```
 `up` bez `--build` — image už postavil krok 3.3, worker ho jen převezme.
 
-**⚠️ Počet replik (zjištěno 2026-10-02):** produkce běží se čtyřmi workery ručním
-`--scale` (od 2026-09-27, do vydání 2 / WT-T3). Příkaz výše bez `--scale` spustí
-**jen jednoho**. Použij:
+**Počet replik** řídí `WORKER_REPLICAS` v serverovém `.env` (`deploy.replicas` v
+`docker-compose.yaml`, `docs/TASKS_WORKER_THROUGHPUT.md` T3). Produkce má mít
+`WORKER_REPLICAS=4`; výchozí hodnota je 1, takže chybějící řádek v `.env` tiše
+spustí **jen jednoho** workera. Ověř před startem:
 ```bash
-cd /opt/signalmap && docker compose up -d --wait --scale worker=4 worker && docker compose logs --tail=20 worker
+ssh signalmap 'cd /opt/signalmap && grep WORKER_REPLICAS .env && docker compose config | grep replicas'
 ```
-a ověř `Healthy` u `worker-1` až `worker-4` a v logu každé repliky `dry_run=False`.
+**Čekaný výstup:** `WORKER_REPLICAS=4` a `replicas: 4`. Příkaz výše pak spustí všechny
+repliky bez `--scale` (příznak `--scale` se nikde neukládá, proto se nepoužívá).
+
+**⚠️ Předpoklad před prvním nasazením tohoto vydání:** `WORKER_REPLICAS=4` musí být v
+serverovém `.env` už před 4.2. Do té doby (verze 1.3.x, bez `deploy.replicas`) běží
+čtyři workery ručním `--scale worker=4` a stejně je nutné ho použít při rollbacku
+na 1.3.x.
+
+`WORKER_NAME` v serverovém `.env` **nesmí** být nastavený — všechny repliky by sdílely
+jedno jméno (jeden heartbeat řádek, jedna identita leasu).
 
 Od tohoto kroku může worker zapisovat nové runy; rollback ze zálohy (6.1) by
 je smazal.
 
-**Čekaný výstup:** `✓ Container signalmap-worker-1 Healthy` a v logu řádek
-`Worker ... starting (dry_run=..., enabled=...)`. **Zkontroluj obě hodnoty** —
+**Čekaný výstup:** `✓ Container signalmap-worker-1 Healthy` až `-4 Healthy` a v logu
+každé repliky (`docker compose logs --tail=20 worker`) řádek
+`Worker ... starting (dry_run=..., enabled=...)`. **Zkontroluj obě hodnoty u každé
+repliky** —
 produkce má běžet s `dry_run=False` a `enabled=True`; `SCHEDULER_DRY_RUN` má
 v compose výchozí hodnotu `true`, takže chybějící řádek v `.env` znamená, že
 scheduler tiše nic nespouští.

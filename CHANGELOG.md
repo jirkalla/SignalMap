@@ -11,8 +11,16 @@ not a public API.
 
 ## [Unreleased]
 
+### Changed
+
+- Scheduled runs are processed several times faster: the worker no
+  longer pauses between queue items, and more than one worker can run
+  at once (`WORKER_REPLICAS`).
+
 ### Fixed
 
+- A provider call longer than 60 seconds no longer triggers a false
+  "worker not responding" notification.
 - A corrupted or truncated PDF no longer fails a verification job: the
   citation is recorded as "PDF has no extractable text" and the other
   citations of the response are still verified.

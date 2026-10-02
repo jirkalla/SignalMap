@@ -641,6 +641,10 @@ všiml už 2026-09-10 a uzavřel ho stejně.
 `docs/TASKS_WORKER_THROUGHPUT.md`, kde jsou i naměřená data a simulace.
 Tahle položka je **další krok**, až A + B přestanou stačit.
 
+**Stav (2026-10-02):** A + B jsou v kódu hotové (`feature/signalmap-worker-throughput`,
+WT-T1 až WT-T3, `docs/TASKS_WORKER_THROUGHPUT.md`); do produkce půjdou s dalším
+vydáním (WT-T5). C1 / C2 níže zůstávají nerealizované.
+
 **Proč to přijde:** s B jde na každého poskytovatele až tolik souběžných
 požadavků, kolik je workerů — polovina položek jsou dva GPT modely, takže
 při N workerech až N souběžných volání na OpenAI s `web_search`. Při 4
