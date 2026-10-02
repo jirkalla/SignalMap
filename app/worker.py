@@ -3,9 +3,12 @@
 (`python -m app.worker`, T4) from the exact same image as the web app, never as part of it: the
 ticker and executor both need a long-lived process, which a request/response web server isn't.
 
-Loop, once per iteration:
+Loop, once per iteration (step 1 runs on its own thread):
   1. Heartbeat (DB `worker_heartbeats` row + `/tmp/worker-alive` touchfile, design decision 19) —
-     without this, a stopped worker and an empty queue look identical on `/schedules`.
+     without this, a stopped worker and an empty queue look identical on `/schedules`. Written by
+     a background thread every ~10s (`heartbeat_loop`, docs/TASKS_WORKER_THROUGHPUT.md T2), not
+     by this loop, so a provider call longer than the stale threshold never looks like a dead
+     worker.
   2. Ticker (`enqueue_due_schedules`) — at most once a minute, skipped entirely when
      `SCHEDULER_ENABLED=false` (design decision 16); the executor below keeps draining the
      queue regardless, since two app instances must never both plan on their own schedule.
@@ -35,6 +38,7 @@ functions.
 
 import logging
 import signal
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -73,6 +77,7 @@ _TICKER_INTERVAL = timedelta(minutes=1)
 # Idle poll interval: slept only when an iteration claimed no run_queue item (or only ran a
 # verification job), never between consecutive queue items.
 _ITEM_POLL_INTERVAL_SECONDS = 5
+_HEARTBEAT_INTERVAL_SECONDS = 10
 
 # 1 / 5 / 25 minutes (docs/TASKS_SCHEDULER.md T3) — used for two different reasons an item goes
 # back to the queue, each counted by its OWN column (split in code review, 2026-09-22, see
@@ -298,15 +303,13 @@ def deregister_heartbeat(db: Session, *, worker_name: str) -> None:
 def run_iteration(
     db: Session, capture_client, *, settings, now: datetime, last_ticker_run: datetime  # noqa: ANN001
 ) -> tuple[bool, datetime]:
-    """One pass of the worker loop (module docstring steps 1-4b), without the idle sleep.
+    """One pass of the worker loop (module docstring steps 2-4b; the heartbeat is `heartbeat_loop`'s), without the idle sleep.
 
     Returns `(processed, last_ticker_run)`: `processed` is True only when a `run_queue` item was
     claimed (whatever its outcome — done, skipped, deferred, requeued), which tells the caller not
     to sleep. A verification job does not count: those hit third-party sites and keep the idle
     pause between them.
     """
-    write_heartbeat(db, worker_name=settings.worker_name, dry_run=settings.scheduler_dry_run, now=now)
-
     if now - last_ticker_run >= _TICKER_INTERVAL:
         if settings.scheduler_enabled:
             enqueue_due_schedules(
@@ -342,6 +345,41 @@ def run_iteration(
     return False, last_ticker_run
 
 
+def heartbeat_loop(
+    stop_event: threading.Event,
+    *,
+    worker_name: str,
+    dry_run: bool,
+    interval_seconds: float = _HEARTBEAT_INTERVAL_SECONDS,
+) -> None:
+    """Write this worker's heartbeat every `interval_seconds` until `stop_event` is set.
+
+    Runs on a daemon thread, independent of the main loop (docs/TASKS_WORKER_THROUGHPUT.md T2,
+    design decision 6): a provider call can take 70+ s, far past `WORKER_STALE_THRESHOLD_SECONDS`
+    (60 s = 6x this interval), and a heartbeat written once per loop iteration looked like a dead
+    worker for that whole time (false `worker.stale`, 2026-09-25, run 375).
+
+    What this no longer detects: a call that hangs inside a live process — the heartbeat keeps
+    ticking. That case is covered by the lease instead (design decision 14,
+    docs/TASKS_SCHEDULER.md, 15 min): another worker's `release_expired_leases` /
+    `reconcile_interrupted_runs` picks the item up, bounded by the provider SDK's own timeout.
+    Heartbeat = "the process is alive", lease = "the item is moving".
+
+    Every tick uses its own short-lived `SessionLocal()` — a SQLAlchemy session must never be
+    shared with the main thread. A failing tick (DB hiccup) is logged and retried on the next one;
+    this thread must not die, or the false alarm would just return in the opposite direction.
+    Calls no provider SDK.
+    """
+    while True:
+        try:
+            with SessionLocal() as db:
+                write_heartbeat(db, worker_name=worker_name, dry_run=dry_run, now=datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 - must survive anything; retried next tick
+            logger.exception("Heartbeat write failed for worker %s, retrying in %ss", worker_name, interval_seconds)
+        if stop_event.wait(interval_seconds):
+            return
+
+
 def run_forever() -> None:
     """The worker's main loop — see module docstring for the per-iteration sequence."""
     configure_logging()
@@ -358,6 +396,16 @@ def run_forever() -> None:
     signal.signal(signal.SIGINT, _handle_sigterm)
 
     last_ticker_run = datetime.min.replace(tzinfo=timezone.utc)
+
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = threading.Thread(
+        target=heartbeat_loop,
+        args=(heartbeat_stop,),
+        kwargs={"worker_name": settings.worker_name, "dry_run": settings.scheduler_dry_run},
+        name="worker-heartbeat",
+        daemon=True,
+    )
+    heartbeat_thread.start()
 
     logger.info(
         "Worker %s starting (dry_run=%s, enabled=%s)",
@@ -385,6 +433,11 @@ def run_forever() -> None:
             # claim_next never returns, so this cannot spin on an "all postponed" queue.
             if not processed and not stop_requested:
                 time.sleep(_ITEM_POLL_INTERVAL_SECONDS)
+
+    # Stop (and wait for) the heartbeat thread BEFORE deregistering, so it cannot re-insert the row
+    # we are about to delete.
+    heartbeat_stop.set()
+    heartbeat_thread.join(timeout=_HEARTBEAT_INTERVAL_SECONDS)
 
     with SessionLocal() as db:
         deregister_heartbeat(db, worker_name=settings.worker_name)

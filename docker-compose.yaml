@@ -124,9 +124,10 @@ services:
       # these args, so it silently re-bakes both as empty; the footer then just omits the SHA/
       # build-time until the next real deploy (found in code review, 2026-09-23 — cosmetic only,
       # app/config.py's empty defaults mean this never fails startup).
-    # No HTTP port to probe (design decision 19) — checks that app/worker.py's main loop is
-    # still touching its liveness file, written on every iteration (~every 5s). 30s = 6x that
-    # interval, so one slow iteration doesn't flap the container between healthy/unhealthy.
+    # No HTTP port to probe (design decision 19) — checks that app/worker.py is still touching
+    # its liveness file, written every ~10s by a background thread (independent of how long a
+    # provider call takes). 30s = 3x that interval, so one missed tick doesn't flap the container
+    # between healthy/unhealthy.
     healthcheck:
       test: [
         "CMD", "python", "-c",

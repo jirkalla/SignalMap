@@ -6,6 +6,8 @@ not-yet-existing CRUD routes (T5) — the same "build the row, call the pure/DB 
 on the row" shape as tests/test_cost.py and tests/test_scheduling_recurrence.py.
 """
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -247,6 +249,7 @@ def _drive_run_forever(monkeypatch, results: list[bool]) -> tuple[int, list[floa
     monkeypatch.setattr(worker_module, "reconcile_interrupted_runs", lambda db, *, now: 0)
     monkeypatch.setattr(worker_module, "deregister_heartbeat", lambda db, *, worker_name: None)
     monkeypatch.setattr(worker_module, "build_capture_client", lambda: _NullCaptureClient())
+    monkeypatch.setattr(worker_module, "heartbeat_loop", lambda stop_event, **kwargs: None)
 
     scripted = iter(results)
     calls = []
@@ -278,6 +281,89 @@ def test_run_forever_sleeps_once_when_the_queue_goes_idle(monkeypatch):
 
     assert iterations == 4
     assert sleeps == [worker_module._ITEM_POLL_INTERVAL_SECONDS]
+
+
+# ---------------------------------------------------------------------------
+# heartbeat_loop (docs/TASKS_WORKER_THROUGHPUT.md T2)
+# ---------------------------------------------------------------------------
+
+
+def _start_heartbeat(monkeypatch, tmp_path, **kwargs):
+    monkeypatch.setattr(worker_module, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(worker_module, "HEARTBEAT_FILE", tmp_path / "worker-alive")
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=worker_module.heartbeat_loop, args=(stop,),
+        kwargs={"worker_name": "hb-test", "dry_run": True, "interval_seconds": 0.05, **kwargs}, daemon=True,
+    )
+    thread.start()
+    return stop, thread
+
+
+def _wait_for(predicate, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _heartbeat_rows() -> list[WorkerHeartbeat]:
+    with TestSessionLocal() as session:
+        return session.scalars(select(WorkerHeartbeat).where(WorkerHeartbeat.worker_name == "hb-test")).all()
+
+
+def test_heartbeat_thread_keeps_writing_while_the_main_thread_is_busy(monkeypatch, tmp_path):
+    """A long provider call in the main thread must not stop the heartbeat."""
+    stop, thread = _start_heartbeat(monkeypatch, tmp_path)
+    try:
+        assert _wait_for(lambda: len(_heartbeat_rows()) == 1)
+        first = _heartbeat_rows()[0].last_seen_at
+        time.sleep(0.4)  # the "provider call": main thread busy, many intervals pass
+        assert _heartbeat_rows()[0].last_seen_at > first
+        assert (tmp_path / "worker-alive").exists()
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        with TestSessionLocal() as session:
+            deregister_heartbeat(session, worker_name="hb-test")
+
+
+def test_heartbeat_thread_stops_on_event_and_deregister_leaves_no_row(monkeypatch, tmp_path):
+    stop, thread = _start_heartbeat(monkeypatch, tmp_path)
+    assert _wait_for(lambda: len(_heartbeat_rows()) == 1)
+
+    stop.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+    with TestSessionLocal() as session:
+        deregister_heartbeat(session, worker_name="hb-test")
+    assert _heartbeat_rows() == []
+
+
+def test_heartbeat_thread_survives_a_failing_tick(monkeypatch, tmp_path):
+    real_write = worker_module.write_heartbeat
+    calls = {"n": 0}
+
+    def _flaky(db, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db hiccup")
+        return real_write(db, **kwargs)
+
+    monkeypatch.setattr(worker_module, "write_heartbeat", _flaky)
+    stop, thread = _start_heartbeat(monkeypatch, tmp_path)
+    try:
+        assert _wait_for(lambda: len(_heartbeat_rows()) == 1)  # a later tick succeeded
+        assert thread.is_alive()
+        assert calls["n"] >= 2
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        with TestSessionLocal() as session:
+            deregister_heartbeat(session, worker_name="hb-test")
 
 
 # ---------------------------------------------------------------------------

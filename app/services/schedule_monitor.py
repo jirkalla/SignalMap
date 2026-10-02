@@ -18,10 +18,11 @@ from app.models import AIModel, Client, Persona, Prompt
 from app.models.notification import WorkerHeartbeat
 from app.models.schedule import RunQueueItem
 
-# The worker writes its heartbeat once per loop iteration — a 5s sleep plus up to ~28s for one
-# provider call (app/worker.py's own docstring, matching docker-compose.yaml's stop_grace_period
-# comment) — so 60s is a 2x safety margin before /schedules calls it stale, not the raw loop
-# interval itself (design decision 19).
+# The worker's heartbeat thread (app/worker.py::heartbeat_loop) writes every ~10 s regardless of
+# how long a provider call takes, so 60 s = 6x that interval — several missed ticks before
+# /schedules calls a worker stale (design decision 19; docs/TASKS_WORKER_THROUGHPUT.md T2). A
+# heartbeat means "the process is alive"; a call hung inside a live process is caught by the
+# queue lease instead (docs/TASKS_SCHEDULER.md design decision 14).
 WORKER_STALE_THRESHOLD_SECONDS = 60
 
 _ACTIVE_STATUSES = ("queued", "leased", "deferred")
