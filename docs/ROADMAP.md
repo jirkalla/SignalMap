@@ -988,9 +988,39 @@ regrese; smyčka po hopech z T1 je ale přirozené místo pro kontrolu.
 - Nepatří do v1.3.0 (vyžaduje migraci pro nový důvod); samostatná větev po
   vydání.
 
+## 28. Odolnost zachytávání zdrojů proti vadným vstupům
+
+**Zaznamenáno 2026-10-02** z prvního nasazení v1.3.0 (rozbor chybových
+`verification_jobs` po backfillu Knauf): dvě zbývající mezery, kde jeden vadný
+vstup shodí celý job a zbytek citací téže odpovědi se po třech pokusech
+nezpracuje. Stejná třída problému jako NUL a `ArchiveUnavailable`
+(`docs/TASKS_CITATION_HARDENING.md` T3, T4), ale jiný zdroj výjimky. Historicky
+3 z 26 chybových jobů (30. 9., pilot Knauf); po nasazení v1.3.0 žádný nový.
+
+- **Poškozené nebo useknuté PDF** — chyba `Stream has ended unexpectedly`
+  (s velkou pravděpodobností `pypdf.errors.PdfStreamError`, 2 joby).
+  `extract_pdf` (`app/services/source_extract.py:375`) volá `PdfReader` /
+  `extract_text()` bez ošetření, výjimka unikne z `capture_url` do
+  job-level handleru. Oprava: zachytit chyby čtení PDF a zapsat existující
+  důvod `pdf_no_text` (žádná migrace, překlad i test pokrytí už existují).
+- **Nevalidní JSON z archive.org** — `Expecting value: line 1 column 1
+  (char 0)` (1 job). `find_closest_snapshot`
+  (`app/services/archive_lookup.py:128`) volá `response.json()` na těle, které
+  při výpadku může být HTML nebo prázdné (i s kódem 200); `ValueError` není
+  `ArchiveUnavailable`, takže unikne z izolace po citaci (T3). Oprava:
+  převést chybu dekódování na `ArchiveUnavailable`.
+- Projít i podobné neošetřené cesty: `fetch_snapshot_content` →
+  `extract_pdf` u archivního PDF, rozbité kódování těla.
+- Testy: poškozený PDF (fixture) a nevalidní JSON z mock transportu; nové
+  testy musí selhat na kódu před opravou. Malý rozsah (půl dne), bez migrace.
+- Plán: `docs/TASKS_CAPTURE_ROBUSTNESS.md` ve vydání 2 (v1.4.0), jako první
+  a nejmenší větev. Kdyby se po dokončeném backfillu v produkci objevily nové
+  chyby této třídy, jde stejná oprava samostatně jako PATCH v1.3.1
+  (`DEPLOYMENT.md` §0: `fix` = PATCH).
+
 ## Plán vydání (2026-09-30)
 
-Položky #19–26 (a předstupeň #18 — Worker Throughput) se nasazují ve
+Položky #19–26 a #28 (a předstupeň #18 — Worker Throughput) se nasazují ve
 **čtyřech tematických vydáních**, ne jedním velkým deployem: hotfixy
 nečekají týdny, změna metodiky (#22) jde ven sama a dá se odlišit
 v trendech, a každé vydání jde vrátit zvlášť (rollback zálohou by jinak
@@ -1002,12 +1032,12 @@ a před každým zkouška na kopii produkční DB.
 | Vydání | Verze | Větve v pořadí | Obsah | Migrace |
 |---|---|---|---|---|
 | 1 — Vision + citation hardening | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
-| 2 — Scheduler ops | v1.4.0 | `worker-throughput` → `scheduler-ops` | WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
+| 2 — Scheduler ops | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
 | 3 — Market locale names | v1.5.0 | `market-locale-names` | #22 (jediná změna metodiky) | 1× přidání |
 | 4 — Metriky + Export v2 | v1.6.0 | `metric-definitions` → `export-v2` | #26, #25, #21 (History filtry) | ne |
 
 Plány (TASKS/PROMPTS): `CLIENT_VISION`, `CITATION_HARDENING`,
-`WORKER_THROUGHPUT`, `SCHEDULER_OPS`, `MARKET_LOCALE_NAMES`,
+`CAPTURE_ROBUSTNESS`, `WORKER_THROUGHPUT`, `SCHEDULER_OPS`, `MARKET_LOCALE_NAMES`,
 `METRIC_DEFINITIONS`, `EXPORT_V2`
 v `docs/`. V každém vydání se nasazuje až poslední větev (její poslední
 úkol nasadí i ty předchozí).

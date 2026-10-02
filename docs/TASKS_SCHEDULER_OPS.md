@@ -20,7 +20,12 @@ pozorování po nasazení.
 
 ---
 
-## Předpoklad: Worker Throughput (WT) jako první větev tohoto vydání
+## Předpoklad: Capture Robustness (CR) a Worker Throughput (WT) před touto větví
+
+**Pořadí větví vydání 2:** (1) `capture-robustness`
+(`docs/TASKS_CAPTURE_ROBUSTNESS.md`, `docs/ROADMAP.md` #28, přidáno
+2026-10-02 po nasazení v1.3.0) → (2) `worker-throughput` → (3) tahle větev.
+CR a WT se mergují do `master` **bez nasazení**, vše se nasadí v SO-T7.
 
 `docs/TASKS_WORKER_THROUGHPUT.md` je hotový plán (WT-T1…T5), zatím
 **neimplementovaný** (ověřeno 2026-09-30: `run_forever` spí 5 s po každé
@@ -323,7 +328,7 @@ dnešní chování)
 
 ## T7 — Nasazení v1.4.0 (vč. WT-T5) a měření
 
-**Target:** produkce; end-of-branch docs obou větví (WT i SO)
+**Target:** produkce; end-of-branch docs všech tří větví (CR, WT i SO)
 
 1. **Před nasazením (uživatel):** v OpenAI konzoli RPM/TPM pro
    gpt-5.6-terra/luna (WT-T5 krok 1).
@@ -341,8 +346,9 @@ dnešní chování)
    finished_at > now() - interval '7 days' and last_error is not null
    group by 1, 2;` — žádné `[unknown]` bez vysvětlení; každý `[unknown]`
    prozkoumat a doplnit klasifikaci.
-7. End-of-branch docs: `## Status: ...` v `*_SCHEDULER_OPS.md` i
-   `*_WORKER_THROUGHPUT.md`, dva řádky v `docs/00_INDEX.md`,
+7. End-of-branch docs: `## Status: ...` v `*_SCHEDULER_OPS.md`,
+   `*_WORKER_THROUGHPUT.md` i `*_CAPTURE_ROBUSTNESS.md`, tři řádky v
+   `docs/00_INDEX.md`,
    `docs/ROADMAP.md` „Plán vydání" → vydání 2 ✅, #18 (A+B hotové).
 
 **Done when:** kroky 4–6 ověřené a uživatel potvrdil.

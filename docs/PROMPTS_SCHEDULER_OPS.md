@@ -3,9 +3,11 @@
 ## v1.0 | Září 2026
 ##
 ## JAK POUŽÍVAT:
-## 0. NEJDŘÍV větev feature/signalmap-worker-throughput: WT-1 až WT-4 podle
-##    docs/PROMPTS_WORKER_THROUGHPUT.md, merge do master BEZ nasazení.
-##    WT-5 (nasazení) se neprovádí samostatně — je součástí SO-7.
+## 0. NEJDŘÍV větev feature/signalmap-capture-robustness (CR-1 až CR-4,
+##    docs/PROMPTS_CAPTURE_ROBUSTNESS.md), pak feature/signalmap-worker-
+##    throughput: WT-1 až WT-4 podle docs/PROMPTS_WORKER_THROUGHPUT.md; obě
+##    se mergují do master BEZ nasazení. WT-5 (nasazení) se neprovádí
+##    samostatně — je součástí SO-7.
 ## 1. git checkout -b feature/signalmap-scheduler-ops (z master po merge WT)
 ## 2. Sedm promptů (SO-1 až SO-7). SO-2 staví na SO-1 (jména), SO-4 na
 ##    SO-3 (kategorie). SO-5 je nezávislé. SO-6 dokumentuje, SO-7 nasazuje.
