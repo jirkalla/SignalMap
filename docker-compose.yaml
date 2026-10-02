@@ -83,6 +83,12 @@ services:
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
     init: true
+    # Replica count comes from .env (docs/TASKS_WORKER_THROUGHPUT.md T3, design decision 3), not
+    # `docker compose up --scale`: a --scale flag is stored nowhere, so the next plain
+    # `docker compose up` per the deploy runbook would silently drop back to one worker. Default
+    # 1 keeps the dev PC as it was; production sets WORKER_REPLICAS=4 in its own .env.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     depends_on:
       app:
         condition: service_healthy
@@ -113,7 +119,7 @@ services:
       # passes the host's own WORKER_NAME through only if it's actually set there, otherwise the
       # container gets no WORKER_NAME env var at all, and app/config.py's own default (the
       # container's own hostname) applies. A `${WORKER_NAME:-scheduler-1}`-style fallback would
-      # set the SAME literal value in every `docker compose up --scale worker=N` replica, breaking
+      # set the SAME literal value in every replica (WORKER_REPLICAS > 1), breaking
       # the one-heartbeat-row-per-worker identity this is meant to give for free.
       WORKER_NAME:
       # No GIT_SHA/BUILD_TIME here, unlike the API keys above: they're baked into the shared
