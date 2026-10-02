@@ -6,6 +6,7 @@ not-yet-existing CRUD routes (T5) — the same "build the row, call the pure/DB 
 on the row" shape as tests/test_cost.py and tests/test_scheduling_recurrence.py.
 """
 
+import struct
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -34,7 +35,8 @@ from app.services.queue import (
     retry_all_errors,
 )
 import app.worker as worker_module
-from app.worker import _is_retryable_error, deregister_heartbeat, process_claimed_item, run_iteration
+from app.services.schedule_monitor import delete_stale_heartbeats
+from app.worker import _is_retryable_error, deregister_heartbeat, process_claimed_item, resolve_worker_name, run_iteration
 from tests.conftest import TestSessionLocal
 from tests.fake_adapter import FakeAdapter
 
@@ -122,6 +124,87 @@ def test_deregister_heartbeat_removes_only_its_own_row(db_session):
 
     remaining = db_session.scalars(select(WorkerHeartbeat)).all()
     assert [w.worker_name for w in remaining] == ["another-worker"]
+
+
+# ---------------------------------------------------------------------------
+# resolve_worker_name / stale heartbeat cleanup (docs/TASKS_SCHEDULER_OPS.md T1)
+# ---------------------------------------------------------------------------
+
+
+def _ptr_response(query_id: int, ip: str, target: str, *, rcode: int = 0) -> bytes:
+    """A DNS response shaped like Docker's embedded DNS: question echoed, answer name compressed."""
+
+    def _name(n: str) -> bytes:
+        return b"".join(bytes([len(p)]) + p.encode() for p in n.split(".")) + b"\x00"
+
+    arpa = ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
+    header = struct.pack(">HHHHHH", query_id, 0x8180 | rcode, 1, 0 if rcode else 1, 0, 0)
+    question = _name(arpa) + struct.pack(">HH", 12, 1)
+    if rcode:
+        return header + question
+    rdata = _name(target)
+    answer = b"\xc0\x0c" + struct.pack(">HHIH", 12, 1, 600, len(rdata)) + rdata
+    return header + question + answer
+
+
+def _dns_settings(**extra) -> SimpleNamespace:
+    return SimpleNamespace(worker_name="deadbeef1234", **extra)
+
+
+def _patch_dns(monkeypatch, *, answer):
+    monkeypatch.setattr(worker_module.socket, "gethostname", lambda: "deadbeef1234")
+    monkeypatch.setattr(worker_module.socket, "gethostbyname", lambda h: "172.18.0.8")
+    monkeypatch.setattr(worker_module, "_first_nameserver", lambda: "127.0.0.11")
+    monkeypatch.setattr(worker_module, "_reverse_dns_names", answer)
+
+
+def test_ptr_response_parses_a_compressed_answer():
+    data = _ptr_response(7, "172.18.0.8", "signalmap-worker-3.signalmap_default")
+
+    assert worker_module._parse_ptr_response(data, 7) == ["signalmap-worker-3.signalmap_default"]
+    assert worker_module._parse_ptr_response(data, 8) == []  # id mismatch
+    assert worker_module._parse_ptr_response(_ptr_response(7, "172.18.0.8", "", rcode=3), 7) == []
+
+
+def test_resolve_worker_name_uses_the_compose_replica_number(monkeypatch):
+    _patch_dns(monkeypatch, answer=lambda ip, *, nameserver: ["signalmap-worker-3.signalmap_default"])
+
+    assert resolve_worker_name(_dns_settings()) == "worker-3"
+
+
+def test_resolve_worker_name_falls_back_to_hostname_on_dns_error(monkeypatch):
+    def _boom(ip, *, nameserver):
+        raise OSError("timed out")
+
+    _patch_dns(monkeypatch, answer=_boom)
+
+    assert resolve_worker_name(_dns_settings()) == "deadbeef1234"
+
+
+def test_resolve_worker_name_falls_back_when_the_name_is_not_a_replica(monkeypatch):
+    _patch_dns(monkeypatch, answer=lambda ip, *, nameserver: ["deadbeef1234"])
+
+    assert resolve_worker_name(_dns_settings()) == "deadbeef1234"
+
+
+def test_resolve_worker_name_prefers_an_explicit_worker_name(monkeypatch):
+    _patch_dns(monkeypatch, answer=lambda ip, *, nameserver: ["signalmap-worker-3.net"])
+
+    assert resolve_worker_name(_dns_settings(model_fields_set={"worker_name"})) == "deadbeef1234"
+
+
+def test_delete_stale_heartbeats_removes_only_rows_older_than_an_hour(db_session):
+    db_session.add_all(
+        [
+            WorkerHeartbeat(worker_name="fresh", last_seen_at=NOW - timedelta(minutes=30), dry_run=False),
+            WorkerHeartbeat(worker_name="stale", last_seen_at=NOW - timedelta(minutes=90), dry_run=False),
+        ]
+    )
+    db_session.commit()
+
+    assert delete_stale_heartbeats(db_session, now=NOW) == 1
+
+    assert [w.worker_name for w in db_session.scalars(select(WorkerHeartbeat))] == ["fresh"]
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +328,7 @@ def _drive_run_forever(monkeypatch, results: list[bool]) -> tuple[int, list[floa
     monkeypatch.setattr(worker_module.signal, "signal", lambda signum, handler: handlers.setdefault(signum, handler))
     monkeypatch.setattr(worker_module, "configure_logging", lambda: None)
     monkeypatch.setattr(worker_module, "get_settings", _loop_settings)
+    monkeypatch.setattr(worker_module, "resolve_worker_name", lambda settings: settings.worker_name)
     monkeypatch.setattr(worker_module, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(worker_module, "reconcile_interrupted_runs", lambda db, *, now: 0)
     monkeypatch.setattr(worker_module, "deregister_heartbeat", lambda db, *, worker_name: None)

@@ -82,10 +82,11 @@ class Settings(BaseSettings):
     # reclaim it (design decision 14) — protects against a killed worker leaving items stuck.
     scheduler_lease_minutes: int = 15
     # Identifies this process's row in worker_heartbeats and its lease ownership on run_queue.
-    # Defaults to the container's own hostname (Docker assigns one unique per container) rather
-    # than a fixed string, so `docker compose up --scale worker=N` (docs/TASKS_SCHEDULER.md T10)
-    # gives every replica a distinct identity for free — no per-replica WORKER_NAME needed. Still
-    # overridable via the environment for a deployment that wants a more readable name.
+    # This default is only the FALLBACK (the container's own hostname, unique per container). The
+    # worker process replaces it at startup with `worker-N`, the Compose replica number, via
+    # app.worker.resolve_worker_name (docs/TASKS_SCHEDULER_OPS.md design decision 1). Setting
+    # WORKER_NAME explicitly wins over both — but it would give every replica the same name, so
+    # leave it unset when running more than one.
     worker_name: str = socket.gethostname()
     # Runs per rolling 24h a client may have before `run_execution.py`'s check_daily_quota starts
     # rejecting/skipping new ones (T10, design decision 26) — the fallback when a client's own

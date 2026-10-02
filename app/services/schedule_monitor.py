@@ -9,9 +9,9 @@ that module's `_resolve_target`, a router-private helper this service has no rea
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AIModel, Client, Persona, Prompt
@@ -24,6 +24,11 @@ from app.models.schedule import RunQueueItem
 # heartbeat means "the process is alive"; a call hung inside a live process is caught by the
 # queue lease instead (docs/TASKS_SCHEDULER.md design decision 14).
 WORKER_STALE_THRESHOLD_SECONDS = 60
+
+# `worker_heartbeats` rows of containers that died without a clean shutdown (SIGKILL, OOM) are never
+# deregistered; the ticker deletes them after this long. The stale alarm (60 s above) is unchanged
+# — this only removes rows nobody is going to refresh (docs/TASKS_SCHEDULER_OPS.md design decision 2).
+_STALE_HEARTBEAT_RETENTION = timedelta(hours=1)
 
 _ACTIVE_STATUSES = ("queued", "leased", "deferred")
 _TERMINAL_STATUSES = ("done", "error", "skipped", "cancelled")
@@ -61,6 +66,13 @@ def worker_statuses(db: Session, *, now: datetime) -> list[WorkerStatus]:
         )
         for row in rows
     ]
+
+
+def delete_stale_heartbeats(db: Session, *, now: datetime) -> int:
+    """Delete heartbeat rows not refreshed for `_STALE_HEARTBEAT_RETENTION`; returns the count."""
+    result = db.execute(delete(WorkerHeartbeat).where(WorkerHeartbeat.last_seen_at < now - _STALE_HEARTBEAT_RETENTION))
+    db.commit()
+    return result.rowcount
 
 
 def format_duration_short(t, total_seconds: float) -> str:

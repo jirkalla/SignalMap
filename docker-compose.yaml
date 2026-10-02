@@ -117,8 +117,8 @@ services:
       PROVIDER_JUDGE_TIMEOUT_SECONDS: ${PROVIDER_JUDGE_TIMEOUT_SECONDS:-60}
       # No `:-default` fallback here, deliberately (docs/TASKS_SCHEDULER.md T10) — a bare `KEY:`
       # passes the host's own WORKER_NAME through only if it's actually set there, otherwise the
-      # container gets no WORKER_NAME env var at all, and app/config.py's own default (the
-      # container's own hostname) applies. A `${WORKER_NAME:-scheduler-1}`-style fallback would
+      # container gets no WORKER_NAME env var at all, and the worker names itself `worker-N`
+      # from its Compose replica number (app.worker.resolve_worker_name; hostname as fallback). A `${WORKER_NAME:-scheduler-1}`-style fallback would
       # set the SAME literal value in every replica (WORKER_REPLICAS > 1), breaking
       # the one-heartbeat-row-per-worker identity this is meant to give for free.
       WORKER_NAME:
