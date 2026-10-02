@@ -24,6 +24,7 @@ throttle — there is only ever one target domain here (archive.org itself), nev
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,6 +52,8 @@ MIN_REQUEST_INTERVAL_SECONDS = 3.0  # design decision 19
 # 2026-09-30) — see MIN_DOMAIN_INTERVAL_SECONDS's comment in source_capture.py for the same gap
 # there.
 _THROTTLE_KEY = "archive.org"
+
+_CDX_TIMESTAMP_RE = re.compile(r"\d{14}")
 
 
 class ArchiveUnavailable(Exception):
@@ -125,10 +128,28 @@ def find_closest_snapshot(
         "limit": "1",
     }
     response = _request(db, client, f"{CDX_URL}?{urlencode(params)}", sleep=sleep)
-    rows = response.json()
+    try:
+        rows = response.json()
+    except ValueError as exc:  # an HTML error page or empty body served with a 200
+        raise ArchiveUnavailable(f"archive.org returned a non-JSON CDX response for {url}") from exc
+    # Only a well-formed list is allowed to mean "no snapshot": anything archive.org answers that we
+    # cannot read is an outage, not a confirmed negative (module docstring; design decision 3 in
+    # docs/TASKS_CAPTURE_ROBUSTNESS.md).
+    if not isinstance(rows, list):
+        raise ArchiveUnavailable(f"archive.org returned an unexpected CDX response shape for {url}")
     if len(rows) < 2:  # rows[0] is the CDX header row; no header at all means no match either
         return None
-    timestamp, original = rows[1][1], rows[1][2]
+    row = rows[1]
+    if not (
+        isinstance(row, list)
+        and len(row) >= 3
+        and isinstance(row[1], str)
+        and _CDX_TIMESTAMP_RE.fullmatch(row[1])  # 14 digits; the column is String(14)
+        and isinstance(row[2], str)
+        and row[2]
+    ):
+        raise ArchiveUnavailable(f"archive.org returned a malformed CDX row for {url}")
+    timestamp, original = row[1], row[2]
     return ArchiveSnapshot(
         archive_timestamp=timestamp,
         fetch_url=f"https://web.archive.org/web/{timestamp}id_/{original}",

@@ -303,8 +303,11 @@ def execute_run(
             citation = Citation(
                 raw_response_id=raw_response_id,
                 source_url=c.source_url,
-                source_title=c.source_title,
-                source_domain=c.source_domain,
+                # Cut to the column widths (String(300) / String(200)): a provider's long page title
+                # would otherwise raise a DataError at the commit below and lose a paid run
+                # (docs/TASKS_CAPTURE_ROBUSTNESS.md T3).
+                source_title=c.source_title[:300] if c.source_title else c.source_title,
+                source_domain=c.source_domain[:200] if c.source_domain else c.source_domain,
                 citation_position=c.citation_position,
                 cited_answer_span=c.cited_answer_span,
                 answer_span_start=c.answer_span_start,

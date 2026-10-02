@@ -5,7 +5,7 @@
 ## Task ID prefix: CR
 ## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-worker-throughput` a `feature/signalmap-scheduler-ops`
 
-## Status: ⏳ navrženo 2026-10-02, nezačato
+## Status: ✅ Implementováno 2026-10-02 (T1–T4); čeká na merge do `master`, nasazení v `SO-T7` (v1.4.0)
 
 Navrženo 2026-10-02 jako **první větev vydání 2** (`docs/ROADMAP.md` #28)
 z rozboru chybových `verification_jobs` po prvním nasazení v1.3.0 a backfillu
@@ -100,10 +100,10 @@ run).
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Poškozené PDF se zapíše jako `pdf_no_text`, nesrazí job | ⏳ |
-| T2 | Nevalidní odpověď archive.org je `ArchiveUnavailable` | ⏳ |
-| T3 | Audit dalších cest, kudy jeden vadný vstup shodí job | ⏳ |
-| T4 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | Poškozené PDF se zapíše jako `pdf_no_text`, nesrazí job | ✅ |
+| T2 | Nevalidní odpověď archive.org je `ArchiveUnavailable` | ✅ |
+| T3 | Audit dalších cest, kudy jeden vadný vstup shodí job | ✅ |
+| T4 | Dokumentace + CHANGELOG | ✅ |
 
 **Pořadí:** T1 a T2 jsou na sobě nezávislé, T3 po nich (audit staví na tom, co
 T1/T2 odhalí), T4 poslední. Nasazení je v `SO-T7`.
@@ -130,6 +130,14 @@ T1/T2 odhalí), T4 poslední. Nasazení je v `SO-T7`.
 **Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
 starém kódu.
 
+**Výsledek reprodukce (2026-10-02):** hypotéza se potvrdila. `extract_pdf` nad
+useknutým `sample.pdf` vyhodil `pypdf.errors.PdfStreamError: Stream has ended
+unexpectedly` (usekáno na 460 B, o posledních 60 B i na 40 B); prázdné bajty
+`pypdf.errors.EmptyFileError: Cannot read an empty file`. Výjimka vznikne už v
+`PdfReader(...)`. Implementováno: `extract_pdf` chytá chyby `pypdf` na hranici
+parseru a vrací `None` (commit `eff0794`). Archivní větev (`fetch_snapshot_content`)
+`None` zpracovává už dnes jako „snapshot bez použitelného textu".
+
 **Expected commit:** `fix(runs): record an unreadable PDF as pdf_no_text instead of failing the job`
 
 ---
@@ -152,6 +160,12 @@ starém kódu.
 
 **Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
 starém kódu; stávající testy výpadku archive.org beze změny.
+
+**Výsledek (2026-10-02):** `find_closest_snapshot` převádí nedekódovatelné tělo,
+JSON jiného tvaru než seznam a řádek bez dvou neprázdných řetězců (URL a
+timestamp) na `ArchiveUnavailable`; `[]` a seznam jen s hlavičkou zůstávají
+„žádný snapshot" (commit `67e4e09`). `fetch_snapshot_content` žádnou křehkou
+cestu nemá (tělo snapshotu není JSON). Dodatek z T3: timestamp musí mít 14 číslic.
 
 **Expected commit:** `fix(runs): treat a malformed archive.org CDX response as unavailable`
 
@@ -185,6 +199,9 @@ má test a opravu; testy + celá sada `pytest` projdou.
 **Expected commit:** `fix(runs): harden source capture against malformed headers and inputs`
 (tvar commitu se upřesní podle nálezů; při žádném nálezu jen docs v T4)
 
+**Provedeno:** `c040940` (capture, A–E a G) a `c73ac89` (ořez titulku a domény, F).
+Výsledek auditu viz „Výsledek auditu T3" níže.
+
 ---
 
 ## T4 — Dokumentace + CHANGELOG
@@ -204,6 +221,44 @@ má test a opravu; testy + celá sada `pytest` projdou.
 **Done when:** diff ukázaný uživateli a odsouhlasený.
 
 **Expected commit:** `docs(docs): document capture robustness fixes`
+
+---
+
+## Výsledek auditu T3 (2026-10-02)
+
+Každé místo níže bylo reprodukováno kódem proti reálné DB (jednorázový kontejner), ne jen
+posouzeno čtením.
+
+**Potvrzeno a opraveno** (každé s testem, který na starém kódu selhal):
+
+| Místo | Vadný vstup → chyba | Oprava |
+|---|---|---|
+| `capture_url` / `_is_redirect_gateway`, `_robots_allowed`, `_redirect_target`, `_fetch` | URL od providera (`https://[abc/x`, `http://x.com:abc/`, prázdná), vadná `Location`, nečíselná `Content-Length` → `ValueError` / `httpx.InvalidURL` | zachycení jen kolem `_resolve_and_fetch`, zápis `http_other` (ne `timeout`: trvalá vada zdroje) |
+| `_store` → `content_type` `String(100)` | hlavička > 100 znaků → `DataError` | ořez na 100 |
+| `_throttle_domain` → `throttle_state.key` `String(255)` | „host" > 255 znaků → `DataError` | ořez klíče na 255 |
+| `_decode_text` | `charset=undefined` → `UnicodeError` (není `UnicodeDecodeError`) | zachytává `ValueError` |
+| `sanitize_extracted_text` | osamocený surrogát z `pypdf` → `UnicodeEncodeError` při sha256 / insertu | nahrazení U+FFFD, 1:1 (offsety se nemění) |
+| `execute_run` → `Citation.source_title` `String(300)` / `source_domain` `String(200)` | delší hodnota od providera → `DataError` při commitu úspěšného runu (zaplacený run ztracen, POST 500) | ořez na šířku sloupce |
+| `find_closest_snapshot` → `archive_timestamp` `String(14)` | timestamp z CDX jiného tvaru než 14 číslic → `DataError` v `_store_archive_document` | vyžaduje `\d{14}`, jinak `ArchiveUnavailable` (dodatek k T2) |
+
+**Prověřeno, nehrozí / neřeší se tady:**
+
+- **Šifrované PDF** — `pypdf` vyhodí `FileNotDecryptedError`; chytá ho ošetření z T1 (`extract_pdf` → `None`
+  → `pdf_no_text`). Pokryto regresním testem, bez další změny.
+- **Hluboce zanořené HTML** — nevyhazuje výjimku, ale `extract_html` je kvadratické v hloubce
+  zanoření (`_current_collapsed`, `handle_data` procházejí zásobník): 5 000 vnořených `<div>` ≈ 0,2 s,
+  20 000 ≈ 2,7 s, 50 000 ≈ 16,7 s. Je to třída „příliš dlouhá práce" (jako „gave up after 3 attempts"),
+  ne vadný vstup; oprava mění sémantiku extrakce. **Neopraveno** — samostatná položka.
+- **`robots.txt` parser** (`urllib.robotparser`) je shovívavý; vadnou URL zachytí oprava výše.
+- **`derive_claim`** (`app/services/claims.py`) čte `raw_payload` přes `.get(...) or` a při nesouladu vrací
+  `None` s logem, nevyhazuje.
+- **`CitationVerification.reason` / `claim_method`** — `reason` hlídá CHECK (`UNVERIFIABLE_REASONS`),
+  `_store` normalizuje neznámou hodnotu na `http_other`; `claim_method` jsou pevné hodnoty.
+- **`fetch_snapshot_content`** — tělo snapshotu není JSON; `extract_pdf` je odolný (T1), `extract_html` je
+  shovívavý.
+
+**Nezkoumáno, mimo rozsah (zaznamenat jako samostatnou položku):** řetězec s NUL (`\x00`) v poli od
+providera (title, passage, URL) shodí uložení runu stejným mechanismem jako řádek `source_title` výše.
 
 ---
 

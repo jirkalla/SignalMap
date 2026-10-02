@@ -57,6 +57,10 @@ MAX_BYTES = 20 * 1024 * 1024
 # aggregate rate by however many of them collided (code-review finding, 2026-09-30).
 MIN_DOMAIN_INTERVAL_SECONDS = 1.0
 
+# Column widths of `throttle_state.key` and `source_documents.content_type`.
+_THROTTLE_KEY_MAX_CHARS = 255
+_CONTENT_TYPE_MAX_CHARS = 100
+
 # Spacing for the one header-only request a known redirect gateway (`_REDIRECT_GATEWAYS`) gets —
 # much shorter than a normal domain's, because every Gemini citation passes through the SAME gateway
 # host and a full second each would serialize a run's 25-40 citations (and all four workers) behind
@@ -122,7 +126,9 @@ def _throttle_domain(
     """
     if interval_seconds is None:
         interval_seconds = MIN_DOMAIN_INTERVAL_SECONDS
-    throttle(db, domain, interval_seconds=interval_seconds, sleep=sleep)
+    # `throttle_state.key` is String(255); a real host name never exceeds it, but a garbage URL's
+    # "host" can (docs/TASKS_CAPTURE_ROBUSTNESS.md T3).
+    throttle(db, domain[:_THROTTLE_KEY_MAX_CHARS], interval_seconds=interval_seconds, sleep=sleep)
 
 
 def _robots_allowed(client: httpx.Client, url: str) -> bool:
@@ -169,7 +175,7 @@ def _decode_text(body: bytes, content_type: str) -> str:
     if charset:
         try:
             return body.decode(charset)
-        except (LookupError, UnicodeDecodeError):
+        except (LookupError, ValueError):  # unknown codec, undecodable bytes, or `charset=undefined`
             pass
     return body.decode("utf-8", errors="replace")
 
@@ -401,6 +407,10 @@ def _store(
         )
         error_reason = "http_other"
 
+    if content_type is not None:
+        # An overlong header would raise a DataError at the insert (String(100)) and fail the job.
+        content_type = content_type[:_CONTENT_TYPE_MAX_CHARS]
+
     text_sha256 = None
     if text is not None:
         # Safety net (docs/TASKS_CITATION_HARDENING.md T4): extraction already strips NUL, but a
@@ -486,6 +496,13 @@ def capture_url(
         # could not be reached this time.
         logger.info("capture_url: connection error for %s: %s", url, exc)
         return _failed("timeout")
+    except (ValueError, httpx.InvalidURL) as exc:
+        # The boundary of parsing a URL we do not control (an LLM-written citation, a `Location`
+        # header) and a `Content-Length` header: urlsplit/urljoin raise ValueError, httpx raises
+        # InvalidURL. A permanent property of that source, so not "timeout"
+        # (docs/TASKS_CAPTURE_ROBUSTNESS.md T3).
+        logger.info("capture_url: unusable URL or header for %s: %s", url, exc)
+        return _failed("http_other")
 
     content_type = fetched.headers.get("content-type", "")
     is_pdf = "pdf" in content_type.lower() or fetched.final_url.lower().split("?")[0].endswith(".pdf")

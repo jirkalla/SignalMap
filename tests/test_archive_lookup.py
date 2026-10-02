@@ -10,6 +10,7 @@ of its own further down.
 
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -112,6 +113,34 @@ def test_find_closest_snapshot_raises_archive_unavailable_on_rate_limit_or_serve
         find_closest_snapshot(db_session, _client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
 
 
+_MALFORMED_CDX_RESPONSES = [
+    pytest.param(httpx.Response(200, content=b"<html><body>Temporarily Offline</body></html>"), id="html-with-200"),
+    pytest.param(httpx.Response(200, content=b""), id="empty-body"),
+    pytest.param(httpx.Response(200, json={"error": "rate limited"}), id="json-object"),
+    pytest.param(httpx.Response(200, content=b"null"), id="json-null"),
+    pytest.param(httpx.Response(200, json="oops"), id="json-string"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["urlkey", "20260303091500"]]), id="row-too-short"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, "not-a-row"]), id="row-not-a-list"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "", "https://example.com/x"]]), id="empty-timestamp"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "20260303091500", None]]), id="original-not-a-string"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "202603030915001234", "https://example.com/x"]]), id="timestamp-too-long"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "yesterday", "https://example.com/x"]]), id="timestamp-not-digits"),
+]
+
+
+@pytest.mark.parametrize("response", _MALFORMED_CDX_RESPONSES)
+def test_find_closest_snapshot_treats_a_malformed_cdx_response_as_unavailable(response, db_session: Session):
+    """A 200 with an error page / unexpected JSON is an archive.org outage, never "no snapshot"
+    (docs/TASKS_CAPTURE_ROBUSTNESS.md T2, design decision 3) — otherwise an unverified outage would
+    be recorded as a confirmed negative."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    with pytest.raises(ArchiveUnavailable):
+        find_closest_snapshot(db_session, _client(handler), "https://example.com/x", target_date=TARGET_DATE, sleep=_no_sleep)
+
+
 def test_find_closest_snapshot_raises_archive_unavailable_on_timeout(db_session: Session):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("timed out", request=request)
@@ -157,6 +186,17 @@ def test_fetch_snapshot_content_returns_none_when_extracted_text_is_empty(db_ses
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"<html><body><script>var x=1;</script></body></html>", headers={"content-type": "text/html"})
+
+    assert fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep) is None
+
+
+def test_fetch_snapshot_content_returns_none_for_a_truncated_pdf(db_session: Session):
+    """A broken archived PDF is "snapshot has nothing usable" (None), not an archive.org outage."""
+    snapshot = ArchiveSnapshot(archive_timestamp="20260303091500", fetch_url="https://web.archive.org/web/x/id_/y.pdf", view_url="https://web.archive.org/web/x/y.pdf")
+    pdf = (Path(__file__).parent / "fixtures" / "sources" / "sample.pdf").read_bytes()[:460]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
 
     assert fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep) is None
 
@@ -514,6 +554,42 @@ def test_archive_unavailable_after_a_live_quote_not_found(db_session: Session, s
     else:
         assert verifications == []
         assert outcome.archive_deferred == 1
+
+
+@pytest.mark.parametrize("final_attempt", [False, True])
+def test_malformed_cdx_response_for_one_citation_is_handled_like_an_outage(
+    db_session: Session, seed, sample_prompt: Prompt, final_attempt: bool
+):
+    """docs/TASKS_CAPTURE_ROBUSTNESS.md T2: an HTML error page (200) from the CDX endpoint used to
+    raise a bare ValueError that escaped the per-citation isolation and failed the whole job."""
+    raw, citations, documents = _three_page_gone_citations(db_session, seed, sample_prompt)
+    broken_url = citations[1].source_url
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/cdx/search/cdx" in str(request.url):
+            if request.url.params["url"] == broken_url:
+                return httpx.Response(200, content=b"<html>Temporarily Offline</html>")
+            return httpx.Response(200, json=[_CDX_HEADER, _CDX_ROW])
+        return httpx.Response(
+            200, content=f"<html><body><p>{_QUOTE}</p></body></html>".encode("utf-8"), headers={"content-type": "text/html"}
+        )
+
+    outcome = verify_citations_by_quote(
+        db_session, raw, now=NOW, client=_client(handler), sleep=_no_sleep, final_attempt=final_attempt
+    )
+
+    verdicts = _verdicts_by_url(db_session, citations)
+    assert [v.verdict for v in verdicts[citations[0].source_url]] == ["archive_only"]
+    assert [v.verdict for v in verdicts[citations[2].source_url]] == ["archive_only"]  # AFTER the failing one
+    if final_attempt:
+        [verification] = verdicts[broken_url]
+        assert (verification.verdict, verification.reason) == ("unverifiable", "archive_unavailable")
+        assert verification.source_document_id == documents[1].id
+        assert outcome.archive_deferred == 0
+    else:
+        assert verdicts[broken_url] == []  # left for the job's retry
+        assert outcome.archive_deferred == 1
+    assert outcome.complete is True
 
 
 def test_one_archive_outage_defers_the_job_and_each_retry_resumes_only_the_unlucky_citation(

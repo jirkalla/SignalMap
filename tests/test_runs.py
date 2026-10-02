@@ -1462,3 +1462,35 @@ def test_a_job_waiting_out_a_retry_backoff_is_polled_less_often(
 
     assert 'hx-trigger="every 30s"' in page
     assert 'hx-trigger="every 4s"' not in page
+
+
+def test_successful_run_truncates_overlong_citation_title_and_domain(
+    authed_client: TestClient, db_session: Session, seed, sample_prompt: Prompt
+):
+    """docs/TASKS_CAPTURE_ROBUSTNESS.md T3: `source_title` is String(300) and `source_domain` String(200);
+    a provider's long page title used to raise a DataError at the success commit and lose a paid run."""
+    FakeAdapter.payload_to_return = RawResponsePayload(
+        raw_payload={"answer": "Acme."},
+        rendered_text="Acme.",
+        has_citations=True,
+        citations=[
+            AdapterCitation(
+                source_url="https://example.com/a", source_title="T" * 400, source_domain="d" * 250, citation_position=0
+            )
+        ],
+        token_usage={"input_tokens": 1, "output_tokens": 1},
+    )
+
+    response = authed_client.post(
+        f"/prompts/{sample_prompt.id}/runs",
+        data={"model_id": seed["model"].id, "market_id": seed["market"].id, "persona_id": seed["persona"].id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    run_id = int(response.headers["location"].rsplit("/", 1)[-1])
+    assert db_session.get(Run, run_id).status == "success"
+    raw_response = db_session.scalar(select(RawResponse).where(RawResponse.run_id == run_id))
+    citation = db_session.scalar(select(Citation).where(Citation.raw_response_id == raw_response.id))
+    assert len(citation.source_title) == 300
+    assert len(citation.source_domain) == 200

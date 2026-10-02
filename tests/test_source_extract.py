@@ -127,6 +127,36 @@ def test_extract_pdf_returns_none_when_no_text_layer():
     assert extract_pdf(_pdf("blank.pdf")) is None
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(_pdf("sample.pdf")[:460], id="truncated-half"),
+        pytest.param(_pdf("sample.pdf")[:-60], id="truncated-tail"),
+        pytest.param(b"%PDF-1.4\n" + b"not a pdf structure " * 40, id="garbage-body"),
+        pytest.param(b"", id="empty"),
+    ],
+)
+def test_extract_pdf_returns_none_for_a_corrupted_or_truncated_pdf(data: bytes):
+    """pypdf raises PdfStreamError ("Stream has ended unexpectedly") / EmptyFileError on these —
+    seen in production (docs/TASKS_CAPTURE_ROBUSTNESS.md T1); extract_pdf must answer None
+    (= `pdf_no_text`), never let the parser's exception reach the verification job."""
+    assert extract_pdf(data) is None
+
+
+def test_extract_pdf_returns_none_when_a_page_fails_to_extract(monkeypatch: pytest.MonkeyPatch):
+    class _Page:
+        def extract_text(self):
+            raise ValueError("bad content stream")
+
+    class _Reader:
+        def __init__(self, _stream):
+            self.pages = [_Page()]
+
+    monkeypatch.setattr(source_extract.pypdf, "PdfReader", _Reader)
+
+    assert extract_pdf(b"%PDF-stub") is None
+
+
 # --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
 # PostgreSQL `text` cannot hold \x00; one such character in a source used to fail the whole insert.
 
@@ -199,3 +229,26 @@ def test_extract_pdf_joins_a_hyphenated_word_even_when_a_nul_follows_the_line_br
 
     assert result is not None
     assert result.text == "Neue Technologien im Leichtbau"
+
+
+# --- lone surrogates and encrypted PDFs (docs/TASKS_CAPTURE_ROBUSTNESS.md T3) ---------------------
+
+
+def test_sanitize_replaces_a_lone_surrogate_one_for_one():
+    """1:1 so every offset computed from the text stays valid."""
+    assert sanitize_extracted_text("a\ud83db") == "a�b"
+    assert sanitize_extracted_text("ok \U0001f600") == "ok \U0001f600"  # a real pair (one code point) is kept
+
+
+def test_extract_pdf_returns_none_for_an_encrypted_pdf():
+    import io
+
+    import pypdf
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(200, 200)
+    writer.encrypt("secret")
+    buffer = io.BytesIO()
+    writer.write(buffer)
+
+    assert extract_pdf(buffer.getvalue()) is None

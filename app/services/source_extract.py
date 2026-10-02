@@ -20,12 +20,15 @@ T9's "open at this location" link can rely on a format already exercised against
 """
 
 import io
+import logging
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
 
 import pypdf
+
+logger = logging.getLogger(__name__)
 
 # Content never contributes to extracted text (design decision 10) — a provider cannot cite what
 # a browser never renders as text, and these tags' "content" isn't text in that sense anyway
@@ -44,21 +47,30 @@ _VOID_TAGS = {
 
 _DISPLAY_NONE_RE = re.compile(r"display\s*:\s*none", re.IGNORECASE)
 
+_REPLACEMENT_CHAR = chr(0xFFFD)
+# In a Python `str` every surrogate code point is "lone" (a valid pair is already one astral code point).
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
 
 def sanitize_extracted_text(text: str) -> str:
-    """Strip NUL (`\\x00`) characters — the one thing a PostgreSQL `text` column cannot hold.
+    """Strip NUL (`\\x00`) characters — the one thing a PostgreSQL `text` column cannot hold — and
+    replace lone surrogates, which cannot be UTF-8 encoded.
 
     A source PDF/HTML with a NUL in its text layer used to fail the `source_texts` insert with a
     DataError, taking the whole verification job down (docs/TASKS_CITATION_HARDENING.md T4, design
     decision 7; seen in the Knauf pilot). Only NUL is removed: every other control character is
     legal in PostgreSQL, and quote matching may well depend on them (tabs, newlines).
 
+    A lone surrogate (`pypdf` can emit one from a broken font map) would raise UnicodeEncodeError
+    at the `sha256` hash / insert, so it becomes U+FFFD — one for one, unlike the NUL removal, so
+    no offset shifts (docs/TASKS_CAPTURE_ROBUSTNESS.md T3).
+
     Idempotent and cheap, so it is applied at the source — on `extract_html`'s input and on each
     `extract_pdf` page, BEFORE any offset is computed, which keeps `locations`/`page_starts`
     consistent with the final text — and once more right before each `SourceText` insert as a
     safety net (`source_capture._store`, `citation_verification._store_archive_document`).
     """
-    return text.replace("\x00", "")
+    return _LONE_SURROGATE_RE.sub(_REPLACEMENT_CHAR, text.replace("\x00", ""))
 
 
 @dataclass(frozen=True)
@@ -367,18 +379,29 @@ class ExtractedPdf:
 
 
 def extract_pdf(data: bytes) -> ExtractedPdf | None:
-    """Extract text page-by-page from a PDF's bytes, or None when it has no text layer at all
+    """Extract text page-by-page from a PDF's bytes, or None when it has no usable text
 
     (`error_reason='pdf_no_text'` is the caller's job to record — a scanned PDF with no OCR is a
     known, permanent limitation, design decision 11, not something to raise an exception over).
+    A truncated or corrupted PDF is treated the same way: `pypdf` raises on it (`PdfStreamError`
+    "Stream has ended unexpectedly", `EmptyFileError`, and ValueError/KeyError/RecursionError on
+    mangled structure), and one bad source must not fail the whole verification job
+    (docs/TASKS_CAPTURE_ROBUSTNESS.md T1, design decisions 1-2).
     """
-    reader = pypdf.PdfReader(io.BytesIO(data))
-    # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`) and
-    # BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
-    # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
-    pages = [
-        _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or "")) for page in reader.pages
-    ]
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`)
+        # and BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
+        # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
+        pages = [
+            _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or ""))
+            for page in reader.pages
+        ]
+    except Exception as exc:  # noqa: BLE001 - boundary of a third-party parser over untrusted bytes
+        logger.warning(
+            "PDF could not be read (%s: %s); recording it as having no extractable text", type(exc).__name__, exc
+        )
+        return None
 
     parts: list[str] = []
     page_starts: list[int] = []

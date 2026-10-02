@@ -990,6 +990,13 @@ regrese; smyčka po hopech z T1 je ale přirozené místo pro kontrolu.
 
 ## 28. Odolnost zachytávání zdrojů proti vadným vstupům
 
+✅ **Implementováno 2026-10-02** na větvi `feature/signalmap-capture-robustness`
+(`docs/TASKS_CAPTURE_ROBUSTNESS.md`, T1–T3; bez migrace). Nasadí se v rámci
+vydání 2 (v1.4.0, `SO-T7`), ne samostatně. Audit (T3) odhalil navíc šest
+dalších cest, kudy jeden vadný vstup shodí job nebo ztratí zaplacený run
+(vadná URL a hlavičky, přetečení sloupců, osamocený surrogát); zanořené HTML
+a NUL v poli od providera zůstávají jako samostatné položky.
+
 **Zaznamenáno 2026-10-02** z prvního nasazení v1.3.0 (rozbor chybových
 `verification_jobs` po backfillu Knauf): dvě zbývající mezery, kde jeden vadný
 vstup shodí celý job a zbytek citací téže odpovědi se po třech pokusech
@@ -1163,4 +1170,4 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 25 | Export v2 | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_EXPORT_V2.md`; neimplementováno |
 | 26 | Vysvětlení metrik (ⓘ) | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_METRIC_DEFINITIONS.md`; neimplementováno |
 | 27 | Ochrana před přesměrováním na interní adresy (SSRF) | Zaznamenáno 2026-10-01 — mimo vydání, samostatná větev po v1.3.0 (vyžaduje migraci); neimplementováno |
-| 28 | Odolnost zachytávání zdrojů proti vadným vstupům | Naplánováno 2026-10-02 — vydání 2 (v1.4.0), první větev, `docs/TASKS_CAPTURE_ROBUSTNESS.md`; neimplementováno |
+| 28 | Odolnost zachytávání zdrojů proti vadným vstupům | Implementováno 2026-10-02 — vydání 2 (v1.4.0), první větev, `docs/TASKS_CAPTURE_ROBUSTNESS.md`; nasazení v `SO-T7` |
