@@ -123,6 +123,8 @@ _MALFORMED_CDX_RESPONSES = [
     pytest.param(httpx.Response(200, json=[_CDX_HEADER, "not-a-row"]), id="row-not-a-list"),
     pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "", "https://example.com/x"]]), id="empty-timestamp"),
     pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "20260303091500", None]]), id="original-not-a-string"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "202603030915001234", "https://example.com/x"]]), id="timestamp-too-long"),
+    pytest.param(httpx.Response(200, json=[_CDX_HEADER, ["k", "yesterday", "https://example.com/x"]]), id="timestamp-not-digits"),
 ]
 
 

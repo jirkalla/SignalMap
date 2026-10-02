@@ -47,21 +47,30 @@ _VOID_TAGS = {
 
 _DISPLAY_NONE_RE = re.compile(r"display\s*:\s*none", re.IGNORECASE)
 
+_REPLACEMENT_CHAR = chr(0xFFFD)
+# In a Python `str` every surrogate code point is "lone" (a valid pair is already one astral code point).
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
 
 def sanitize_extracted_text(text: str) -> str:
-    """Strip NUL (`\\x00`) characters — the one thing a PostgreSQL `text` column cannot hold.
+    """Strip NUL (`\\x00`) characters — the one thing a PostgreSQL `text` column cannot hold — and
+    replace lone surrogates, which cannot be UTF-8 encoded.
 
     A source PDF/HTML with a NUL in its text layer used to fail the `source_texts` insert with a
     DataError, taking the whole verification job down (docs/TASKS_CITATION_HARDENING.md T4, design
     decision 7; seen in the Knauf pilot). Only NUL is removed: every other control character is
     legal in PostgreSQL, and quote matching may well depend on them (tabs, newlines).
 
+    A lone surrogate (`pypdf` can emit one from a broken font map) would raise UnicodeEncodeError
+    at the `sha256` hash / insert, so it becomes U+FFFD — one for one, unlike the NUL removal, so
+    no offset shifts (docs/TASKS_CAPTURE_ROBUSTNESS.md T3).
+
     Idempotent and cheap, so it is applied at the source — on `extract_html`'s input and on each
     `extract_pdf` page, BEFORE any offset is computed, which keeps `locations`/`page_starts`
     consistent with the final text — and once more right before each `SourceText` insert as a
     safety net (`source_capture._store`, `citation_verification._store_archive_document`).
     """
-    return text.replace("\x00", "")
+    return _LONE_SURROGATE_RE.sub(_REPLACEMENT_CHAR, text.replace("\x00", ""))
 
 
 @dataclass(frozen=True)

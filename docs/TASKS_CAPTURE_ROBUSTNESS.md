@@ -207,6 +207,44 @@ má test a opravu; testy + celá sada `pytest` projdou.
 
 ---
 
+## Výsledek auditu T3 (2026-10-02)
+
+Každé místo níže bylo reprodukováno kódem proti reálné DB (jednorázový kontejner), ne jen
+posouzeno čtením.
+
+**Potvrzeno a opraveno** (každé s testem, který na starém kódu selhal):
+
+| Místo | Vadný vstup → chyba | Oprava |
+|---|---|---|
+| `capture_url` / `_is_redirect_gateway`, `_robots_allowed`, `_redirect_target`, `_fetch` | URL od providera (`https://[abc/x`, `http://x.com:abc/`, prázdná), vadná `Location`, nečíselná `Content-Length` → `ValueError` / `httpx.InvalidURL` | zachycení jen kolem `_resolve_and_fetch`, zápis `http_other` (ne `timeout`: trvalá vada zdroje) |
+| `_store` → `content_type` `String(100)` | hlavička > 100 znaků → `DataError` | ořez na 100 |
+| `_throttle_domain` → `throttle_state.key` `String(255)` | „host" > 255 znaků → `DataError` | ořez klíče na 255 |
+| `_decode_text` | `charset=undefined` → `UnicodeError` (není `UnicodeDecodeError`) | zachytává `ValueError` |
+| `sanitize_extracted_text` | osamocený surrogát z `pypdf` → `UnicodeEncodeError` při sha256 / insertu | nahrazení U+FFFD, 1:1 (offsety se nemění) |
+| `execute_run` → `Citation.source_title` `String(300)` / `source_domain` `String(200)` | delší hodnota od providera → `DataError` při commitu úspěšného runu (zaplacený run ztracen, POST 500) | ořez na šířku sloupce |
+| `find_closest_snapshot` → `archive_timestamp` `String(14)` | timestamp z CDX jiného tvaru než 14 číslic → `DataError` v `_store_archive_document` | vyžaduje `\d{14}`, jinak `ArchiveUnavailable` (dodatek k T2) |
+
+**Prověřeno, nehrozí / neřeší se tady:**
+
+- **Šifrované PDF** — `pypdf` vyhodí `FileNotDecryptedError`; chytá ho ošetření z T1 (`extract_pdf` → `None`
+  → `pdf_no_text`). Pokryto regresním testem, bez další změny.
+- **Hluboce zanořené HTML** — nevyhazuje výjimku, ale `extract_html` je kvadratické v hloubce
+  zanoření (`_current_collapsed`, `handle_data` procházejí zásobník): 5 000 vnořených `<div>` ≈ 0,2 s,
+  20 000 ≈ 2,7 s, 50 000 ≈ 16,7 s. Je to třída „příliš dlouhá práce" (jako „gave up after 3 attempts"),
+  ne vadný vstup; oprava mění sémantiku extrakce. **Neopraveno** — samostatná položka.
+- **`robots.txt` parser** (`urllib.robotparser`) je shovívavý; vadnou URL zachytí oprava výše.
+- **`derive_claim`** (`app/services/claims.py`) čte `raw_payload` přes `.get(...) or` a při nesouladu vrací
+  `None` s logem, nevyhazuje.
+- **`CitationVerification.reason` / `claim_method`** — `reason` hlídá CHECK (`UNVERIFIABLE_REASONS`),
+  `_store` normalizuje neznámou hodnotu na `http_other`; `claim_method` jsou pevné hodnoty.
+- **`fetch_snapshot_content`** — tělo snapshotu není JSON; `extract_pdf` je odolný (T1), `extract_html` je
+  shovívavý.
+
+**Nezkoumáno, mimo rozsah (zaznamenat jako samostatnou položku):** řetězec s NUL (`\x00`) v poli od
+providera (title, passage, URL) shodí uložení runu stejným mechanismem jako řádek `source_title` výše.
+
+---
+
 ## Co tahle větev vědomě nedělá
 
 - **Nový důvod `pdf_unreadable`** — vyžaduje migraci, překlady a test

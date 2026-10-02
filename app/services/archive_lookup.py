@@ -24,6 +24,7 @@ throttle — there is only ever one target domain here (archive.org itself), nev
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,6 +52,8 @@ MIN_REQUEST_INTERVAL_SECONDS = 3.0  # design decision 19
 # 2026-09-30) — see MIN_DOMAIN_INTERVAL_SECONDS's comment in source_capture.py for the same gap
 # there.
 _THROTTLE_KEY = "archive.org"
+
+_CDX_TIMESTAMP_RE = re.compile(r"\d{14}")
 
 
 class ArchiveUnavailable(Exception):
@@ -141,7 +144,7 @@ def find_closest_snapshot(
         isinstance(row, list)
         and len(row) >= 3
         and isinstance(row[1], str)
-        and row[1]
+        and _CDX_TIMESTAMP_RE.fullmatch(row[1])  # 14 digits; the column is String(14)
         and isinstance(row[2], str)
         and row[2]
     ):

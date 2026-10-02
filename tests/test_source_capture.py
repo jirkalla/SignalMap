@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.verification import SourceDocument, SourceText
-from app.services import source_capture
+from app.services import source_capture, source_extract
 from app.services.source_capture import capture_url
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "sources"
@@ -534,3 +534,99 @@ def test_build_capture_client_settings():
     assert client.follow_redirects is False
     assert client.headers["user-agent"] == source_capture.USER_AGENT
     assert client.timeout.read == source_capture.REQUEST_TIMEOUT_SECONDS
+
+
+# --- malformed headers and inputs (docs/TASKS_CAPTURE_ROBUSTNESS.md T3) ------------------------
+
+
+def _ok_handler(*, body: bytes = b"<html><body><p>Hallo Welt</p></body></html>", headers: dict | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(200, content=body, headers={"content-type": "text/html", **(headers or {})})
+
+    return handler
+
+
+@pytest.mark.parametrize("url", ["https://[abc/x", "http://example.com:abc/x", ""], ids=["bad-ipv6", "bad-port", "empty"])
+def test_capture_url_unparsable_url_is_recorded_as_http_other_not_raised(db_session: Session, url: str):
+    """LLM-generated citation URLs can be garbage; urlsplit/httpx raise ValueError/InvalidURL on them,
+    which used to escape capture_url and fail the whole verification job."""
+    doc = capture_url(db_session, url, now=NOW, client=_client(_ok_handler()), sleep=_no_sleep)
+
+    assert doc.error_reason == "http_other"
+    assert doc.text_sha256 is None
+
+
+def test_capture_url_unparsable_redirect_location_is_http_other(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(302, headers={"location": "http://[bad/x"})
+
+    doc = capture_url(db_session, "https://example.com/a", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "http_other"
+
+
+def test_capture_url_non_numeric_content_length_is_http_other(db_session: Session):
+    doc = capture_url(
+        db_session, "https://example.com/a", now=NOW,
+        client=_client(_ok_handler(body=b"x", headers={"content-length": "abc"})), sleep=_no_sleep,
+    )
+
+    assert doc.error_reason == "http_other"
+
+
+def test_capture_url_truncates_an_overlong_content_type_to_its_column(db_session: Session):
+    doc = capture_url(
+        db_session, "https://example.com/a", now=NOW,
+        client=_client(_ok_handler(headers={"content-type": "text/html; x=" + "a" * 200})), sleep=_no_sleep,
+    )
+
+    assert doc.error_reason is None
+    assert len(doc.content_type) == 100
+
+
+def test_capture_url_overlong_host_does_not_overflow_the_throttle_key(db_session: Session):
+    """`throttle_state.key` is String(255); the host is the throttle key."""
+    doc = capture_url(
+        db_session, "http://" + "a" * 300 + ".com/x", now=NOW, client=_client(_ok_handler()), sleep=_no_sleep
+    )
+
+    assert doc.requested_url.startswith("http://aaaa")
+
+
+def test_capture_url_unknown_charset_falls_back_to_utf8(db_session: Session):
+    """`charset=undefined` makes bytes.decode raise a plain UnicodeError (not UnicodeDecodeError)."""
+    doc = capture_url(
+        db_session, "https://example.com/a", now=NOW,
+        client=_client(_ok_handler(headers={"content-type": "text/html; charset=undefined"})), sleep=_no_sleep,
+    )
+
+    assert doc.error_reason is None
+    assert "Hallo Welt" in db_session.get(SourceText, doc.text_sha256).text
+
+
+def test_capture_url_pdf_text_with_a_lone_surrogate_is_stored(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """pypdf can emit lone surrogates; they cannot be UTF-8 encoded (sha256) or stored."""
+
+    class _Page:
+        def extract_text(self):
+            return "Hallo \ud83d Welt"
+
+    class _Reader:
+        def __init__(self, _stream):
+            self.pages = [_Page()]
+
+    monkeypatch.setattr(source_extract.pypdf, "PdfReader", _Reader)
+
+    doc = capture_url(
+        db_session, "https://example.com/s.pdf", now=NOW,
+        client=_client(_ok_handler(body=b"%PDF-stub", headers={"content-type": "application/pdf"})), sleep=_no_sleep,
+    )
+
+    assert doc.error_reason is None
+    assert db_session.get(SourceText, doc.text_sha256).text == "Hallo � Welt"
