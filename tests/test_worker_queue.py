@@ -7,6 +7,7 @@ on the row" shape as tests/test_cost.py and tests/test_scheduling_recurrence.py.
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -30,7 +31,8 @@ from app.services.queue import (
     release_expired_leases,
     retry_all_errors,
 )
-from app.worker import _is_retryable_error, deregister_heartbeat, process_claimed_item
+import app.worker as worker_module
+from app.worker import _is_retryable_error, deregister_heartbeat, process_claimed_item, run_iteration
 from tests.conftest import TestSessionLocal
 from tests.fake_adapter import FakeAdapter
 
@@ -178,6 +180,104 @@ def test_claim_next_ignores_a_future_item(db_session, seed, sample_prompt, promp
     _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], scheduled_for=NOW + timedelta(hours=1))
 
     assert claim_next(db_session, worker_name="w1", now=NOW, lease_minutes=15) is None
+
+
+# ---------------------------------------------------------------------------
+# run_iteration / run_forever sleep decision (docs/TASKS_WORKER_THROUGHPUT.md T1)
+# ---------------------------------------------------------------------------
+
+
+def _loop_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        worker_name="w1",
+        scheduler_dry_run=True,
+        scheduler_enabled=False,
+        scheduler_grace_period_minutes=360,
+        scheduler_max_queue_depth_per_client=1000,
+        scheduler_lease_minutes=15,
+        scheduler_default_daily_run_limit=1000,
+    )
+
+
+def test_run_iteration_reports_processed_when_an_item_was_claimed(db_session, seed, sample_prompt, prompt_client):
+    _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"])
+
+    processed, last_ticker = run_iteration(db_session, None, settings=_loop_settings(), now=NOW, last_ticker_run=NOW)
+
+    assert processed is True
+    assert last_ticker == NOW
+
+
+def test_run_iteration_reports_not_processed_on_an_empty_queue(db_session):
+    processed, _ = run_iteration(db_session, None, settings=_loop_settings(), now=NOW, last_ticker_run=NOW)
+
+    assert processed is False
+
+
+def test_run_iteration_does_not_claim_a_deferred_item_with_a_future_scheduled_for(db_session, seed, sample_prompt, prompt_client):
+    """A queue full of postponed items must read as idle, or the loop would spin without sleeping."""
+    _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="deferred", scheduled_for=NOW + timedelta(minutes=5),
+    )
+
+    processed, _ = run_iteration(db_session, None, settings=_loop_settings(), now=NOW, last_ticker_run=NOW)
+
+    assert processed is False
+
+
+class _NullCaptureClient:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _drive_run_forever(monkeypatch, results: list[bool]) -> tuple[int, list[float]]:
+    """Run `run_forever` with a scripted `run_iteration`, SIGTERM during the last scripted pass.
+
+    Returns `(iterations run, sleep() arguments)`.
+    """
+    handlers = {}
+    monkeypatch.setattr(worker_module.signal, "signal", lambda signum, handler: handlers.setdefault(signum, handler))
+    monkeypatch.setattr(worker_module, "configure_logging", lambda: None)
+    monkeypatch.setattr(worker_module, "get_settings", _loop_settings)
+    monkeypatch.setattr(worker_module, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(worker_module, "reconcile_interrupted_runs", lambda db, *, now: 0)
+    monkeypatch.setattr(worker_module, "deregister_heartbeat", lambda db, *, worker_name: None)
+    monkeypatch.setattr(worker_module, "build_capture_client", lambda: _NullCaptureClient())
+
+    scripted = iter(results)
+    calls = []
+
+    def _fake_iteration(db, client, *, settings, now, last_ticker_run):
+        calls.append(1)
+        processed = next(scripted)
+        if len(calls) == len(results):
+            handlers[worker_module.signal.SIGTERM](None, None)
+        return processed, last_ticker_run
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(worker_module, "run_iteration", _fake_iteration)
+    monkeypatch.setattr(worker_module.time, "sleep", sleeps.append)
+
+    worker_module.run_forever()
+    return len(calls), sleeps
+
+
+def test_run_forever_does_not_sleep_between_items_and_not_after_a_stop_request(monkeypatch):
+    iterations, sleeps = _drive_run_forever(monkeypatch, [True, True, False])
+
+    assert iterations == 3
+    assert sleeps == []  # two busy passes; the idle pass had SIGTERM pending
+
+
+def test_run_forever_sleeps_once_when_the_queue_goes_idle(monkeypatch):
+    iterations, sleeps = _drive_run_forever(monkeypatch, [True, True, False, True])
+
+    assert iterations == 4
+    assert sleeps == [worker_module._ITEM_POLL_INTERVAL_SECONDS]
 
 
 # ---------------------------------------------------------------------------

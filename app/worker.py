@@ -23,7 +23,9 @@ Loop, once per iteration:
   4b. Only when 4 claimed nothing: `claim_next_job` + `process_verification_job`
      (docs/TASKS_CITATION_VERIFICATION.md design decision 3) — citation-source capture never
      competes with a run for this iteration's one turn, it only gets a turn run_queue didn't want.
-  5. Sleep 5 seconds.
+  5. Sleep 5 seconds — only if run_queue had nothing due (docs/TASKS_WORKER_THROUGHPUT.md T1,
+     design decision 1). After an item was processed the next iteration starts immediately; the
+     ticker/reconcile/notification work in 2-3c stays on its own once-a-minute cadence.
 
 `process_claimed_item` and `process_verification_job` are the pieces worth unit testing directly
 (tests/test_worker_queue.py, tests/test_verification_queue.py) — everything else here is
@@ -68,6 +70,8 @@ logger = logging.getLogger(__name__)
 
 HEARTBEAT_FILE = Path("/tmp/worker-alive")
 _TICKER_INTERVAL = timedelta(minutes=1)
+# Idle poll interval: slept only when an iteration claimed no run_queue item (or only ran a
+# verification job), never between consecutive queue items.
 _ITEM_POLL_INTERVAL_SECONDS = 5
 
 # 1 / 5 / 25 minutes (docs/TASKS_SCHEDULER.md T3) — used for two different reasons an item goes
@@ -291,6 +295,53 @@ def deregister_heartbeat(db: Session, *, worker_name: str) -> None:
     db.commit()
 
 
+def run_iteration(
+    db: Session, capture_client, *, settings, now: datetime, last_ticker_run: datetime  # noqa: ANN001
+) -> tuple[bool, datetime]:
+    """One pass of the worker loop (module docstring steps 1-4b), without the idle sleep.
+
+    Returns `(processed, last_ticker_run)`: `processed` is True only when a `run_queue` item was
+    claimed (whatever its outcome — done, skipped, deferred, requeued), which tells the caller not
+    to sleep. A verification job does not count: those hit third-party sites and keep the idle
+    pause between them.
+    """
+    write_heartbeat(db, worker_name=settings.worker_name, dry_run=settings.scheduler_dry_run, now=now)
+
+    if now - last_ticker_run >= _TICKER_INTERVAL:
+        if settings.scheduler_enabled:
+            enqueue_due_schedules(
+                db,
+                now=now,
+                grace_period_minutes=settings.scheduler_grace_period_minutes,
+                max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
+            )
+        release_expired_leases(db, now=now)
+        release_expired_job_leases(db, now=now)
+        reconcile_interrupted_runs(db, now=now)
+        check_expiring_schedules(db, now=now)
+        check_budget_thresholds(db, now=now)
+        last_ticker_run = now
+
+    item = claim_next(db, worker_name=settings.worker_name, now=now, lease_minutes=settings.scheduler_lease_minutes)
+    if item is not None:
+        process_claimed_item(
+            db,
+            item,
+            now=now,
+            dry_run=settings.scheduler_dry_run,
+            grace_period_minutes=settings.scheduler_grace_period_minutes,
+            default_daily_run_limit=settings.scheduler_default_daily_run_limit,
+        )
+        return True, last_ticker_run
+
+    # Citation verification only ever gets a turn when run_queue had nothing due this iteration
+    # (docs/TASKS_CITATION_VERIFICATION.md design decision 3) — a run must never wait on it.
+    job = claim_next_job(db, worker_name=settings.worker_name, now=now, lease_minutes=DEFAULT_LEASE_MINUTES)
+    if job is not None:
+        process_verification_job(db, job, now=now, client=capture_client)
+    return False, last_ticker_run
+
+
 def run_forever() -> None:
     """The worker's main loop — see module docstring for the per-iteration sequence."""
     configure_logging()
@@ -325,44 +376,14 @@ def run_forever() -> None:
         while not stop_requested:
             now = datetime.now(timezone.utc)
             with SessionLocal() as db:
-                write_heartbeat(db, worker_name=settings.worker_name, dry_run=settings.scheduler_dry_run, now=now)
+                processed, last_ticker_run = run_iteration(
+                    db, capture_client, settings=settings, now=now, last_ticker_run=last_ticker_run
+                )
 
-                if now - last_ticker_run >= _TICKER_INTERVAL:
-                    if settings.scheduler_enabled:
-                        enqueue_due_schedules(
-                            db,
-                            now=now,
-                            grace_period_minutes=settings.scheduler_grace_period_minutes,
-                            max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
-                        )
-                    release_expired_leases(db, now=now)
-                    release_expired_job_leases(db, now=now)
-                    reconcile_interrupted_runs(db, now=now)
-                    check_expiring_schedules(db, now=now)
-                    check_budget_thresholds(db, now=now)
-                    last_ticker_run = now
-
-                item = claim_next(db, worker_name=settings.worker_name, now=now, lease_minutes=settings.scheduler_lease_minutes)
-                if item is not None:
-                    process_claimed_item(
-                        db,
-                        item,
-                        now=now,
-                        dry_run=settings.scheduler_dry_run,
-                        grace_period_minutes=settings.scheduler_grace_period_minutes,
-                        default_daily_run_limit=settings.scheduler_default_daily_run_limit,
-                    )
-                else:
-                    # Citation verification only ever gets a turn when run_queue had nothing due
-                    # this iteration (docs/TASKS_CITATION_VERIFICATION.md design decision 3) — a
-                    # run must never wait on it.
-                    job = claim_next_job(
-                        db, worker_name=settings.worker_name, now=now, lease_minutes=DEFAULT_LEASE_MINUTES
-                    )
-                    if job is not None:
-                        process_verification_job(db, job, now=now, client=capture_client)
-
-            if not stop_requested:
+            # Sleep only when the queue had nothing due: while work is waiting, the next item
+            # starts immediately. A deferred/retried item has a future `scheduled_for`, which
+            # claim_next never returns, so this cannot spin on an "all postponed" queue.
+            if not processed and not stop_requested:
                 time.sleep(_ITEM_POLL_INTERVAL_SECONDS)
 
     with SessionLocal() as db:
