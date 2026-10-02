@@ -83,6 +83,12 @@ services:
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
     init: true
+    # Replica count comes from .env (docs/TASKS_WORKER_THROUGHPUT.md T3, design decision 3), not
+    # `docker compose up --scale`: a --scale flag is stored nowhere, so the next plain
+    # `docker compose up` per the deploy runbook would silently drop back to one worker. Default
+    # 1 keeps the dev PC as it was; production sets WORKER_REPLICAS=4 in its own .env.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     depends_on:
       app:
         condition: service_healthy
@@ -113,7 +119,7 @@ services:
       # passes the host's own WORKER_NAME through only if it's actually set there, otherwise the
       # container gets no WORKER_NAME env var at all, and app/config.py's own default (the
       # container's own hostname) applies. A `${WORKER_NAME:-scheduler-1}`-style fallback would
-      # set the SAME literal value in every `docker compose up --scale worker=N` replica, breaking
+      # set the SAME literal value in every replica (WORKER_REPLICAS > 1), breaking
       # the one-heartbeat-row-per-worker identity this is meant to give for free.
       WORKER_NAME:
       # No GIT_SHA/BUILD_TIME here, unlike the API keys above: they're baked into the shared
@@ -124,9 +130,10 @@ services:
       # these args, so it silently re-bakes both as empty; the footer then just omits the SHA/
       # build-time until the next real deploy (found in code review, 2026-09-23 — cosmetic only,
       # app/config.py's empty defaults mean this never fails startup).
-    # No HTTP port to probe (design decision 19) — checks that app/worker.py's main loop is
-    # still touching its liveness file, written on every iteration (~every 5s). 30s = 6x that
-    # interval, so one slow iteration doesn't flap the container between healthy/unhealthy.
+    # No HTTP port to probe (design decision 19) — checks that app/worker.py is still touching
+    # its liveness file, written every ~10s by a background thread (independent of how long a
+    # provider call takes). 30s = 3x that interval, so one missed tick doesn't flap the container
+    # between healthy/unhealthy.
     healthcheck:
       test: [
         "CMD", "python", "-c",

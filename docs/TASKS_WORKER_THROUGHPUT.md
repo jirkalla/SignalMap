@@ -3,8 +3,11 @@
 ## v1.0 | Září 2026
 ## Branch: feature/signalmap-worker-throughput
 ## Task ID prefix: WT
+## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-capture-robustness` a `feature/signalmap-scheduler-ops`
 
-Status: navrženo v konverzaci 2026-09-26, z analýzy doby běhu rozvrhů
+## Status: ✅ Implementováno 2026-10-02 (T1–T4); čeká na merge do `master`, nasazení (T5) až po `feature/signalmap-scheduler-ops`
+
+Navrženo v konverzaci 2026-09-26, z analýzy doby běhu rozvrhů
 klienta Knauf nad produkčními daty (nahranými do dev DB přes
 `tools/local/refresh_dev_db.py`). Pět úkolů.
 
@@ -143,10 +146,10 @@ takže ~11 min je podlaha daná časy rozvrhů, ne kapacitou.
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | A — smyčka nespí, když zpracovala položku | ⏳ |
-| T2 | Heartbeat nezávislý na délce volání providera | ⏳ |
-| T3 | B — repliky workeru v compose (`WORKER_REPLICAS`) | ⏳ |
-| T4 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | A — smyčka nespí, když zpracovala položku | ✅ |
+| T2 | Heartbeat nezávislý na délce volání providera | ✅ |
+| T3 | B — repliky workeru v compose (`WORKER_REPLICAS`) | ✅ |
+| T4 | Dokumentace + CHANGELOG | ✅ |
 | T5 | Nasazení (`WORKER_REPLICAS=4`) a měření na produkci | ⏳ |
 
 ---
