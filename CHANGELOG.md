@@ -11,6 +11,21 @@ not a public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- A corrupted or truncated PDF no longer fails a verification job: the
+  citation is recorded as "PDF has no extractable text" and the other
+  citations of the response are still verified.
+- A malformed response from archive.org (an error page instead of data)
+  is treated like an outage and retried, instead of failing the job.
+- An unusable source address no longer fails verification: a citation whose
+  link cannot be parsed (or whose redirect or headers are malformed) is
+  recorded as "Blocked (other HTTP error)", and an over-long Content-Type
+  header, an unknown character set or a PDF with broken text no longer
+  abort the check.
+- A source page title longer than 300 characters (or a domain longer than
+  200) no longer makes the run fail to save. The value is cut to fit.
+
 ## [1.3.0] - 2026-10-01
 
 ### Added

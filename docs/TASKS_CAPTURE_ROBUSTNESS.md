@@ -130,6 +130,14 @@ T1/T2 odhalí), T4 poslední. Nasazení je v `SO-T7`.
 **Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
 starém kódu.
 
+**Výsledek reprodukce (2026-10-02):** hypotéza se potvrdila. `extract_pdf` nad
+useknutým `sample.pdf` vyhodil `pypdf.errors.PdfStreamError: Stream has ended
+unexpectedly` (usekáno na 460 B, o posledních 60 B i na 40 B); prázdné bajty
+`pypdf.errors.EmptyFileError: Cannot read an empty file`. Výjimka vznikne už v
+`PdfReader(...)`. Implementováno: `extract_pdf` chytá chyby `pypdf` na hranici
+parseru a vrací `None` (commit `eff0794`). Archivní větev (`fetch_snapshot_content`)
+`None` zpracovává už dnes jako „snapshot bez použitelného textu".
+
 **Expected commit:** `fix(runs): record an unreadable PDF as pdf_no_text instead of failing the job`
 
 ---
@@ -152,6 +160,12 @@ starém kódu.
 
 **Done when:** testy + celá sada `pytest` projdou; nové testy selhávají na
 starém kódu; stávající testy výpadku archive.org beze změny.
+
+**Výsledek (2026-10-02):** `find_closest_snapshot` převádí nedekódovatelné tělo,
+JSON jiného tvaru než seznam a řádek bez dvou neprázdných řetězců (URL a
+timestamp) na `ArchiveUnavailable`; `[]` a seznam jen s hlavičkou zůstávají
+„žádný snapshot" (commit `67e4e09`). `fetch_snapshot_content` žádnou křehkou
+cestu nemá (tělo snapshotu není JSON). Dodatek z T3: timestamp musí mít 14 číslic.
 
 **Expected commit:** `fix(runs): treat a malformed archive.org CDX response as unavailable`
 
@@ -184,6 +198,9 @@ má test a opravu; testy + celá sada `pytest` projdou.
 
 **Expected commit:** `fix(runs): harden source capture against malformed headers and inputs`
 (tvar commitu se upřesní podle nálezů; při žádném nálezu jen docs v T4)
+
+**Provedeno:** `c040940` (capture, A–E a G) a `c73ac89` (ořez titulku a domény, F).
+Výsledek auditu viz „Výsledek auditu T3" níže.
 
 ---
 
