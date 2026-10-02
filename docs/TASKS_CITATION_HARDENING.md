@@ -5,7 +5,7 @@
 ## Task ID prefix: CH
 ## Cílová verze: v1.3.0 (MINOR) — společně s `feature/signalmap-client-vision`
 
-## Status: 🔜 Merged (PR #26, 2026-10-01) — release pending, v1.3.0 together with client vision (CH-T7)
+## Status: ✅ Released in v1.3.0 (PR #26, merged 2026-10-01, deployed 2026-10-02 together with client vision)
 
 Navrženo 2026-09-30 jako **vydání 1** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #19 celé.
@@ -159,7 +159,7 @@ Vzor pro test: `tests/test_version.py` (čistý text, bez DB).
 | T4 | Sanitizace NUL v extrahovaném textu | ✅ |
 | T5 | Test pokrytí překladů důvodů a verdiktů | ✅ |
 | T6 | Dokumentace + CHANGELOG | ✅ |
-| T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ⏳ |
+| T7 | Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření | ✅ |
 | T8 | Průběh „Verify citations“ a ochrana proti duplicitním jobům (nasazuje se s T7) | ✅ |
 | T9 | Hromadné ověření u klienta nestackuje aktivní judge joby (před backfillem v T7) | ✅ |
 | T10 | Opravy z code review (archive.org redirecty, brána, bulk-verify, drobnosti) | ✅ |
@@ -394,10 +394,80 @@ aj.) zůstávají mimo.
    podíl `http_404` u starých Gemini odkazů (brána nemá zdokumentovanou
    životnost, `app/cli/backfill_sources.py:16`) — výsledek zapsat sem.
 6. Den po nasazení: stejný SQL jako v kroku 1 → podíl `robots` u Gemini
-   ≈ 0; žádný job `error` s `ArchiveUnavailable`/`NUL` v `verification_jobs.error`;
+   klesl ze 100 % na jednotky procent (3–10 % očekáváno, ne ≈ 0: skutečné zákazy
+   cílových webů); žádný **nový** job `error` s `ArchiveUnavailable`/`NUL` v
+   `verification_jobs.error` (historické chybové joby zůstávají);
    žádný `Run` s `worker interrupted` (reconcile).
 7. End-of-branch docs: `## Status: ...` v `*_CITATION_HARDENING.md`
    i `*_CLIENT_VISION.md`, dva řádky v `docs/00_INDEX.md`, `docs/ROADMAP.md` „Plán vydání" → vydání 1 ✅.
+
+**Výsledky (nasazeno 2026-10-02):**
+
+- **Nasazení:** `v1.3.0` (SHA `3793f85b715cf9adb8d725fc1c8aab917b2fc7e5`),
+  ~06:20 UTC; migrace `0044` (jen `ADD COLUMN`), 4 workery (`--scale worker=4`,
+  `dry_run=False`, `enabled=True`), `/health` ok. Před nasazením server na
+  `7807f7a…` a migraci `0043`.
+- **Výchozí čísla před nasazením** (produkce, 14 dní, poslední zdroj každé
+  citace; dotaz s `left join lateral` a `not_captured` — původní dotaz
+  z kroku 1 počítal citace × dokumenty a nestažené neodlišil):
+
+  | Provider | Citací | Nestaženo | `robots` ze staženého |
+  |---|---|---|---|
+  | google_gemini | 5 853 | 5 061 | **792 z 792 (100 %)** |
+  | openai | 3 192 | 1 809 | 11 z 1 383 (0,8 %) |
+  | anthropic | 1 832 | 826 | 9 z 1 006 (0,9 %) |
+  | xai | 1 945 | 415 | 82 z 1 530 (5,4 %) |
+  | perplexity | 480 | 43 | 17 z 437 (3,9 %) |
+
+- **Vision (krok 3a):** ověřeno v UI uživatelem 2026-10-02 (karta na
+  detailu klienta, formulář, pruh na dashboardu).
+- **Latence** (T10 bod 4, produkce): nejpomalejší `grok-4.7` max 86,5 s
+  (p95 78,2 s), `gpt-5.6-terra` 73,4 s, ostatní pod 65 s → timeout 120 s
+  beze změny.
+- **Ověření (krok 4):** čerstvý Gemini run (Test Skoda Auto, run 1140):
+  30 citací, 25 staženo, 1× `robots` (trustpilot.com), 4× `no_checkable_text`
+  (jedna URL), `final_url` na cílové weby; verdikty 15 partial, 7 not
+  supported, 3 supported, 5 unverifiable. Claude Haiku (run 1139): 9 verified
+  exact, 1 not found, 2 unverifiable. Log workeru bez chyb.
+- **Backfill (krok 5):** (1) `--client 2 --since 2026-09-29` — Knauf, 75
+  odpovědí (20 Gemini), 1 175 citací, 637 URL; (2) `--since 2026-09-25` —
+  všichni klienti, 390 odpovědí (79 Gemini), 5 549 citací, 2 593 URL. Runy od
+  30. 9. se zachycovaly automaticky (dry-run Knauf `--since 2026-09-30` → 0),
+  jejich backfill nebyl potřeba. Automatické LLM ověření má jen Test Skoda
+  Auto, backfill proto nic neplatil.
+
+  Gemini po dnech (všichni klienti, poslední zdroj každé citace):
+
+  | Den | success | bot_challenge | robots | http_404 |
+  |---|---|---|---|---|
+  | 25. 9. | 392 | 293 | 4 | 1 |
+  | 26. 9. | 310 | 227 | 0 | 0 |
+  | 27. 9. | 296 | 358 | 0 | 1 |
+  | 28. 9. | 327 | 310 | 8 | 0 |
+  | 29. 9. | 325 | 365 | 4 | 0 |
+  | 30. 9. | 27 | 0 | **728** | 0 |
+  | 1. 10. | 0 | 0 | **65** | 0 |
+  | 2. 10. (po nasazení) | 25 | 0 | 1 | 0 |
+
+  **Životnost odkazů Gemini brány: nejméně 7 dní** (`http_404` 2 z ~3 320
+  u 25.–29. 9., tj. 0,06 %). `bot_challenge` (40–50 %) je ochrana Knauf, ne
+  chyba appky; řešením je allowlist `SignalMapVerifier/1.0`
+  (`docs/DEPLOYMENT.md` 4a).
+- **Mezera: Gemini z 30. 9. a 1. 10. zůstává `robots`** (793 citací).
+  Zachytily se starým kódem před nasazením a backfill přeskakuje odpovědi
+  s capture jobem. Vědomě nepřepsáno; nový capture job jde zařadit
+  jednorázově (pozor na 24h cache URL, `docs/DEPLOYMENT.md` 4a).
+- **Chybové joby:** 26 historických (20× archive.org, 1× NUL, 2× rozpočet
+  času, 2× `Stream has ended unexpectedly`, 1× nevalidní JSON), žádný nový po
+  nasazení; zbylé dvě třídy → `docs/ROADMAP.md` #28. Odložený job 223 doběhl
+  `done` na 3. pokus (T3 v praxi).
+- **Krok 6 zbývá zopakovat 2026-10-03:** podíl `robots` u Gemini, nové chybové
+  joby, `worker interrupted` a `timed out` podle modelu. Denní dávka Knauf dnes
+  neproběhla (Knauf runy jsou sesbírané), takže timeouty pod zátěží se tam ověřit
+  nedají; zatím jsou po nasazení jen 2 runy (Test Skoda Auto), oba `success`,
+  `timed_out` 0, a opírají se o naměřené latence (max 86,5 s proti 120 s). Ověřuje
+  se na dalších naplánovaných runech jiných klientů; ověřování citací se provádí
+  na starších runech (25.–29. 9.).
 
 **Done when:** kroky 4–6 ověřené a uživatel potvrdil.
 

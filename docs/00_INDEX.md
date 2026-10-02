@@ -26,8 +26,6 @@ Nothing in progress right now.
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
-| TASKS_CITATION_HARDENING | CH | feature/signalmap-citation-hardening | #26 | 2026-10-01 | Not deployed yet; ships with client vision as v1.3.0 (CH-T7). Version bump, tag and deploy pending |
-| TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | #25 | 2026-09-30 | Not deployed on its own; ships with citation hardening as v1.3.0 (CH-T7) |
 | TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
 | TASKS_PEEC_COMPARISON | PC | feature/signalmap-peec-comparison | #23 | 2026-09-28 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
 | TASKS_DEV_DB_REFRESH | DR | feature/signalmap-dev-db-refresh | #22 | 2026-09-26 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
@@ -41,6 +39,8 @@ per-branch pattern.
 
 | Document | Prefix | Branch | PR | Merged | Released in |
 |---|---|---|---|---|---|
+| TASKS_CITATION_HARDENING | CH | feature/signalmap-citation-hardening | #26 | 2026-10-01 | v1.3.0 |
+| TASKS_CLIENT_VISION | VI | feature/signalmap-client-vision | #25 | 2026-09-30 | v1.3.0 |
 | TASKS_NEW_PROVIDERS | NP | feature/signalmap-new-providers | #20 | 2026-09-23 | v1.1.0 |
 | TASKS_VERSIONING | VER | feature/signalmap-versioning-footer | #19 | 2026-09-23 | v1.1.0 |
 | TASKS_SCHEDULER | SCH | feature/signalmap-scheduler | #18 | 2026-09-22 | v1.0.0 |

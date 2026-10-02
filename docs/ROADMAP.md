@@ -717,9 +717,9 @@ Knauf (`docs/TASKS_CITATION_VERIFICATION.md`, viz i `CHANGELOG.md [1.2.1]`)
 — pět nezávislých nálezů, žádný nebyl blokující pro nasazení, ale všechny
 reálně snižují míru úspěšně ověřených citací:
 
-✅ **Implementováno 2026-10-01** (všech pět bodů, `docs/TASKS_CITATION_HARDENING.md`
-T1–T5, T9; větev `feature/signalmap-citation-hardening`) — **nasazení
-čeká na T7** (vydání v1.3.0 společně s Vision u klienta).
+✅ **Implementováno 2026-10-01, nasazeno 2026-10-02 (v1.3.0, společně s Vision
+u klienta)** — všech pět bodů, `docs/TASKS_CITATION_HARDENING.md` T1–T5, T9;
+zbylé dvě mezery viz #28.
 
 - ✅ **Gemini citace se nedají ověřit vůbec, systémově** — appka kontroluje
   robots.txt na Googlově přesměrovací bráně
@@ -905,7 +905,7 @@ Volitelně sbalené v hlavičce `/dashboard`.
   Malé, ~5 souborů.
 - **Stav:** implementováno na `feature/signalmap-client-vision` (migrace
   `0044`, formulář, karta na detailu, sbalitelný pruh na dashboardu,
-  nápověda). Nasazuje se společně s citation hardening jako v1.3.0.
+  nápověda). Nasazeno 2026-10-02 jako v1.3.0 společně s citation hardening.
 
 ## 24. Pojmenování workerů na `/schedules`
 
@@ -1031,7 +1031,7 @@ a před každým zkouška na kopii produkční DB.
 
 | Vydání | Verze | Větve v pořadí | Obsah | Migrace |
 |---|---|---|---|---|
-| 1 — Vision + citation hardening | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
+| 1 — Vision + citation hardening ✅ (2026-10-02) | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
 | 2 — Scheduler ops | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
 | 3 — Market locale names | v1.5.0 | `market-locale-names` | #22 (jediná změna metodiky) | 1× přidání |
 | 4 — Metriky + Export v2 | v1.6.0 | `metric-definitions` → `export-v2` | #26, #25, #21 (History filtry) | ne |
@@ -1154,11 +1154,13 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 16 | Billing | Navrženo 2026-09-15, blokováno na prvním self-serve zákazníkovi; cenový model zatím otevřený |
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
 | 18 | Souběžnost workeru podle poskytovatele (C1/C2) | Navrženo 2026-09-26; předstupeň A + B = `docs/TASKS_WORKER_THROUGHPUT.md` (neimplementováno). C čeká na 429 v produkci nebo ~10+ klientů se stejným startem |
-| 19 | Nedostatky ověřování citací (Knauf pilot) | Zaznamenáno 2026-09-30 po nasazení v1.2.1 — Gemini robots.txt (100 % citací), chybějící timeout na adaptérech, archive.org resilience, NUL byte sanitizace, i18n parity test |
+| 19 | Nedostatky ověřování citací (Knauf pilot) | Zaznamenáno 2026-09-30 po nasazení v1.2.1 — Gemini robots.txt (100 % citací), chybějící timeout na adaptérech, archive.org resilience, NUL byte sanitizace, i18n parity test — nasazeno 2026-10-02 (v1.3.0), zbylé mezery #28 |
 | 20 | Provozní viditelnost fronty/kvóty | Zaznamenáno 2026-09-30, stejný pilot — ukazatel zbývající kvóty, banner přeskočených runů, popisek "LLM judge" dlaždice na `/ops` |
 | 21 | Scheduler: odolnost vůči chybám účtu providera | Zaznamenáno 2026-09-30 po vyčerpání kreditu OpenAI — kategorie chyb z adapterů, `deferred` místo `error` u billing, circuit breaker, sladění retry politiky (25 min krok nikdy nepoužit), History filtry + hromadný retry; neimplementováno |
 | 22 | Market: kód locale → názvy jazyka/země | Naplánováno 2026-09-30 — vydání 3 (v1.5.0), `docs/TASKS_MARKET_LOCALE_NAMES.md`; neimplementováno |
-| 23 | Vision u klienta | Implementováno 2026-09-30 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md`; nasazuje se s vydáním 1 |
+| 23 | Vision u klienta | Implementováno 2026-09-30, nasazeno 2026-10-02 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md` |
 | 24 | Pojmenování workerů na `/schedules` | Naplánováno 2026-09-30 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md`; neimplementováno |
 | 25 | Export v2 | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_EXPORT_V2.md`; neimplementováno |
 | 26 | Vysvětlení metrik (ⓘ) | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_METRIC_DEFINITIONS.md`; neimplementováno |
+| 27 | Ochrana před přesměrováním na interní adresy (SSRF) | Zaznamenáno 2026-10-01 — mimo vydání, samostatná větev po v1.3.0 (vyžaduje migraci); neimplementováno |
+| 28 | Odolnost zachytávání zdrojů proti vadným vstupům | Naplánováno 2026-10-02 — vydání 2 (v1.4.0), první větev, `docs/TASKS_CAPTURE_ROBUSTNESS.md`; neimplementováno |

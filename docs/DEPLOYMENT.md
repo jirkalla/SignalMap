@@ -268,6 +268,16 @@ zdrojem a smazal `/opt/signalmap`. **Vždy spouštěj jako jeden řetězený
 příkaz přesně jak je napsaný výše** — zkopírovaný beze změny, nikdy
 retypovaný na řádky.
 
+**Spuštění přímo na serveru (zjištěno 2026-10-02):** `$STAMP`, `$SHA` a `$BUILD_TIME`
+z kroku 3.1 existují jen v terminálu na počítači. Chceš-li 3.3 a 3.4 pustit v SSH
+session na serveru, nejdřív je tam nastav (`STAMP` ze jména nahraného archivu
+v `/tmp`, `SHA` z výstupu 3.1, `BUILD_TIME=$(date -u +%FT%TZ)`), vynech obal
+`ssh signalmap "…"` a na začátek řetězu přidej pojistku
+`[ -n "$STAMP" ] && [ -n "$SHA" ] && [ -n "$BUILD_TIME" ] && test -s "/tmp/signalmap-$STAMP.tar.gz" && …`
+— s prázdnou proměnnou se řetěz zastaví dřív, než se dotkne `/opt/signalmap`.
+Alias `signalmap` na serveru neexistuje (`ssh signalmap` odtamtud selže s „Could
+not resolve hostname").
+
 **Čekaný výstup:** `docker compose` na konci vypíše `✓ Container ...
 Healthy` pro `postgres`, `app` a `caddy`. Worker zůstává zastavený.
 
@@ -337,6 +347,15 @@ hlavičky, takže `localhost` narazí na chybějící certifikát a **visí**
 ssh signalmap 'cd /opt/signalmap && docker compose up -d --wait worker && docker compose logs --tail=20 worker'
 ```
 `up` bez `--build` — image už postavil krok 3.3, worker ho jen převezme.
+
+**⚠️ Počet replik (zjištěno 2026-10-02):** produkce běží se čtyřmi workery ručním
+`--scale` (od 2026-09-27, do vydání 2 / WT-T3). Příkaz výše bez `--scale` spustí
+**jen jednoho**. Použij:
+```bash
+cd /opt/signalmap && docker compose up -d --wait --scale worker=4 worker && docker compose logs --tail=20 worker
+```
+a ověř `Healthy` u `worker-1` až `worker-4` a v logu každé repliky `dry_run=False`.
+
 Od tohoto kroku může worker zapisovat nové runy; rollback ze zálohy (6.1) by
 je smazal.
 
@@ -382,6 +401,17 @@ ssh signalmap 'cd /opt/signalmap && docker compose exec app python -m app.cli.ba
 Zkontroluj počet zařazovaných úloh, pak ostře bez `--dry-run`. Průběh sleduj
 na `/ops` — dlaždice „Verification queue" (živý stav fronty) a tabulka
 „Capture success by reason" (kolik URL uspělo/selhalo a proč).
+
+**Co backfill nedělá (zjištěno 2026-10-02):** přeskakuje odpovědi, které už mají
+capture job, **bez ohledu na jeho výsledek**. Zdroje zachycené starší verzí kódu
+proto zůstávají, jak dopadly — po nasazení v1.3.0 se to týkalo Gemini odpovědí
+z 30. 9. a 1. 10. (793 citací `robots` ze starého kódu). Chceš-li je stáhnout
+znovu, zařaď nový capture job (řádek v `verification_jobs`, `kind='capture'`,
+`status='queued'`). Pozor na 24h cache URL v `source_capture.py` (`CACHE_WINDOW`):
+odkaz stažený v posledních 24 hodinách vrátí původní výsledek bez nového stažení,
+takže čerstvější odpovědi přestahuj až po jejím vypršení. Výsledek zkontroluj
+dotazem na poslední zdroj každé citace po dnech (viz T7 v
+`docs/TASKS_CITATION_HARDENING.md`).
 
 **Robots.txt / User-Agent allowlist** — ověřovač stahuje stránky pod
 `User-Agent: SignalMapVerifier/1.0 (+https://expressyourself.ai)`

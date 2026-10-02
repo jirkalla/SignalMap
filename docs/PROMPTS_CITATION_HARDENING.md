@@ -261,6 +261,8 @@ pokud neřekl jinak).
 
 ## CH-7 — Nasazení v1.3.0 (vč. Vision), backfill Gemini citací, měření
 
+### DONE — v1.3.0 (commit 3793f85, nasazeno 2026-10-02)
+
 ```
 Úkol CH-T7 z docs/TASKS_CITATION_HARDENING.md.
 
