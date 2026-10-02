@@ -5,7 +5,7 @@
 ## Task ID prefix: CR
 ## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-worker-throughput` a `feature/signalmap-scheduler-ops`
 
-## Status: ⏳ navrženo 2026-10-02, nezačato
+## Status: ✅ Implementováno 2026-10-02 (T1–T4); čeká na merge do `master`, nasazení v `SO-T7` (v1.4.0)
 
 Navrženo 2026-10-02 jako **první větev vydání 2** (`docs/ROADMAP.md` #28)
 z rozboru chybových `verification_jobs` po prvním nasazení v1.3.0 a backfillu
@@ -100,10 +100,10 @@ run).
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Poškozené PDF se zapíše jako `pdf_no_text`, nesrazí job | ⏳ |
-| T2 | Nevalidní odpověď archive.org je `ArchiveUnavailable` | ⏳ |
-| T3 | Audit dalších cest, kudy jeden vadný vstup shodí job | ⏳ |
-| T4 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | Poškozené PDF se zapíše jako `pdf_no_text`, nesrazí job | ✅ |
+| T2 | Nevalidní odpověď archive.org je `ArchiveUnavailable` | ✅ |
+| T3 | Audit dalších cest, kudy jeden vadný vstup shodí job | ✅ |
+| T4 | Dokumentace + CHANGELOG | ✅ |
 
 **Pořadí:** T1 a T2 jsou na sobě nezávislé, T3 po nich (audit staví na tom, co
 T1/T2 odhalí), T4 poslední. Nasazení je v `SO-T7`.
