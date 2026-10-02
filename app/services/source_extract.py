@@ -20,12 +20,15 @@ T9's "open at this location" link can rely on a format already exercised against
 """
 
 import io
+import logging
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
 
 import pypdf
+
+logger = logging.getLogger(__name__)
 
 # Content never contributes to extracted text (design decision 10) — a provider cannot cite what
 # a browser never renders as text, and these tags' "content" isn't text in that sense anyway
@@ -367,18 +370,29 @@ class ExtractedPdf:
 
 
 def extract_pdf(data: bytes) -> ExtractedPdf | None:
-    """Extract text page-by-page from a PDF's bytes, or None when it has no text layer at all
+    """Extract text page-by-page from a PDF's bytes, or None when it has no usable text
 
     (`error_reason='pdf_no_text'` is the caller's job to record — a scanned PDF with no OCR is a
     known, permanent limitation, design decision 11, not something to raise an exception over).
+    A truncated or corrupted PDF is treated the same way: `pypdf` raises on it (`PdfStreamError`
+    "Stream has ended unexpectedly", `EmptyFileError`, and ValueError/KeyError/RecursionError on
+    mangled structure), and one bad source must not fail the whole verification job
+    (docs/TASKS_CAPTURE_ROBUSTNESS.md T1, design decisions 1-2).
     """
-    reader = pypdf.PdfReader(io.BytesIO(data))
-    # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`) and
-    # BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
-    # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
-    pages = [
-        _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or "")) for page in reader.pages
-    ]
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        # Sanitized per page, before `page_starts` is computed below (see `sanitize_extracted_text`)
+        # and BEFORE the hyphenation join: a NUL right after the line break would otherwise stop
+        # `(\w)-\n(\w)` from matching and survive as an unjoined "Techno-\nlogien" once it is stripped.
+        pages = [
+            _HYPHEN_LINEBREAK_RE.sub(r"\1\2", sanitize_extracted_text(page.extract_text() or ""))
+            for page in reader.pages
+        ]
+    except Exception as exc:  # noqa: BLE001 - boundary of a third-party parser over untrusted bytes
+        logger.warning(
+            "PDF could not be read (%s: %s); recording it as having no extractable text", type(exc).__name__, exc
+        )
+        return None
 
     parts: list[str] = []
     page_starts: list[int] = []

@@ -127,6 +127,36 @@ def test_extract_pdf_returns_none_when_no_text_layer():
     assert extract_pdf(_pdf("blank.pdf")) is None
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(_pdf("sample.pdf")[:460], id="truncated-half"),
+        pytest.param(_pdf("sample.pdf")[:-60], id="truncated-tail"),
+        pytest.param(b"%PDF-1.4\n" + b"not a pdf structure " * 40, id="garbage-body"),
+        pytest.param(b"", id="empty"),
+    ],
+)
+def test_extract_pdf_returns_none_for_a_corrupted_or_truncated_pdf(data: bytes):
+    """pypdf raises PdfStreamError ("Stream has ended unexpectedly") / EmptyFileError on these —
+    seen in production (docs/TASKS_CAPTURE_ROBUSTNESS.md T1); extract_pdf must answer None
+    (= `pdf_no_text`), never let the parser's exception reach the verification job."""
+    assert extract_pdf(data) is None
+
+
+def test_extract_pdf_returns_none_when_a_page_fails_to_extract(monkeypatch: pytest.MonkeyPatch):
+    class _Page:
+        def extract_text(self):
+            raise ValueError("bad content stream")
+
+    class _Reader:
+        def __init__(self, _stream):
+            self.pages = [_Page()]
+
+    monkeypatch.setattr(source_extract.pypdf, "PdfReader", _Reader)
+
+    assert extract_pdf(b"%PDF-stub") is None
+
+
 # --- NUL bytes (docs/TASKS_CITATION_HARDENING.md T4) -------------------------------------------
 # PostgreSQL `text` cannot hold \x00; one such character in a source used to fail the whole insert.
 

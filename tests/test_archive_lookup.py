@@ -10,6 +10,7 @@ of its own further down.
 
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -157,6 +158,17 @@ def test_fetch_snapshot_content_returns_none_when_extracted_text_is_empty(db_ses
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"<html><body><script>var x=1;</script></body></html>", headers={"content-type": "text/html"})
+
+    assert fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep) is None
+
+
+def test_fetch_snapshot_content_returns_none_for_a_truncated_pdf(db_session: Session):
+    """A broken archived PDF is "snapshot has nothing usable" (None), not an archive.org outage."""
+    snapshot = ArchiveSnapshot(archive_timestamp="20260303091500", fetch_url="https://web.archive.org/web/x/id_/y.pdf", view_url="https://web.archive.org/web/x/y.pdf")
+    pdf = (Path(__file__).parent / "fixtures" / "sources" / "sample.pdf").read_bytes()[:460]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
 
     assert fetch_snapshot_content(db_session, _client(handler), snapshot, sleep=_no_sleep) is None
 

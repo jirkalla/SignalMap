@@ -160,6 +160,19 @@ def test_capture_url_pdf_without_text_layer_is_pdf_no_text(db_session: Session):
     assert doc.text_sha256 is None
 
 
+def test_capture_url_truncated_pdf_is_pdf_no_text_and_does_not_raise(db_session: Session):
+    def handler(request: httpx.Request) -> httpx.Response:
+        robots = _allow_robots(request)
+        if robots is not None:
+            return robots
+        return httpx.Response(200, content=_bytes("sample.pdf")[:460], headers={"content-type": "application/pdf"})
+
+    doc = capture_url(db_session, "https://example.com/broken.pdf", now=NOW, client=_client(handler), sleep=_no_sleep)
+
+    assert doc.error_reason == "pdf_no_text"
+    assert doc.text_sha256 is None
+
+
 def test_capture_url_robots_disallowed_never_fetches_the_page(db_session: Session):
     fetched_paths: list[str] = []
 
