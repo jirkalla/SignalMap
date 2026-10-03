@@ -23,6 +23,8 @@ from app.services.schedule_monitor import (
     oldest_queued_age_seconds,
     queue_summary,
     schedule_health,
+    skip_reason_labels,
+    skipped_summary,
     worker_statuses,
 )
 
@@ -474,3 +476,100 @@ def test_schedule_health_limits_per_schedule(db_session, seed, sample_prompt, ad
     # kept set's oldest is 4 days ago and its newest (last) is today.
     assert tiles[0].scheduled_for == NOW - timedelta(days=4)
     assert tiles[-1].scheduled_for == NOW
+
+
+# ---------------------------------------------------------------------------
+# skipped_summary / skip reasons (docs/TASKS_SCHEDULER_OPS.md T5, design decision 10)
+# ---------------------------------------------------------------------------
+
+
+def _skipped(db_session, sample_prompt, seed, reason, *, finished_at=NOW, client=None, **overrides):
+    return _make_queue_item(
+        db_session, prompt=sample_prompt, client=client or sample_prompt.prompt_set.client, model=seed["model"],
+        persona=seed["persona"], status="skipped", skip_reason=reason, finished_at=finished_at, **overrides,
+    )
+
+
+def test_skipped_summary_counts_by_reason_most_frequent_first_and_ignores_dry_run(db_session, seed, sample_prompt):
+    for reason, times in (("quota_exceeded", 3), ("worker_down", 1), ("dry_run", 40)):
+        for _ in range(times):
+            _skipped(db_session, sample_prompt, seed, reason)
+
+    rows = skipped_summary(db_session, since=NOW - timedelta(hours=24))
+
+    assert rows == [("quota_exceeded", 3), ("worker_down", 1)]  # dry_run is by design, never a "problem"
+
+
+def test_skipped_summary_only_counts_the_window_and_the_status(db_session, seed, sample_prompt):
+    _skipped(db_session, sample_prompt, seed, "quota_exceeded", finished_at=NOW - timedelta(hours=2))
+    _skipped(db_session, sample_prompt, seed, "quota_exceeded", finished_at=NOW - timedelta(hours=30))  # too old
+    _make_queue_item(  # an error is not a skip
+        db_session, prompt=sample_prompt, client=sample_prompt.prompt_set.client, model=seed["model"],
+        persona=seed["persona"], status="error", finished_at=NOW,
+    )
+
+    assert skipped_summary(db_session, since=NOW - timedelta(hours=24)) == [("quota_exceeded", 1)]
+
+
+def test_skipped_summary_can_be_limited_to_one_client(db_session, seed, sample_prompt):
+    other = Client(name="Other client", slug="other-client")
+    db_session.add(other)
+    db_session.commit()
+    _skipped(db_session, sample_prompt, seed, "queue_depth_exceeded")
+    _skipped(db_session, sample_prompt, seed, "worker_down", client=other)
+
+    mine = skipped_summary(db_session, since=NOW - timedelta(hours=24), client_id=sample_prompt.prompt_set.client.id)
+
+    assert mine == [("queue_depth_exceeded", 1)]
+
+
+def _skip_reasons_written_by_the_code() -> set[str]:
+    """Every literal `skip_reason` value in app/ — read from the source, so a reason added to the
+    worker or the enqueue code without a translation fails the test below instead of showing up as
+    a raw code on /schedules.
+    """
+    import re
+    from pathlib import Path
+
+    reasons: set[str] = set()
+    for path in (Path("app") / "worker.py", Path("app") / "services" / "queue.py"):
+        source = path.read_text(encoding="utf-8")
+        # `skip_reason="x"` / `item.skip_reason = "x"`, but not the tuple form's `... skip_reason = "skipped", "x"`
+        reasons |= set(re.findall(r'(?<!status, item\.)skip_reason\s*=\s*"(\w+)"', source))
+        reasons |= set(re.findall(r'status,\s*item\.skip_reason\s*=\s*"skipped",\s*"(\w+)"', source))
+    return reasons
+
+
+def test_every_skip_reason_the_code_writes_is_a_known_reason():
+    from app.models.schedule import SKIP_REASONS
+
+    assert _skip_reasons_written_by_the_code() <= set(SKIP_REASONS)
+    assert len(_skip_reasons_written_by_the_code()) >= 5  # the scan itself still finds the reasons
+
+
+@pytest.mark.parametrize("locale", ["en", "de"])
+def test_every_skip_reason_has_a_translation(locale):
+    from app.models.schedule import SKIP_REASONS
+
+    t = get_translator(locale)
+    for reason in SKIP_REASONS:
+        key = f"schedules.skip_reason_{reason}"
+        assert t(key) != key, f"{key} is missing from {locale}.json"
+    assert set(skip_reason_labels(t)) == set(SKIP_REASONS)
+
+
+def test_schedules_page_shows_the_skipped_banner_and_translated_history(admin_client, db_session, seed, sample_prompt):
+    real_now = datetime.now(timezone.utc)
+    _skipped(db_session, sample_prompt, seed, "quota_exceeded", finished_at=real_now - timedelta(hours=1))
+    _skipped(db_session, sample_prompt, seed, "dry_run", finished_at=real_now - timedelta(hours=1))
+
+    page = admin_client.get("/schedules?view=history")
+
+    assert page.status_code == 200
+    assert "1 run(s) skipped in the last 24 hours" in page.text  # dry_run not counted
+    assert "Daily quota reached" in page.text
+    assert ">quota_exceeded<" not in page.text  # the raw code is no longer what the user reads
+
+
+def test_schedules_page_has_no_banner_when_nothing_was_skipped(admin_client):
+    assert "skipped in the last 24 hours" not in admin_client.get("/schedules").text

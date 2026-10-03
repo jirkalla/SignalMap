@@ -278,6 +278,19 @@ def ops_verification_queue(db: Session = Depends(get_db)) -> list[OpsVerificatio
     return [OpsVerificationQueueRow(**vars(row)) for row in ops_service.verification_queue_snapshot(db)]
 
 
+class OpsLlmVerdictCount(BaseModel):
+    count: int = Field(..., description="LLM verdict rows (automatic and manual judging) for the runs in the resolved filter set.")
+
+
+@router.get("/api/llm-verdicts", response_model=OpsLlmVerdictCount)
+def ops_llm_verdicts(scope: OpsScope = Depends(_ops_scope), db: Session = Depends(get_db)) -> OpsLlmVerdictCount:
+    """Number of LLM verdicts for the resolved filter set (docs/TASKS_SCHEDULER_OPS.md design
+    decision 11) — the figure the queue table's "LLM judge" row cannot give, because that row
+    counts manual judge JOBS, while the automatic judge runs inside capture jobs.
+    """
+    return OpsLlmVerdictCount(count=ops_service.llm_verdict_count(db, scope.run_ids_query))
+
+
 class OpsUserRow(BaseModel):
     user_id: int | None = Field(..., description="None for the Scheduler and unknown-attribution pseudo-rows.")
     user_name: str | None = Field(..., description="None for the Scheduler and unknown-attribution pseudo-rows.")

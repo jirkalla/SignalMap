@@ -77,6 +77,19 @@ def check_daily_quota(db: Session, *, client_id: int, now: datetime, default_lim
     (app/services/queue.py) already uses for the queue itself.
     """
     db.execute(select(func.pg_advisory_xact_lock(client_id)))
+    used, limit = daily_quota_usage(db, client_id=client_id, now=now, default_limit=default_limit)
+    if used >= limit:
+        raise QuotaExceededError(client_id)
+
+
+def daily_quota_usage(db: Session, *, client_id: int, now: datetime, default_limit: int) -> tuple[int, int]:
+    """`(used, limit)` of `client_id`'s rolling-24h run quota — read-only, takes no advisory lock.
+
+    The single definition of both numbers: `check_daily_quota` enforces with it and the client
+    detail page displays it, so what the UI shows can never drift from what is actually enforced
+    (docs/TASKS_SCHEDULER_OPS.md design decision 9). Because it takes no lock, a display value may
+    be a run behind a concurrent trigger; only the enforcing caller needs the lock.
+    """
     client = db.get(Client, client_id)
     limit = client.daily_run_limit if client.daily_run_limit is not None else default_limit
     since = now - timedelta(hours=24)
@@ -87,8 +100,7 @@ def check_daily_quota(db: Session, *, client_id: int, now: datetime, default_lim
         .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
         .where(PromptSet.client_id == client_id, Run.started_at >= since)
     )
-    if (count or 0) >= limit:
-        raise QuotaExceededError(client_id)
+    return count or 0, limit
 
 
 def _build_system_instruction(db: Session, provider: Provider, market: Market, persona: Persona) -> str | None:

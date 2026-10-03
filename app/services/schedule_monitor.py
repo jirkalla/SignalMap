@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AIModel, Client, Persona, Prompt, PromptSet, RawResponse, Run, VerificationJob
 from app.models.notification import WorkerHeartbeat
-from app.models.schedule import RunQueueItem
+from app.models.schedule import SKIP_REASONS, RunQueueItem
 
 # The worker's heartbeat thread (app/worker.py::heartbeat_loop) writes every ~10 s regardless of
 # how long a provider call takes, so 60 s = 6x that interval — several missed ticks before
@@ -281,6 +281,36 @@ def queue_summary(db: Session) -> QueueSummary:
         leased_count=counts.get("leased", 0),
         deferred_count=counts.get("deferred", 0),
     )
+
+
+def skipped_summary(db: Session, *, since: datetime, client_id: int | None = None) -> list[tuple[str, int]]:
+    """`(skip_reason, count)` of items skipped since `since`, most frequent first.
+
+    `dry_run` is left out on purpose: in dry-run mode every item is skipped as a matter of design
+    (docs/TASKS_SCHEDULER_OPS.md design decision 10), so counting it would show a permanent
+    "problem" that is nothing of the kind. `client_id=None` summarises every client.
+    """
+    query = (
+        select(RunQueueItem.skip_reason, func.count())
+        .where(
+            RunQueueItem.status == "skipped",
+            RunQueueItem.skip_reason.is_not(None),
+            RunQueueItem.skip_reason != "dry_run",
+            RunQueueItem.finished_at >= since,
+        )
+        .group_by(RunQueueItem.skip_reason)
+        .order_by(func.count().desc(), RunQueueItem.skip_reason)
+    )
+    if client_id is not None:
+        query = query.where(RunQueueItem.client_id == client_id)
+    return [(reason, count) for reason, count in db.execute(query).all()]
+
+
+def skip_reason_labels(t) -> dict[str, str]:  # noqa: ANN001
+    """`{reason: translated label}` for every known skip reason — the History view and the banners
+    both look reasons up here; a reason not in the dict (an old row) is shown raw by the template.
+    """
+    return {reason: t(f"schedules.skip_reason_{reason}") for reason in SKIP_REASONS}
 
 
 @dataclass

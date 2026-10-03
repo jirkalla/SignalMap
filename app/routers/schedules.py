@@ -13,7 +13,7 @@ future `users.can_schedule` column changes only that one place (design decision 
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from itertools import groupby
 from typing import Literal
 from urllib.parse import quote
@@ -43,6 +43,8 @@ from app.services.schedule_monitor import (
     oldest_queued_age_seconds,
     queue_summary,
     schedule_health,
+    skip_reason_labels,
+    skipped_summary,
     worker_statuses,
 )
 from app.services.scheduling import ScheduleOccurrenceInput, compute_next_run_at, max_end_date, upcoming_occurrences
@@ -1088,6 +1090,21 @@ def mark_notifications_read(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(url=referer, status_code=303)
 
 
+def skipped_banner_context(db: Session, t, *, now: datetime, client_id: int | None = None) -> dict | None:  # noqa: ANN001
+    """Context for `partials/skipped_banner.html`: runs skipped in the last 24 h by reason
+    (docs/TASKS_SCHEDULER_OPS.md design decision 10), or `None` when nothing was skipped — the
+    banner then does not render at all. Shared with the client detail page.
+    """
+    rows = skipped_summary(db, since=now - timedelta(hours=24), client_id=client_id)
+    if not rows:
+        return None
+    labels = skip_reason_labels(t)
+    return {
+        "total": sum(count for _, count in rows),
+        "reasons": [{"label": labels.get(reason, reason), "count": count} for reason, count in rows],
+    }
+
+
 def _worker_panel_rows(db: Session, t, now: datetime) -> list[dict]:  # noqa: ANN001
     """Rows for the worker panel (docs/TASKS_SCHEDULER_OPS.md design decision 3), shared by the
     full page and the `/schedules/workers` HTMX fragment so both show the same thing.
@@ -1167,7 +1184,15 @@ def schedules_monitor(
 
     workers = _worker_panel_rows(db, t, now)
 
-    context = {"view": view, "status": status, "q": q, "page": page, "workers": workers}
+    context = {
+        "view": view,
+        "status": status,
+        "q": q,
+        "page": page,
+        "workers": workers,
+        "skipped_banner": skipped_banner_context(db, t, now=now),
+        "skip_reason_labels": skip_reason_labels(t),
+    }
     context.update(_notification_context(db, t))
 
     if view == "schedules":

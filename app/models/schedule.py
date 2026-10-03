@@ -122,6 +122,21 @@ class RunSchedule(Base):
     queue_items: Mapped[list["RunQueueItem"]] = relationship(back_populates="schedule")
 
 
+# Every `run_queue.skip_reason` value the code writes (app/worker.py, app/services/queue.py). The
+# column is an open String(40), not a CHECK-constrained enum, so this tuple is the one list the
+# UI translates from (`schedules.skip_reason_<reason>`); a test fails when a reason is added here
+# without its translation. Add a new reason here when the code starts writing it.
+SKIP_REASONS = (
+    "grace_expired",
+    "inactive_prompt",
+    "inactive_model",
+    "quota_exceeded",
+    "dry_run",
+    "worker_down",
+    "queue_depth_exceeded",
+)
+
+
 class RunQueueItem(Base):
     """One concrete occurrence of a schedule's rule, and simultaneously its own permanent history
     record (docs/TASKS_SCHEDULER.md design decision 27) — rows are never deleted, only appended.
