@@ -620,6 +620,13 @@ dvojkliku a HX-Redirect cesty).
    (decision 13), volání `execute_run` z T2, retry politika (3 pokusy,
    exponenciální odklad 1/5/25 min, jen transportní chyby — chyba od
    providera po odpovědi je terminální).
+   **Od vydání 2 (v1.4.0) platí jinak** (`docs/TASKS_SCHEDULER_OPS.md`
+   decisions 4–6): chyba se zařadí do kategorie (`app/services/provider_errors.py`);
+   `billing` (vyčerpaný kredit) se neopakuje po 1/5/25 min, ale položka
+   je `deferred` po 30 min až do konce grace; `auth` a `invalid_request` jsou
+   terminální hned; přechodné chyby mají 4 pokusy (1/5/25 min — krok 25 min se
+   dřív nikdy nepoužil). Grace je maximální stáří položky (měřené od původního
+   času), počet pokusů je samostatný limit.
 4. `SCHEDULER_DRY_RUN` (decision 15): položka se označí `skipped` /
    `dry_run`, adapter se nezavolá, `Run` nevznikne.
 5. Nové konfigurační klíče v `app/config.py`: `scheduler_enabled`,
