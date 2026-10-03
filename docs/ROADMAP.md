@@ -771,6 +771,16 @@ na detailu klienta (**T9**).
 
 ## 20. Provozní viditelnost citační fronty a kvóty
 
+✅ **Implementováno 2026-10-03** na větvi `feature/signalmap-scheduler-ops`
+(`docs/TASKS_SCHEDULER_OPS.md`, SO-T5; bez migrace). Nasadí se ve vydání 2
+(v1.4.0, `SO-T7`). Karta kvóty (využito / limit za 24 h, žlutá od 80 %,
+červená při vyčerpání) a banner přeskočených runů (podle důvodu, bez `dry_run`)
+jsou na detailu klienta, banner i na `/schedules`; History ukazuje důvod
+přeložený. Dlaždice na `/ops` je přejmenovaná na „Manual LLM judging (jobs)"
+a pod ní je počet LLM verdiktů — **všech**, automatických i ručních, protože
+řádek verdiktu si nepamatuje, kdo ho vytvořil (rozlišení by chtělo sloupec,
+tedy migraci).
+
 **Zaznamenáno 2026-09-30**, ze stejného Knauf pilotu — tři menší UX
 nálezy, žádný z nich bug, ale všechny stály čas při ručním ověřování stavu
 appky:
@@ -789,6 +799,18 @@ appky:
   nízké, i když automatika běží v pořádku.
 
 ## 21. Scheduler: odolnost vůči chybám účtu providera (kredit / billing)
+
+✅ **Částečně implementováno 2026-10-03** na větvi
+`feature/signalmap-scheduler-ops` (`docs/TASKS_SCHEDULER_OPS.md`, SO-T3 a SO-T4;
+bez migrace; nasazení ve vydání 2, v1.4.0). **Hotovo:** kategorie chyby
+(`app/services/provider_errors.py`, klasifikace z výjimek SDK místo úprav
+adaptérů), `billing` → `deferred` po 30 min až do konce grace, jedna
+notifikace na providera za 6 h, sladěná retry politika (4 pokusy, použije se
+i krok 25 min), `auth`/`invalid_request` bez opakování, hloubka fronty počítá
+i `deferred`, testy s reálnými třídami výjimek. **Zbývá:** circuit breaker
+(až po týdnu dat z kategorií, SO-T7 krok 6), History filtry + hromadný retry
+podle filtru, seskupení opakovaných pokusů v Runs, kontrola ceny a dostupnosti
+před dávkou.
 
 **Zaznamenáno 2026-09-30** — vyčerpaný kredit u OpenAI: všechny běhy GPT-5.6
 Luna/Terra skončily `error` po třech pokusech za ~6 minut (12:01:42 →
@@ -912,6 +934,14 @@ Volitelně sbalené v hlavičce `/dashboard`.
   nápověda). Nasazeno 2026-10-02 jako v1.3.0 společně s citation hardening.
 
 ## 24. Pojmenování workerů na `/schedules`
+
+✅ **Implementováno 2026-10-03** na větvi `feature/signalmap-scheduler-ops`
+(`docs/TASKS_SCHEDULER_OPS.md`, SO-T1 a SO-T2; bez migrace; nasazení ve
+vydání 2, v1.4.0, ověření jmen na serveru v `SO-T7`). Worker se pojmenuje
+`worker-N` podle čísla repliky přes PTR dotaz na DNS kontejneru (ne přes
+`socket.gethostbyaddr` — ten vrací hex z `/etc/hosts`); panel na `/schedules`
+ukazuje jméno, stav, poslední signál a aktuální práci; heartbeat řádky
+starší než hodinu se uklízejí.
 
 **Zaznamenáno 2026-09-30** (provoz). `WORKER_NAME` se záměrně nenastavuje,
 repliky berou hostname kontejneru (náhodný hex, `app/config.py`), a stavový
@@ -1043,7 +1073,7 @@ a před každým zkouška na kopii produkční DB.
 | Vydání | Verze | Větve v pořadí | Obsah | Migrace |
 |---|---|---|---|---|
 | 1 — Vision + citation hardening ✅ (2026-10-02) | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
-| 2 — Scheduler ops | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
+| 2 — Scheduler ops (implementováno 2026-10-03, čeká na nasazení) | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
 | 3 — Market locale names | v1.5.0 | `market-locale-names` | #22 (jediná změna metodiky) | 1× přidání |
 | 4 — Metriky + Export v2 | v1.6.0 | `metric-definitions` → `export-v2` | #26, #25, #21 (History filtry) | ne |
 
@@ -1166,11 +1196,11 @@ jako zvážené a vědomě odložené, ne zapomenuté:
 | 17 | Nový tvar Gemini odpovědi (`steps`/`url_citation`) | Zaznamenáno 2026-09-16 při #11 — API zatím vrací starý tvar (52/52 odpovědí), jen hlídané riziko |
 | 18 | Souběžnost workeru podle poskytovatele (C1/C2) | Navrženo 2026-09-26; předstupeň A + B = `docs/TASKS_WORKER_THROUGHPUT.md` (neimplementováno). C čeká na 429 v produkci nebo ~10+ klientů se stejným startem |
 | 19 | Nedostatky ověřování citací (Knauf pilot) | Zaznamenáno 2026-09-30 po nasazení v1.2.1 — Gemini robots.txt (100 % citací), chybějící timeout na adaptérech, archive.org resilience, NUL byte sanitizace, i18n parity test — nasazeno 2026-10-02 (v1.3.0), zbylé mezery #28 |
-| 20 | Provozní viditelnost fronty/kvóty | Zaznamenáno 2026-09-30, stejný pilot — ukazatel zbývající kvóty, banner přeskočených runů, popisek "LLM judge" dlaždice na `/ops` |
-| 21 | Scheduler: odolnost vůči chybám účtu providera | Zaznamenáno 2026-09-30 po vyčerpání kreditu OpenAI — kategorie chyb z adapterů, `deferred` místo `error` u billing, circuit breaker, sladění retry politiky (25 min krok nikdy nepoužit), History filtry + hromadný retry; neimplementováno |
+| 20 | Provozní viditelnost fronty/kvóty | Implementováno 2026-10-03 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md` SO-T5; nasazení v `SO-T7` |
+| 21 | Scheduler: odolnost vůči chybám účtu providera | Zaznamenáno 2026-09-30 po vyčerpání kreditu OpenAI — **částečně implementováno 2026-10-03** (kategorie chyb, `deferred` u billing, jedna notifikace, retry politika, hloubka fronty; vydání 2, v1.4.0, SO-T3/T4). Zbývá circuit breaker, History filtry + hromadný retry, seskupení pokusů, kontrola před dávkou |
 | 22 | Market: kód locale → názvy jazyka/země | Naplánováno 2026-09-30 — vydání 3 (v1.5.0), `docs/TASKS_MARKET_LOCALE_NAMES.md`; neimplementováno |
 | 23 | Vision u klienta | Implementováno 2026-09-30, nasazeno 2026-10-02 — vydání 1 (v1.3.0), `docs/TASKS_CLIENT_VISION.md` |
-| 24 | Pojmenování workerů na `/schedules` | Naplánováno 2026-09-30 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md`; neimplementováno |
+| 24 | Pojmenování workerů na `/schedules` | Implementováno 2026-10-03 — vydání 2 (v1.4.0), `docs/TASKS_SCHEDULER_OPS.md` SO-T1/T2; nasazení a ověření jmen v `SO-T7` |
 | 25 | Export v2 | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_EXPORT_V2.md`; neimplementováno |
 | 26 | Vysvětlení metrik (ⓘ) | Naplánováno 2026-09-30 — vydání 4 (v1.6.0), `docs/TASKS_METRIC_DEFINITIONS.md`; neimplementováno |
 | 27 | Ochrana před přesměrováním na interní adresy (SSRF) | Zaznamenáno 2026-10-01 — mimo vydání, samostatná větev po v1.3.0 (vyžaduje migraci); neimplementováno |

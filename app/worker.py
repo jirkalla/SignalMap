@@ -37,7 +37,11 @@ functions.
 """
 
 import logging
+import random
+import re
 import signal
+import socket
+import struct
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -56,12 +60,20 @@ from app.models.market import Market
 from app.models.notification import WorkerHeartbeat
 from app.models.persona import Persona
 from app.models.prompt import Prompt
-from app.models.provider import AIModel
+from app.models.provider import AIModel, Provider
 from app.models.run import Run
 from app.models.schedule import RunQueueItem
-from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_quota_exceeded
+from app.services.notifications import (
+    check_budget_thresholds,
+    check_expiring_schedules,
+    notify,
+    notify_provider_billing_exhausted,
+    notify_quota_exceeded,
+)
+from app.services.provider_errors import ErrorCategory, classify_provider_error
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
 from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
+from app.services.schedule_monitor import delete_stale_heartbeats
 from app.services.source_capture import build_capture_client
 from app.services.verification_queue import (
     DEFAULT_LEASE_MINUTES,
@@ -84,9 +96,119 @@ _HEARTBEAT_INTERVAL_SECONDS = 10
 # RunQueueItem.attempts / .transport_attempts docstrings for why): a collision with a
 # still-running Run for the same prompt+model (design decision 17, `item.attempts`, never
 # terminal, capped at the last step forever) and a retryable transport/429 provider failure
-# (`item.transport_attempts`, terminal once it reaches len(this list), i.e. 3 tries).
+# (`item.transport_attempts`, terminal once it reaches `_MAX_TRANSPORT_ATTEMPTS`).
+#
+# Two different limits, easy to confuse (docs/TASKS_SCHEDULER_OPS.md design decision 6):
+#   * grace (SCHEDULER_GRACE_PERIOD_MINUTES) = the maximum AGE of a queue item, measured from its
+#     original time; whatever the item is waiting for, it is dropped as `grace_expired` after that.
+#   * transport attempts = how many times a TRANSIENT provider failure is tried before the item
+#     becomes an error. One more than the backoff steps: the first try plus one retry after each
+#     of 1/5/25 min, so every step is actually used (it used to stop at 3 and never reach 25).
 _BACKOFF_MINUTES = (1, 5, 25)
-_MAX_TRANSPORT_ATTEMPTS = len(_BACKOFF_MINUTES)
+_MAX_TRANSPORT_ATTEMPTS = len(_BACKOFF_MINUTES) + 1
+
+
+_REPLICA_NAME_RE = re.compile(r"-worker-(\d+)(?:\.|$)")
+
+
+def _read_dns_name(data: bytes, offset: int) -> tuple[str, int]:
+    """Decode a (possibly compressed) DNS name at `offset`; returns `(name, offset after it)`."""
+    labels: list[str] = []
+    end: int | None = None
+    hops = 0
+    while True:
+        length = data[offset]
+        if length == 0:
+            offset += 1
+            break
+        if length & 0xC0 == 0xC0:  # compression pointer
+            if end is None:
+                end = offset + 2
+            offset = ((length & 0x3F) << 8) | data[offset + 1]
+            hops += 1
+            if hops > 16:
+                raise ValueError("DNS compression loop")
+            continue
+        labels.append(data[offset + 1 : offset + 1 + length].decode("ascii", "replace"))
+        offset += 1 + length
+    return ".".join(labels), (end if end is not None else offset)
+
+
+def _build_ptr_query(ip: str, query_id: int) -> bytes:
+    """A single-question PTR query for `ip` (IPv4)."""
+    arpa = ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
+    question = b"".join(bytes([len(label)]) + label.encode("ascii") for label in arpa.split(".")) + b"\x00"
+    return struct.pack(">HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + question + struct.pack(">HH", 12, 1)
+
+
+def _parse_ptr_response(data: bytes, query_id: int) -> list[str]:
+    """PTR target names from a DNS response; empty on an id mismatch, error rcode, or no answer."""
+    if len(data) < 12:
+        return []
+    rid, flags, qdcount, ancount = struct.unpack(">HHHH", data[:8])
+    if rid != query_id or flags & 0x000F != 0:
+        return []
+    offset = 12
+    for _ in range(qdcount):
+        _, offset = _read_dns_name(data, offset)
+        offset += 4
+    names: list[str] = []
+    for _ in range(ancount):
+        _, offset = _read_dns_name(data, offset)
+        rtype, _rclass, _ttl, rdlength = struct.unpack(">HHIH", data[offset : offset + 10])
+        offset += 10
+        if rtype == 12:
+            target, _ = _read_dns_name(data, offset)
+            names.append(target)
+        offset += rdlength
+    return names
+
+
+def _reverse_dns_names(ip: str, *, nameserver: str, timeout: float = 2.0) -> list[str]:
+    """Ask `nameserver` directly for the PTR record of `ip`.
+
+    `socket.gethostbyaddr` is no use here: inside a container /etc/hosts maps the container's own
+    IP to its hex hostname and the resolver consults that file before DNS, so the name Compose
+    gave the container is never returned. Querying Docker's embedded DNS (127.0.0.11) bypasses it.
+    """
+    query_id = random.randrange(0x10000)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(timeout)
+        sock.sendto(_build_ptr_query(ip, query_id), (nameserver, 53))
+        return _parse_ptr_response(sock.recv(1024), query_id)
+
+
+def _first_nameserver(resolv_conf: Path = Path("/etc/resolv.conf")) -> str | None:
+    for line in resolv_conf.read_text().splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "nameserver":
+            return parts[1]
+    return None
+
+
+def resolve_worker_name(settings) -> str:  # noqa: ANN001
+    """This worker's identity: explicit `WORKER_NAME` → Compose replica number → hostname.
+
+    The replica number (`worker-3`) comes from a reverse-DNS lookup of the container's own IP,
+    which Docker answers with the container name (`signalmap-worker-3.<network>`) — so the name
+    on /schedules is exactly what `docker compose ps` / `logs` shows (docs/TASKS_SCHEDULER_OPS.md
+    design decision 1). Decided once at startup; any lookup failure falls back to the hostname
+    (`settings.worker_name`, the pre-existing behaviour) rather than blocking the worker.
+    """
+    if "worker_name" in getattr(settings, "model_fields_set", ()):
+        return settings.worker_name
+    hostname = socket.gethostname()
+    try:
+        nameserver = _first_nameserver()
+        if nameserver is not None:
+            for name in _reverse_dns_names(socket.gethostbyname(hostname), nameserver=nameserver):
+                match = _REPLICA_NAME_RE.search(name)
+                if match:
+                    return f"worker-{match.group(1)}"
+        logger.warning("No Compose replica name found via reverse DNS, using hostname %s", hostname)
+    except Exception:  # noqa: BLE001 - naming must never stop the worker from starting
+        logger.warning("Reverse DNS lookup for the worker name failed, using hostname %s", hostname, exc_info=True)
+    return settings.worker_name
 
 
 def _backoff_minutes(attempts: int) -> int:
@@ -99,27 +221,22 @@ def _backoff_minutes(attempts: int) -> int:
     return _BACKOFF_MINUTES[min(index, len(_BACKOFF_MINUTES) - 1)]
 
 
+# A billing failure (account out of credit) waits this long between attempts instead of using the
+# 1/5/25 min backoff: nothing changes until someone tops the account up, and each attempt creates
+# a Run row (evidence, NFR-6), so polling every minute would only fill the table with errors.
+_BILLING_RETRY_MINUTES = 30
+
+
 def _is_retryable_error(exc: Exception) -> bool:
-    """Whether `exc` (as raised by a provider adapter, app/adapters/*.py) is worth retrying.
+    """Whether `exc` (as raised by a provider adapter, app/adapters/*.py) is worth retrying on
+    the 1/5/25 min backoff — a thin view over `classify_provider_error`, which holds the actual
+    rules (docs/TASKS_SCHEDULER_OPS.md design decision 4).
 
-    Duck-typed on `status_code`/`code` rather than importing each provider SDK's exception
-    classes directly — a worker reaching into `anthropic.RateLimitError` etc. would be exactly
-    the kind of provider-specific coupling the adapter layer exists to prevent (app/adapters/
-    base.py). All three SDKs (google-genai, anthropic, openai) attach one of these two attribute
-    names to a real API error response; an exception with NEITHER never got a response at all —
-    a DNS failure, connection refused, or timeout — which is transient by definition.
-
-    429 (rate limited) and 5xx (provider-side failure) are retryable; any other HTTP status
-    (400, 401, 404, ...) reflects something wrong with the request itself, which retrying would
-    only repeat identically — that is the "terminal" case docs/TASKS_SCHEDULER.md T3 describes
-    as "a chyba, kterou provider vrátil po odpovědi".
+    Rate limits, transient failures and unclassifiable ones are retried; `auth` and
+    `invalid_request` would only fail identically again. `billing` is False here too: it is not
+    retried on the backoff but deferred on its own schedule (`_BILLING_RETRY_MINUTES`).
     """
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        status_code = getattr(exc, "code", None)
-    if isinstance(status_code, int):
-        return status_code == 429 or status_code >= 500
-    return True
+    return classify_provider_error(exc) in (ErrorCategory.RATE_LIMIT, ErrorCategory.TRANSIENT, ErrorCategory.UNKNOWN)
 
 
 def process_claimed_item(
@@ -142,7 +259,12 @@ def process_claimed_item(
     # worker that fell behind must give up on a stale item exactly like one that was down when
     # it should have been enqueued, and for the same two reasons (unplanned cost, wrong-dated
     # evidence) design decision 11 already gives for skipping it at enqueue time instead.
-    if now - item.scheduled_for > timedelta(minutes=grace_period_minutes):
+    #
+    # Measured from the item's ORIGINAL time, `min(scheduled_for, queued_at)`: a retry or a billing
+    # deferral pushes `scheduled_for` forward, and grace must stay the maximum age of the item
+    # (docs/TASKS_SCHEDULER_OPS.md design decision 5) — otherwise an item deferred every 30 min
+    # would never expire.
+    if now - min(item.scheduled_for, item.queued_at or item.scheduled_for) > timedelta(minutes=grace_period_minutes):
         item.status = "skipped"
         item.skip_reason = "grace_expired"
         item.finished_at = now
@@ -232,10 +354,31 @@ def process_claimed_item(
             reraise_on_failure=True,
         )
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
+        category = classify_provider_error(exc)
+        # Every attempt records why it failed, retried or not (it used to be only the terminal one).
+        item.last_error = f"[{category.value}] {exc}"
+
+        if category is ErrorCategory.BILLING:
+            # Out of credit: wait for a top-up. Not counted in transport_attempts — the item ends
+            # only when its grace runs out (checked at the top of this function), not after N tries.
+            item.status = "deferred"
+            item.scheduled_for = now + timedelta(minutes=_BILLING_RETRY_MINUTES)
+            db.commit()
+            # One notification per provider per 6 h (design decision 7) instead of the
+            # schedule.run_failed an ended item would send — this one has not ended.
+            provider = db.get(Provider, model.provider_id)
+            notify_provider_billing_exhausted(
+                db,
+                provider_code=provider.code if provider is not None else "?",
+                provider_name=provider.name if provider is not None else "?",
+                now=now,
+            )
+            return
+
         # transport_attempts is its own counter, separate from the claim counter `item.attempts`
         # (found in code review, 2026-09-22) — a collision deferral never touches this one, so an
-        # item that bounced a few times before ever reaching the provider still gets its full 3
-        # genuine transport tries.
+        # item that bounced a few times before ever reaching the provider still gets its full
+        # `_MAX_TRANSPORT_ATTEMPTS` genuine transport tries.
         item.transport_attempts += 1
         if _is_retryable_error(exc) and item.transport_attempts < _MAX_TRANSPORT_ATTEMPTS:
             item.status = "queued"
@@ -243,7 +386,6 @@ def process_claimed_item(
             db.commit()
         else:
             item.status = "error"
-            item.last_error = str(exc)
             item.finished_at = now
             db.commit()
             # Only on the FINAL failure, never on a transport retry above — T8 design decision
@@ -318,6 +460,7 @@ def run_iteration(
                 grace_period_minutes=settings.scheduler_grace_period_minutes,
                 max_queue_depth_per_client=settings.scheduler_max_queue_depth_per_client,
             )
+        delete_stale_heartbeats(db, now=now)
         release_expired_leases(db, now=now)
         release_expired_job_leases(db, now=now)
         reconcile_interrupted_runs(db, now=now)
@@ -384,6 +527,8 @@ def run_forever() -> None:
     """The worker's main loop — see module docstring for the per-iteration sequence."""
     configure_logging()
     settings = get_settings()
+    hostname = settings.worker_name
+    settings.worker_name = resolve_worker_name(settings)
 
     stop_requested = False
 
@@ -408,8 +553,9 @@ def run_forever() -> None:
     heartbeat_thread.start()
 
     logger.info(
-        "Worker %s starting (dry_run=%s, enabled=%s)",
+        "Worker name=%s hostname=%s starting (dry_run=%s, enabled=%s)",
         settings.worker_name,
+        hostname,
         settings.scheduler_dry_run,
         settings.scheduler_enabled,
     )

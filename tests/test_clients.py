@@ -771,3 +771,94 @@ def test_verify_retroactively_confirm_enqueues_once_the_capture_job_is_done(auth
     authed_client.post(f"/clients/{client_id}/verify-retroactively/confirm", data=_JUNE, follow_redirects=False)
 
     assert _judge_job_count(db_session, raw.id) == 1
+
+
+# ---------------------------------------------------------------------------
+# daily quota card + skipped banner (docs/TASKS_SCHEDULER_OPS.md T5, design decisions 9-10)
+# ---------------------------------------------------------------------------
+
+
+def _add_runs(db_session: Session, seed: dict, prompt: Prompt, count: int) -> None:
+    for _ in range(count):
+        db_session.add(
+            Run(
+                prompt_id=prompt.id, model_id=seed["model"].id, market_id=seed["market"].id,
+                persona_id=seed["persona"].id, trigger_type="manual", status="success",
+            )
+        )
+    db_session.commit()
+
+
+@pytest.mark.parametrize(
+    "runs,limit,marker,absent",
+    [
+        (1, 10, "1 / 10 runs in the last 24 hours", "Limit reached"),
+        (8, 10, "Close to the limit.", "Limit reached"),  # 80 % -> warning
+        (10, 10, "Limit reached", "Close to the limit."),
+    ],
+)
+def test_client_detail_shows_the_daily_quota(admin_client, db_session, seed, sample_prompt, runs, limit, marker, absent):
+    client_row = sample_prompt.prompt_set.client
+    client_row.daily_run_limit = limit
+    db_session.commit()
+    _add_runs(db_session, seed, sample_prompt, runs)
+
+    page = admin_client.get(f"/clients/{client_row.id}")
+
+    assert page.status_code == 200
+    assert f"{runs} / {limit} runs in the last 24 hours" in page.text
+    assert marker in page.text
+    assert absent not in page.text
+
+
+def test_client_detail_quota_falls_back_to_the_default_limit(admin_client, db_session, sample_prompt):
+    client_row = sample_prompt.prompt_set.client
+    assert client_row.daily_run_limit is None
+
+    page = admin_client.get(f"/clients/{client_row.id}")
+
+    assert "0 / 50 runs in the last 24 hours" in page.text  # SCHEDULER_DEFAULT_DAILY_RUN_LIMIT
+
+
+def test_daily_quota_usage_matches_what_check_daily_quota_enforces(db_session, seed, sample_prompt):
+    from app.services.run_execution import QuotaExceededError, check_daily_quota, daily_quota_usage
+
+    client_row = sample_prompt.prompt_set.client
+    client_row.daily_run_limit = 3
+    db_session.commit()
+    now = datetime.now(timezone.utc)
+    _add_runs(db_session, seed, sample_prompt, 2)
+
+    assert daily_quota_usage(db_session, client_id=client_row.id, now=now, default_limit=50) == (2, 3)
+    check_daily_quota(db_session, client_id=client_row.id, now=now, default_limit=50)  # 2 < 3: allowed
+
+    _add_runs(db_session, seed, sample_prompt, 1)
+
+    assert daily_quota_usage(db_session, client_id=client_row.id, now=now, default_limit=50) == (3, 3)
+    with pytest.raises(QuotaExceededError):
+        check_daily_quota(db_session, client_id=client_row.id, now=now, default_limit=50)
+
+
+def test_client_detail_shows_the_skipped_banner_for_this_client_only(admin_client, db_session, seed, sample_prompt):
+    from app.models.schedule import RunQueueItem
+
+    mine = sample_prompt.prompt_set.client
+    other = Client(name="Someone else", slug="someone-else")
+    db_session.add(other)
+    db_session.commit()
+    now = datetime.now(timezone.utc)
+    for client_row, reason in ((mine, "quota_exceeded"), (other, "worker_down")):
+        db_session.add(
+            RunQueueItem(
+                source="schedule", client_id=client_row.id, prompt_id=sample_prompt.id, model_id=seed["model"].id,
+                market_id=seed["market"].id, persona_id=seed["persona"].id, scheduled_for=now, priority=100,
+                status="skipped", skip_reason=reason, finished_at=now,
+            )
+        )
+    db_session.commit()
+
+    page = admin_client.get(f"/clients/{mine.id}")
+
+    assert "1 run(s) skipped in the last 24 hours" in page.text
+    assert "Daily quota reached: 1" in page.text
+    assert "Worker was down" not in page.text  # the other client's skip

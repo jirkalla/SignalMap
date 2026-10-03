@@ -5,7 +5,7 @@
 ## Task ID prefix: WT
 ## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-capture-robustness` a `feature/signalmap-scheduler-ops`
 
-## Status: ✅ Implementováno 2026-10-02 (T1–T4); čeká na merge do `master`, nasazení (T5) až po `feature/signalmap-scheduler-ops`
+## Status: ✅ Implementováno 2026-10-02 (T1–T4), mergnuto do `master` (PR #28); nasazení (T5) v `SO-T7` společně s `feature/signalmap-scheduler-ops` (v1.4.0)
 
 Navrženo v konverzaci 2026-09-26, z analýzy doby běhu rozvrhů
 klienta Knauf nad produkčními daty (nahranými do dev DB přes

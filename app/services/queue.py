@@ -162,8 +162,14 @@ def _enqueue_one_schedule(
     # gives the identical result. T5b point 5: this must gate a set-level window's fan-out
     # *before* its rows are inserted, not after — otherwise 225 rows could land and only then
     # discover they didn't fit.
+    #
+    # `deferred` counts too (docs/TASKS_SCHEDULER_OPS.md design decision 8): while a provider's
+    # credit is out every item waits in `deferred`, and counting only `queued` would let each new
+    # window add to those with no limit.
     queued_depth = db.scalar(
-        select(func.count(RunQueueItem.id)).where(RunQueueItem.client_id == schedule.client_id, RunQueueItem.status == "queued")
+        select(func.count(RunQueueItem.id)).where(
+            RunQueueItem.client_id == schedule.client_id, RunQueueItem.status.in_(("queued", "deferred"))
+        )
     ) or 0
 
     missed_window_rows_written = 0

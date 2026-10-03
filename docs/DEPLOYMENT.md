@@ -360,23 +360,32 @@ ssh signalmap 'cd /opt/signalmap && grep WORKER_REPLICAS .env && docker compose 
 repliky bez `--scale` (příznak `--scale` se nikde neukládá, proto se nepoužívá).
 
 **⚠️ Předpoklad před prvním nasazením tohoto vydání:** `WORKER_REPLICAS=4` musí být v
-serverovém `.env` už před 4.2. Do té doby (verze 1.3.x, bez `deploy.replicas`) běží
-čtyři workery ručním `--scale worker=4` a stejně je nutné ho použít při rollbacku
-na 1.3.x.
+serverovém `.env` už před 4.2. Ruční `--scale worker=4` se v postupu nasazení už
+nepoužívá — jen při **rollbacku na 1.3.x** (kód bez `deploy.replicas`) se čtyři workery
+spouštějí ručně `docker compose up -d --wait --scale worker=4 worker`.
 
 `WORKER_NAME` v serverovém `.env` **nesmí** být nastavený — všechny repliky by sdílely
-jedno jméno (jeden heartbeat řádek, jedna identita leasu).
+jedno jméno (jeden heartbeat řádek, jedna identita leasu). Bez něj se každý worker
+pojmenuje podle čísla své repliky (`worker-1` … `worker-4`, reverzní DNS Dockeru;
+`docs/TASKS_SCHEDULER_OPS.md` design decision 1).
 
 Od tohoto kroku může worker zapisovat nové runy; rollback ze zálohy (6.1) by
 je smazal.
 
 **Čekaný výstup:** `✓ Container signalmap-worker-1 Healthy` až `-4 Healthy` a v logu
 každé repliky (`docker compose logs --tail=20 worker`) řádek
-`Worker ... starting (dry_run=..., enabled=...)`. **Zkontroluj obě hodnoty u každé
-repliky** —
+`Worker name=worker-N hostname=<hex> starting (dry_run=..., enabled=...)`. **Zkontroluj obě
+hodnoty u každé repliky** —
 produkce má běžet s `dry_run=False` a `enabled=True`; `SCHEDULER_DRY_RUN` má
 v compose výchozí hodnotu `true`, takže chybějící řádek v `.env` znamená, že
 scheduler tiše nic nespouští.
+
+**Jména workerů.** `docker compose ps worker` má ukázat čtyři řádky
+`signalmap-worker-1` … `signalmap-worker-4` (`Up … (healthy)`) a každý má v logu
+`name=worker-N` se stejným číslem. Ukazuje-li log místo toho hex (`name=<hex>`) a varování
+`No Compose replica name found`, reverzní DNS na serveru nefunguje — worker běží dál
+pod hostname jako dřív, jen se nekryje s `docker compose ps`; viz záloha v
+`docs/TASKS_SCHEDULER_OPS.md` design decision 1.
 
 ### 4.3 Odstávková stránka VYP
 
@@ -393,9 +402,9 @@ curl --fail --show-error https://expressyourself.ai/health
 **Čekaný výstup:** `{"status":"ok"}`. `503` tady nejčastěji znamená
 zapomenutý krok 4.3 — zkontroluj `ssh signalmap 'ls /var/lib/signalmap/maintenance/'`.
 
-Pak v prohlížeči: přihlášení, `/clients`, `/ops`, `/schedules` (stav workeru
-bez varování „Scheduler not responding"), detail libovolného runu, a obrazovka, které se
-nasazovaná změna týká.
+Pak v prohlížeči: přihlášení, `/clients`, `/ops`, `/schedules` (panel workerů:
+`worker-1` … `worker-4`, žádný ve stavu „Not responding"), detail libovolného runu,
+a obrazovka, které se nasazovaná změna týká.
 
 ---
 

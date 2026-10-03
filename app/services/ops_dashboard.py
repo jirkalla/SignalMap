@@ -766,3 +766,25 @@ def verification_queue_snapshot(db: Session) -> list[VerificationQueueRow]:
     """
     rows = db.execute(select(VerificationJob.kind, VerificationJob.status, func.count()).group_by(VerificationJob.kind, VerificationJob.status)).all()
     return [VerificationQueueRow(kind=kind, status=status, count=count) for kind, status, count in rows]
+
+
+def llm_verdict_count(db: Session, run_ids_query: Select) -> int:
+    """How many `check_type='llm'` verdicts exist for the runs in scope.
+
+    Counts verdict ROWS, whatever produced them — the automatic judge that runs inside a capture
+    job (`_maybe_auto_judge`) and the manual judge jobs alike, because a verdict row does not record
+    which of the two made it. Scoped exactly like `total_verification_cost_usd` in `ops_summary`
+    (the runs in scope, not the verdict's own `created_at`), so the two figures describe the same
+    set. Not comparable with the queue table's judge row, which counts JOBS
+    (docs/TASKS_SCHEDULER_OPS.md design decision 11).
+    """
+    return (
+        db.scalar(
+            select(func.count(CitationVerification.id))
+            .select_from(CitationVerification)
+            .join(Citation, CitationVerification.citation_id == Citation.id)
+            .join(RawResponse, Citation.raw_response_id == RawResponse.id)
+            .where(CitationVerification.check_type == "llm", RawResponse.run_id.in_(run_ids_query))
+        )
+        or 0
+    )

@@ -5,7 +5,7 @@
 ## Task ID prefix: CR
 ## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-worker-throughput` a `feature/signalmap-scheduler-ops`
 
-## Status: ✅ Implementováno 2026-10-02 (T1–T4); čeká na merge do `master`, nasazení v `SO-T7` (v1.4.0)
+## Status: ✅ Implementováno 2026-10-02 (T1–T4), mergnuto do `master` (PR #27); nasazení v `SO-T7` (v1.4.0)
 
 Navrženo 2026-10-02 jako **první větev vydání 2** (`docs/ROADMAP.md` #28)
 z rozboru chybových `verification_jobs` po prvním nasazení v1.3.0 a backfillu

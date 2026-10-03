@@ -1084,3 +1084,30 @@ def test_ops_page_labels_every_capture_reason(authed_client: TestClient):
 
     for reason in CAPTURE_REASONS:
         assert f"{json.dumps(reason)}: {json.dumps(t(f'ops.capture_reason_{reason}'))}" in page
+
+
+def test_llm_verdicts_endpoint_counts_only_llm_verdicts_of_runs_in_scope(authed_client: TestClient, db_session: Session, seed: dict):
+    """docs/TASKS_SCHEDULER_OPS.md T5 / design decision 11 — verdict ROWS (automatic and manual judging
+    alike), scoped by the same run filter as the rest of the page; quote checks do not count.
+    """
+    client_row, prompt_set = _client_with_prompt_set(db_session, "Acme", "acme")
+    other_row, other_set = _client_with_prompt_set(db_session, "Other", "other")
+    now = datetime.now(timezone.utc)
+    mine = _make_run(
+        db_session, _make_prompt(db_session, prompt_set, seed["market"].id, "Mine?"), model_id=seed["model"].id,
+        market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1),
+    )
+    theirs = _make_run(
+        db_session, _make_prompt(db_session, other_set, seed["market"].id, "Theirs?"), model_id=seed["model"].id,
+        market_id=seed["market"].id, persona_id=seed["persona"].id, started_at=now - timedelta(days=1),
+    )
+    _add_citation_verification(db_session, mine, cost_usd=0.01)
+    _add_citation_verification(db_session, mine, cost_usd=0.01)
+    _add_citation_verification(db_session, mine, cost_usd=0, check_type="quote")
+    _add_citation_verification(db_session, theirs, cost_usd=0.01)
+
+    everything = authed_client.get("/ops/api/llm-verdicts?range=30d").json()
+    only_acme = authed_client.get(f"/ops/api/llm-verdicts?range=30d&client_id={client_row.id}").json()
+
+    assert everything == {"count": 3}
+    assert only_acme == {"count": 2}

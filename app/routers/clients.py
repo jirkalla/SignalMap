@@ -309,12 +309,25 @@ def client_detail(request: Request, client_id: int, db: Session = Depends(get_db
     # Deferred: app/routers/schedules.py imports from app/routers/prompts.py, so a top-level
     # import here (clients -> schedules -> prompts) risks the same cycle app/errors.py's
     # deferred `app.templating` import already documents a precedent for.
-    from app.routers.schedules import schedule_summary_text, schedule_target_display, schedules_for_client
+    from app.routers.schedules import (
+        schedule_summary_text,
+        schedule_target_display,
+        schedules_for_client,
+        skipped_banner_context,
+    )
+    from app.services.run_execution import daily_quota_usage
 
     client = _get_client_or_404(db, request, client_id)
     prompt_sets = _prompt_sets_for_client(db, client_id)
     t = get_t(request)
     schedules = schedules_for_client(db, client_id)
+    now = datetime.now(timezone.utc)
+    used, limit = daily_quota_usage(
+        db, client_id=client_id, now=now, default_limit=get_settings().scheduler_default_daily_run_limit
+    )
+    # Fraction of the quota, not a percentage string: the template only needs it for the bar width
+    # and the two thresholds (>= 80 % amber, exhausted red — design decision 9).
+    ratio = used / limit if limit > 0 else 1.0
     return render(
         request,
         "clients/detail.html",
@@ -326,6 +339,13 @@ def client_detail(request: Request, client_id: int, db: Session = Depends(get_db
             "schedule_targets": {s.id: schedule_target_display(db, s) for s in schedules},
             "show_prompt_column": True,
             "new_schedule_url": None,
+            "quota": {
+                "used": used,
+                "limit": limit,
+                "percent": min(100, round(ratio * 100)),
+                "level": "exhausted" if used >= limit else ("warning" if ratio >= 0.8 else "ok"),
+            },
+            "skipped_banner": skipped_banner_context(db, t, now=now, client_id=client_id),
         },
     )
 

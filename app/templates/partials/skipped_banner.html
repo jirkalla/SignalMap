@@ -1,0 +1,18 @@
+{#- Runs skipped in the last 24 h, by reason (docs/TASKS_SCHEDULER_OPS.md design decision 10).
+    Context: `skipped_banner` = {total, reasons: [{label, count}]} or None (renders nothing).
+    `dry_run` is never in it — it is by design, not a problem. -#}
+{% from "partials/macros.html" import icon_warning %}
+{% if skipped_banner %}
+<div class="rounded-lg border border-amber-200 bg-amber-50 p-4 mb-5 text-amber-900">
+  <div class="flex items-start gap-2">
+    <span class="text-amber-600 shrink-0 mt-0.5">{{ icon_warning('w-4 h-4') }}</span>
+    <div class="min-w-0">
+      <p class="text-sm font-medium">{{ t('schedules.skipped_banner_title').format(count=skipped_banner.total) }}</p>
+      <p class="text-xs mt-1 break-words">
+        {% for reason in skipped_banner.reasons %}{{ reason.label }}: {{ reason.count }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+      <a href="/schedules?view=history&amp;status=skipped" class="inline-block text-xs underline mt-1.5">{{ t('schedules.skipped_banner_link') }}</a>
+    </div>
+  </div>
+</div>
+{% endif %}

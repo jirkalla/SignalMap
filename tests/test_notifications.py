@@ -18,7 +18,13 @@ from sqlalchemy.orm import Session
 from app.models import AIModel, AIModelPriceComponent, Client, Prompt, RawResponse, Run
 from app.models.notification import NotificationOutbox
 from app.models.schedule import RunSchedule
-from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_worker_stale
+from app.services.notifications import (
+    check_budget_thresholds,
+    check_expiring_schedules,
+    notify,
+    notify_provider_billing_exhausted,
+    notify_worker_stale,
+)
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -211,3 +217,28 @@ def test_notify_worker_stale_refires_after_cooldown(db_session):
 
     notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "worker.stale")).all()
     assert len(notifications) == 2
+
+
+def test_notify_provider_billing_exhausted_fires_once_within_the_cooldown(db_session):
+    notify_provider_billing_exhausted(db_session, provider_code="openai", provider_name="OpenAI", now=NOW)
+    notify_provider_billing_exhausted(db_session, provider_code="openai", provider_name="OpenAI", now=NOW + timedelta(hours=5))
+
+    rows = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "provider.billing_exhausted")).all()
+    assert len(rows) == 1
+    assert rows[0].payload == {"provider_code": "openai", "provider_name": "OpenAI"}
+
+
+def test_notify_provider_billing_exhausted_refires_after_the_cooldown(db_session):
+    notify_provider_billing_exhausted(db_session, provider_code="openai", provider_name="OpenAI", now=NOW)
+    notify_provider_billing_exhausted(db_session, provider_code="openai", provider_name="OpenAI", now=NOW + timedelta(hours=7))
+
+    rows = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "provider.billing_exhausted")).all()
+    assert len(rows) == 2
+
+
+def test_notify_provider_billing_exhausted_is_per_provider(db_session):
+    notify_provider_billing_exhausted(db_session, provider_code="openai", provider_name="OpenAI", now=NOW)
+    notify_provider_billing_exhausted(db_session, provider_code="anthropic", provider_name="Anthropic", now=NOW)
+
+    rows = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "provider.billing_exhausted")).all()
+    assert {r.payload["provider_code"] for r in rows} == {"openai", "anthropic"}

@@ -231,6 +231,11 @@
           </tbody>
         </table>
       </div>
+      <div class="px-4 py-3 border-t border-stone-100 text-sm">
+        <span class="text-stone-500">{{ t('ops.llm_verdicts_label') }}:</span>
+        <span class="ml-1 font-mono font-medium text-stone-800">[[ fmtInt(llmVerdictCount) ]]</span>
+        <p class="text-xs text-stone-400 mt-1 max-w-prose">{{ t('ops.llm_verdicts_help') }}</p>
+      </div>
     </div>
 
     {# Capture success by reason (T16) — one row per outcome (success, not yet captured, or a
@@ -501,6 +506,7 @@
       const userDetail = ref(null);
       const captureReasons = ref([]);
       const verificationQueue = ref([]);
+      const llmVerdictCount = ref(0);
 
       function baseParams() {
         const p = new URLSearchParams();
@@ -552,7 +558,7 @@
         try {
           if (drill.level === 'global') {
             const p = baseParams();
-            const [s, d, pr, c, u, cr, vq] = await Promise.all([
+            const [s, d, pr, c, u, cr, vq, lv] = await Promise.all([
               fetchJson('/ops/api/summary', p),
               fetchJson('/ops/api/daily', p),
               fetchJson('/ops/api/providers', p),
@@ -562,10 +568,12 @@
               // Deliberately its own, unfiltered params — live global queue depth, never scoped by
               // this page's range/client controls (see the queue tile's own template comment).
               fetchJson('/ops/api/verification-queue', new URLSearchParams()),
+              // Unlike the queue table above, this one IS scoped by the page's range/client filters.
+              fetchJson('/ops/api/llm-verdicts', p),
             ]);
             if (generation !== fetchGeneration) return;
             summary.value = s; daily.value = d; providers.value = pr; clients.value = c; users.value = u;
-            captureReasons.value = cr; verificationQueue.value = vq;
+            captureReasons.value = cr; verificationQueue.value = vq; llmVerdictCount.value = lv.count;
           } else if (drill.level === 'client') {
             const p = baseParams(); p.set('client_id', drill.clientId);
             const [s, d, ps] = await Promise.all([
@@ -748,7 +756,7 @@
 
       return {
         ranges, filters, drill, loading, loadError, summary, daily, providers, clients, users, promptSets, prompts, promptDetail, userDetail,
-        captureReasons, verificationQueue,
+        captureReasons, verificationQueue, llmVerdictCount,
         noData, errorCountSuffix, successRateOkLabel, captureKindLabel, judgeKindLabel,
         goGlobal, goClient, goSet, goPrompt, goUser,
         fmtInt, fmtCost, fmtTokens, fmtMs, fmtDate, truncate, queueCount, captureReasonLabel,

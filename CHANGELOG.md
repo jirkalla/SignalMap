@@ -11,11 +11,46 @@ not a public API.
 
 ## [Unreleased]
 
+### Added
+
+- The worker panel on `/schedules` shows, for every worker, its name,
+  state, last signal and what it is processing right now (client,
+  model, run), with a "Long call" flag for work that runs unusually
+  long. It refreshes every 10 seconds.
+- The client page shows the daily run quota — runs used out of the
+  limit in the last 24 hours — in amber from 80 % and in red once the
+  limit is reached.
+- `/schedules` and the client page show a banner with the runs skipped
+  in the last 24 hours, broken down by reason (dry runs are not
+  counted).
+- One notification when a provider's credit runs out (at most once per
+  provider every 6 hours), instead of a failure notification for every
+  run.
+- `/ops` shows the number of LLM verdicts for the selected range and
+  client, next to the verification queue.
+
 ### Changed
 
 - Scheduled runs are processed several times faster: the worker no
   longer pauses between queue items, and more than one worker can run
   at once (`WORKER_REPLICAS`).
+- Workers are named `worker-1` … `worker-N`, matching the containers in
+  `docker compose ps`, instead of a random container ID. Entries of
+  workers that disappeared without a clean shutdown are removed after
+  an hour.
+- When a provider's credit is exhausted, the affected runs wait and are
+  retried every 30 minutes until the end of the grace period, instead
+  of failing after three attempts within minutes. They count towards
+  the client's queue limit while they wait.
+- Authentication errors and invalid requests are no longer retried;
+  temporary errors (rate limit, provider outage, timeout) are tried four
+  times, after 1, 5 and 25 minutes. Every attempt now records its error
+  category in the queue item.
+- The reason a run was skipped is shown in plain language in the
+  History view.
+- The "LLM judge" row of the verification queue on `/ops` is renamed
+  "Manual LLM judging (jobs)": it counts only the jobs started by hand,
+  not the automatic judging that runs inside capture jobs.
 
 ### Fixed
 

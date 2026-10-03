@@ -2,7 +2,8 @@
 TASKS_SCHEDULER.md T8, design decision 25) — plus the two periodic checks (`schedule.expiring_soon`,
 `budget.threshold_exceeded`) that don't originate from a single event but from observing state.
 
-Five event types are wired up in this branch: `schedule.run_failed` (app/worker.py, after a queue
+Six event types are wired up in this branch (`provider.billing_exhausted`, raised by app/worker.py
+when a provider reports an empty balance, is the sixth — see `notify_provider_billing_exhausted`): `schedule.run_failed` (app/worker.py, after a queue
 item's final failed attempt), `schedule.window_skipped` (app/services/queue.py, one summary row
 per ticker pass, not one per skipped window), `worker.stale` (app/routers/schedules.py, detected
 by the web app when /schedules is viewed — a dead worker cannot report its own death), and the two
@@ -31,6 +32,11 @@ logger = logging.getLogger(__name__)
 # one for the same worker — long enough not to re-notify on every single page view of a stale
 # worker, short enough that a long outage still gets periodic re-alerts, not exactly one ever.
 _WORKER_STALE_COOLDOWN = timedelta(minutes=60)
+
+# Cooldown for provider.billing_exhausted, per provider (docs/TASKS_SCHEDULER_OPS.md design
+# decision 7): a billing failure defers its item and retries every 30 min until the credit is
+# topped up, so without this one empty account would notify on every attempt of every item.
+_PROVIDER_BILLING_COOLDOWN = timedelta(hours=6)
 
 # How close to its own end a schedule has to be before schedule.expiring_soon fires (design
 # decision 31) — whichever of the two end conditions (date or occurrence count) is set.
@@ -200,3 +206,22 @@ def notify_quota_exceeded(db: Session, *, client_id: int, client_name: str, reas
     if _already_notified(db, event_type="quota.exceeded", payload_key="client_id", payload_value=str(client_id), since=since):
         return
     notify(db, "quota.exceeded", {"client_id": client_id, "client_name": client_name, "reason": reason})
+
+
+def notify_provider_billing_exhausted(db: Session, *, provider_code: str, provider_name: str, now: datetime) -> None:
+    """Fire `provider.billing_exhausted` at most once per provider per 6 hours.
+
+    Called by the worker every time a run fails with the `billing` category (the account is out of
+    credit). The failed items are not lost — they wait in `deferred` until the credit returns or
+    their grace runs out — so this is the one signal that a human has to top the account up, and
+    repeating it for every attempt of every waiting item would only bury it.
+    """
+    if _already_notified(
+        db,
+        event_type="provider.billing_exhausted",
+        payload_key="provider_code",
+        payload_value=provider_code,
+        since=now - _PROVIDER_BILLING_COOLDOWN,
+    ):
+        return
+    notify(db, "provider.billing_exhausted", {"provider_code": provider_code, "provider_name": provider_name}, now=now)

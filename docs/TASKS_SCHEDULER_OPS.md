@@ -5,7 +5,9 @@
 ## Task ID prefix: SO
 ## Cílová verze: v1.4.0 (MINOR) — společně s `feature/signalmap-worker-throughput`
 
-Status: navrženo 2026-09-30 jako **vydání 2** z plánu vydání
+## Status: ✅ Implementováno 2026-10-03 (T1–T6); čeká na merge do `master`, nasazení v T7 (v1.4.0)
+
+Navrženo 2026-09-30 jako **vydání 2** z plánu vydání
 (`docs/ROADMAP.md` „Plán vydání"). Pokrývá `docs/ROADMAP.md` #24, #21
 (první část) a #20. Sedm úkolů, bez migrace.
 
@@ -165,12 +167,12 @@ automatické posouzení běží uvnitř capture jobu (`_maybe_auto_judge`,
 
 | ID | Name | Status |
 |----|------|--------|
-| T1 | Jméno workeru z čísla repliky + úklid heartbeatů | ⏳ |
-| T2 | Panel workerů na `/schedules` (co právě dělá) | ⏳ |
-| T3 | Kategorie chyb providera + chování workeru | ⏳ |
-| T4 | Billing notifikace, retry politika, hloubka fronty | ⏳ |
-| T5 | Kvóta a přeskočené runy v UI, /ops judge popisek | ⏳ |
-| T6 | Dokumentace + CHANGELOG | ⏳ |
+| T1 | Jméno workeru z čísla repliky + úklid heartbeatů | ✅ |
+| T2 | Panel workerů na `/schedules` (co právě dělá) | ✅ |
+| T3 | Kategorie chyb providera + chování workeru | ✅ |
+| T4 | Billing notifikace, retry politika, hloubka fronty | ✅ |
+| T5 | Kvóta a přeskočené runy v UI, /ops judge popisek | ✅ |
+| T6 | Dokumentace + CHANGELOG | ✅ |
 | T7 | Nasazení v1.4.0 (vč. WT-T5) a měření | ⏳ |
 
 ---
