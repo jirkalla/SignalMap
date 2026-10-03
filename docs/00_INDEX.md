@@ -26,6 +26,7 @@ Nothing in progress right now.
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
+| TASKS_SCHEDULER_OPS | SO | feature/signalmap-scheduler-ops | #29 | 2026-10-03 | Release 2 (v1.4.0): deploys together with CR and WT in SO-T7 (version bump, tag and deploy pending) |
 | TASKS_WORKER_THROUGHPUT | WT | feature/signalmap-worker-throughput | #28 | 2026-10-02 | Deploys with release 2 (v1.4.0, SO-T7), not on its own |
 | TASKS_CAPTURE_ROBUSTNESS | CR | feature/signalmap-capture-robustness | #27 | 2026-10-02 | Deploys with release 2 (v1.4.0, SO-T7), not on its own |
 | TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
