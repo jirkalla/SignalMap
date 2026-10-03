@@ -64,6 +64,7 @@ from app.models.provider import AIModel
 from app.models.run import Run
 from app.models.schedule import RunQueueItem
 from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_quota_exceeded
+from app.services.provider_errors import ErrorCategory, classify_provider_error
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
 from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
 from app.services.schedule_monitor import delete_stale_heartbeats
@@ -207,27 +208,22 @@ def _backoff_minutes(attempts: int) -> int:
     return _BACKOFF_MINUTES[min(index, len(_BACKOFF_MINUTES) - 1)]
 
 
+# A billing failure (account out of credit) waits this long between attempts instead of using the
+# 1/5/25 min backoff: nothing changes until someone tops the account up, and each attempt creates
+# a Run row (evidence, NFR-6), so polling every minute would only fill the table with errors.
+_BILLING_RETRY_MINUTES = 30
+
+
 def _is_retryable_error(exc: Exception) -> bool:
-    """Whether `exc` (as raised by a provider adapter, app/adapters/*.py) is worth retrying.
+    """Whether `exc` (as raised by a provider adapter, app/adapters/*.py) is worth retrying on
+    the 1/5/25 min backoff — a thin view over `classify_provider_error`, which holds the actual
+    rules (docs/TASKS_SCHEDULER_OPS.md design decision 4).
 
-    Duck-typed on `status_code`/`code` rather than importing each provider SDK's exception
-    classes directly — a worker reaching into `anthropic.RateLimitError` etc. would be exactly
-    the kind of provider-specific coupling the adapter layer exists to prevent (app/adapters/
-    base.py). All three SDKs (google-genai, anthropic, openai) attach one of these two attribute
-    names to a real API error response; an exception with NEITHER never got a response at all —
-    a DNS failure, connection refused, or timeout — which is transient by definition.
-
-    429 (rate limited) and 5xx (provider-side failure) are retryable; any other HTTP status
-    (400, 401, 404, ...) reflects something wrong with the request itself, which retrying would
-    only repeat identically — that is the "terminal" case docs/TASKS_SCHEDULER.md T3 describes
-    as "a chyba, kterou provider vrátil po odpovědi".
+    Rate limits, transient failures and unclassifiable ones are retried; `auth` and
+    `invalid_request` would only fail identically again. `billing` is False here too: it is not
+    retried on the backoff but deferred on its own schedule (`_BILLING_RETRY_MINUTES`).
     """
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        status_code = getattr(exc, "code", None)
-    if isinstance(status_code, int):
-        return status_code == 429 or status_code >= 500
-    return True
+    return classify_provider_error(exc) in (ErrorCategory.RATE_LIMIT, ErrorCategory.TRANSIENT, ErrorCategory.UNKNOWN)
 
 
 def process_claimed_item(
@@ -250,7 +246,12 @@ def process_claimed_item(
     # worker that fell behind must give up on a stale item exactly like one that was down when
     # it should have been enqueued, and for the same two reasons (unplanned cost, wrong-dated
     # evidence) design decision 11 already gives for skipping it at enqueue time instead.
-    if now - item.scheduled_for > timedelta(minutes=grace_period_minutes):
+    #
+    # Measured from the item's ORIGINAL time, `min(scheduled_for, queued_at)`: a retry or a billing
+    # deferral pushes `scheduled_for` forward, and grace must stay the maximum age of the item
+    # (docs/TASKS_SCHEDULER_OPS.md design decision 5) — otherwise an item deferred every 30 min
+    # would never expire.
+    if now - min(item.scheduled_for, item.queued_at or item.scheduled_for) > timedelta(minutes=grace_period_minutes):
         item.status = "skipped"
         item.skip_reason = "grace_expired"
         item.finished_at = now
@@ -340,6 +341,18 @@ def process_claimed_item(
             reraise_on_failure=True,
         )
     except Exception as exc:  # noqa: BLE001 - classified below, not swallowed silently
+        category = classify_provider_error(exc)
+        # Every attempt records why it failed, retried or not (it used to be only the terminal one).
+        item.last_error = f"[{category.value}] {exc}"
+
+        if category is ErrorCategory.BILLING:
+            # Out of credit: wait for a top-up. Not counted in transport_attempts — the item ends
+            # only when its grace runs out (checked at the top of this function), not after N tries.
+            item.status = "deferred"
+            item.scheduled_for = now + timedelta(minutes=_BILLING_RETRY_MINUTES)
+            db.commit()
+            return
+
         # transport_attempts is its own counter, separate from the claim counter `item.attempts`
         # (found in code review, 2026-09-22) — a collision deferral never touches this one, so an
         # item that bounced a few times before ever reaching the provider still gets its full 3
@@ -351,7 +364,6 @@ def process_claimed_item(
             db.commit()
         else:
             item.status = "error"
-            item.last_error = str(exc)
             item.finished_at = now
             db.commit()
             # Only on the FINAL failure, never on a transport retry above — T8 design decision

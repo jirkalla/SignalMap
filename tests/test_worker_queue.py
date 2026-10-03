@@ -1065,3 +1065,123 @@ def test_retry_all_errors_respects_search_filter(db_session, seed, sample_prompt
     retries = db_session.scalars(select(RunQueueItem).where(RunQueueItem.retry_of_id.is_not(None))).all()
     assert len(retries) == 1
     assert retries[0].retry_of_id == matching.id
+
+
+# ---------------------------------------------------------------------------
+# provider error categories (docs/TASKS_SCHEDULER_OPS.md T3, design decisions 4-5)
+# ---------------------------------------------------------------------------
+
+
+def _real_error(kind: str) -> Exception:
+    """Real SDK exceptions, built the way the SDKs build them (see tests/test_provider_errors.py)."""
+    if kind == "billing":
+        body = {"message": "You exceeded your current quota", "type": "insufficient_quota", "code": "insufficient_quota"}
+        return openai.RateLimitError(
+            body["message"], response=httpx.Response(429, json={"error": body}, request=_TIMEOUT_REQUEST), body=body
+        )
+    if kind == "auth":
+        body = {"message": "Incorrect API key", "type": "invalid_request_error", "code": "invalid_api_key"}
+        return openai.AuthenticationError(
+            body["message"], response=httpx.Response(401, json={"error": body}, request=_TIMEOUT_REQUEST), body=body
+        )
+    if kind == "transient":
+        return openai.APITimeoutError(request=_TIMEOUT_REQUEST)
+    raise AssertionError(kind)
+
+
+def _process(db_session, item, **overrides):
+    kwargs = dict(now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
+    kwargs.update(overrides)
+    process_claimed_item(db_session, item, **kwargs)
+
+
+def test_billing_error_defers_for_30_minutes_without_using_a_transport_attempt(db_session, seed, sample_prompt, prompt_client):
+    FakeAdapter.error_to_raise = _real_error("billing")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=1
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "deferred"
+    assert item.scheduled_for == NOW + timedelta(minutes=30)
+    assert item.transport_attempts == 1  # unchanged: billing never exhausts the retry budget
+    assert item.finished_at is None
+    assert item.last_error.startswith("[billing] ")
+    assert db_session.scalars(select(NotificationOutbox)).all() == []  # the item did not end
+    # NFR-6: the attempt still left its Run row behind, with the error on it.
+    run = db_session.get(Run, item.run_id)
+    assert run.status == "error"
+
+
+def test_a_billing_deferral_survives_the_attempt_limit_but_ends_at_grace(db_session, seed, sample_prompt, prompt_client):
+    """The deferral pushed `scheduled_for` forward; grace must still count from the original time."""
+    FakeAdapter.error_to_raise = RuntimeError("must not call the provider after grace has expired")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="deferred", scheduled_for=NOW, queued_at=NOW - timedelta(minutes=361), transport_attempts=1,
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "skipped"
+    assert item.skip_reason == "grace_expired"
+
+
+def test_a_billing_deferral_inside_grace_is_still_tried(db_session, seed, sample_prompt, prompt_client):
+    FakeAdapter.error_to_raise = _real_error("billing")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="deferred", scheduled_for=NOW, queued_at=NOW - timedelta(minutes=300),
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "deferred"
+    assert item.scheduled_for == NOW + timedelta(minutes=30)
+
+
+def test_auth_error_fails_immediately_without_retry(db_session, seed, sample_prompt, prompt_client):
+    FakeAdapter.error_to_raise = _real_error("auth")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=0
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "error"
+    assert item.last_error.startswith("[auth] ")
+    assert item.finished_at == NOW
+    assert len(db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.run_failed")).all()) == 1
+
+
+def test_transient_error_requeues_with_backoff_and_records_the_category(db_session, seed, sample_prompt, prompt_client):
+    FakeAdapter.error_to_raise = _real_error("transient")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=0
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "queued"
+    assert item.transport_attempts == 1
+    assert item.scheduled_for == NOW + timedelta(minutes=1)
+    assert item.last_error.startswith("[transient] ")  # recorded on a retry too, not only the final failure
+
+
+def test_an_unclassifiable_error_is_retried_like_before_and_tagged_unknown(db_session, seed, sample_prompt, prompt_client):
+    FakeAdapter.error_to_raise = ValueError("adapter returned garbage")
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1, transport_attempts=0
+    )
+
+    _process(db_session, item)
+
+    assert item.status == "queued"
+    assert item.last_error.startswith("[unknown] ")
+
+
+def test_is_retryable_error_is_false_for_billing_and_auth(db_session):
+    assert _is_retryable_error(_real_error("billing")) is False  # deferred on its own schedule instead
+    assert _is_retryable_error(_real_error("auth")) is False
+    assert _is_retryable_error(_real_error("transient")) is True
