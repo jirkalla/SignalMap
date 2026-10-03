@@ -1073,7 +1073,7 @@ a před každým zkouška na kopii produkční DB.
 | Vydání | Verze | Větve v pořadí | Obsah | Migrace |
 |---|---|---|---|---|
 | 1 — Vision + citation hardening ✅ (2026-10-02) | v1.3.0 | `client-vision` → `citation-hardening` | #23, #19 | 1× přidání |
-| 2 — Scheduler ops | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
+| 2 — Scheduler ops (implementováno 2026-10-03, čeká na nasazení) | v1.4.0 | `capture-robustness` → `worker-throughput` → `scheduler-ops` | #28, WT (#18 A+B), #24, #21 (kategorie chyb, retry), #20 | ne |
 | 3 — Market locale names | v1.5.0 | `market-locale-names` | #22 (jediná změna metodiky) | 1× přidání |
 | 4 — Metriky + Export v2 | v1.6.0 | `metric-definitions` → `export-v2` | #26, #25, #21 (History filtry) | ne |
 

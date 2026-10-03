@@ -26,6 +26,7 @@ Nothing in progress right now.
 
 | Document | Prefix | Branch | PR | Merged | Notes |
 |---|---|---|---|---|---|
+| TASKS_WORKER_THROUGHPUT | WT | feature/signalmap-worker-throughput | #28 | 2026-10-02 | Deploys with release 2 (v1.4.0, SO-T7), not on its own |
 | TASKS_CAPTURE_ROBUSTNESS | CR | feature/signalmap-capture-robustness | #27 | 2026-10-02 | Deploys with release 2 (v1.4.0, SO-T7), not on its own |
 | TASKS_CITATION_VERIFICATION | CV | feature/signalmap-citation-verification | #24 | 2026-09-30 | Production deploy and verification (T18) not done yet |
 | TASKS_PEEC_COMPARISON | PC | feature/signalmap-peec-comparison | #23 | 2026-09-28 | Local tool only, nothing to deploy; its CHANGELOG entry ships with the next release |
