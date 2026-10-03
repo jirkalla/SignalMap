@@ -11,6 +11,8 @@ not a public API.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-03
+
 ### Added
 
 - The worker panel on `/schedules` shows, for every worker, its name,
