@@ -493,6 +493,7 @@
   "notifications.schedule_run_failed": "{client_name}: run failed for \"{prompt_text}\"",
   "notifications.schedule_window_skipped": "{count} window(s) skipped because the worker was down ({client_names})",
   "notifications.worker_stale": "Scheduler worker \"{worker_name}\" hasn't reported in",
+  "notifications.provider_billing_exhausted": "Provider \"{provider_name}\" is out of credit — affected runs are waiting and will resume after a top-up",
   "notifications.schedule_expiring_soon_days": "{client_name}: \"{target_label}\" ends in {days} day(s)",
   "notifications.schedule_expiring_soon_occurrences": "{client_name}: \"{target_label}\" has {count} run(s) left before it ends",
   "notifications.budget_threshold_exceeded": "{client_name} has exceeded its monthly budget (${spend} of ${budget})",

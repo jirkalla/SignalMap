@@ -1005,6 +1005,9 @@ def _notification_text_and_url(t, notification: NotificationOutbox) -> tuple[str
     if notification.event_type == "worker.stale":
         text = t("notifications.worker_stale").format(worker_name=payload.get("worker_name", ""))
         return text, "/schedules?view=queue"
+    if notification.event_type == "provider.billing_exhausted":
+        text = t("notifications.provider_billing_exhausted").format(provider_name=payload.get("provider_name") or "?")
+        return text, "/schedules?view=queue"
     if notification.event_type == "schedule.expiring_soon":
         client_name = payload.get("client_name") or "?"
         target_label = payload.get("target_label") or "?"

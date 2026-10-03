@@ -60,10 +60,16 @@ from app.models.market import Market
 from app.models.notification import WorkerHeartbeat
 from app.models.persona import Persona
 from app.models.prompt import Prompt
-from app.models.provider import AIModel
+from app.models.provider import AIModel, Provider
 from app.models.run import Run
 from app.models.schedule import RunQueueItem
-from app.services.notifications import check_budget_thresholds, check_expiring_schedules, notify, notify_quota_exceeded
+from app.services.notifications import (
+    check_budget_thresholds,
+    check_expiring_schedules,
+    notify,
+    notify_provider_billing_exhausted,
+    notify_quota_exceeded,
+)
 from app.services.provider_errors import ErrorCategory, classify_provider_error
 from app.services.queue import claim_next, enqueue_due_schedules, reconcile_interrupted_runs, release_expired_leases
 from app.services.run_execution import QuotaExceededError, build_request_payload, check_daily_quota, execute_run
@@ -90,9 +96,16 @@ _HEARTBEAT_INTERVAL_SECONDS = 10
 # RunQueueItem.attempts / .transport_attempts docstrings for why): a collision with a
 # still-running Run for the same prompt+model (design decision 17, `item.attempts`, never
 # terminal, capped at the last step forever) and a retryable transport/429 provider failure
-# (`item.transport_attempts`, terminal once it reaches len(this list), i.e. 3 tries).
+# (`item.transport_attempts`, terminal once it reaches `_MAX_TRANSPORT_ATTEMPTS`).
+#
+# Two different limits, easy to confuse (docs/TASKS_SCHEDULER_OPS.md design decision 6):
+#   * grace (SCHEDULER_GRACE_PERIOD_MINUTES) = the maximum AGE of a queue item, measured from its
+#     original time; whatever the item is waiting for, it is dropped as `grace_expired` after that.
+#   * transport attempts = how many times a TRANSIENT provider failure is tried before the item
+#     becomes an error. One more than the backoff steps: the first try plus one retry after each
+#     of 1/5/25 min, so every step is actually used (it used to stop at 3 and never reach 25).
 _BACKOFF_MINUTES = (1, 5, 25)
-_MAX_TRANSPORT_ATTEMPTS = len(_BACKOFF_MINUTES)
+_MAX_TRANSPORT_ATTEMPTS = len(_BACKOFF_MINUTES) + 1
 
 
 _REPLICA_NAME_RE = re.compile(r"-worker-(\d+)(?:\.|$)")
@@ -351,12 +364,21 @@ def process_claimed_item(
             item.status = "deferred"
             item.scheduled_for = now + timedelta(minutes=_BILLING_RETRY_MINUTES)
             db.commit()
+            # One notification per provider per 6 h (design decision 7) instead of the
+            # schedule.run_failed an ended item would send — this one has not ended.
+            provider = db.get(Provider, model.provider_id)
+            notify_provider_billing_exhausted(
+                db,
+                provider_code=provider.code if provider is not None else "?",
+                provider_name=provider.name if provider is not None else "?",
+                now=now,
+            )
             return
 
         # transport_attempts is its own counter, separate from the claim counter `item.attempts`
         # (found in code review, 2026-09-22) — a collision deferral never touches this one, so an
-        # item that bounced a few times before ever reaching the provider still gets its full 3
-        # genuine transport tries.
+        # item that bounced a few times before ever reaching the provider still gets its full
+        # `_MAX_TRANSPORT_ATTEMPTS` genuine transport tries.
         item.transport_attempts += 1
         if _is_retryable_error(exc) and item.transport_attempts < _MAX_TRANSPORT_ATTEMPTS:
             item.status = "queued"

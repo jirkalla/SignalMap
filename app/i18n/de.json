@@ -493,6 +493,7 @@
   "notifications.schedule_run_failed": "{client_name}: Run fehlgeschlagen für „{prompt_text}“",
   "notifications.schedule_window_skipped": "{count} Fenster übersprungen, weil der Worker nicht lief ({client_names})",
   "notifications.worker_stale": "Planer-Worker „{worker_name}“ hat sich nicht gemeldet",
+  "notifications.provider_billing_exhausted": "Anbieter „{provider_name}“ hat kein Guthaben mehr – betroffene Runs warten und laufen nach dem Aufladen weiter",
   "notifications.schedule_expiring_soon_days": "{client_name}: „{target_label}“ endet in {days} Tag(en)",
   "notifications.schedule_expiring_soon_occurrences": "{client_name}: „{target_label}“ hat noch {count} Lauf/Läufe bis zum Ende",
   "notifications.budget_threshold_exceeded": "{client_name} hat das Monatsbudget überschritten (${spend} von ${budget})",

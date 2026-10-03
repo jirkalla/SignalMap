@@ -707,13 +707,65 @@ def test_retryable_error_does_not_notify(db_session, seed, sample_prompt, prompt
 def test_retryable_error_becomes_terminal_after_max_transport_attempts(db_session, seed, sample_prompt, prompt_client):
     FakeAdapter.error_to_raise = _RetryableError(503)
     item = _make_queue_item(
-        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], transport_attempts=2
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], transport_attempts=3
     )
 
     process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
 
     assert item.status == "error"
+    assert item.transport_attempts == 4
+
+
+def test_the_fourth_transient_failure_uses_the_25_minute_step(db_session, seed, sample_prompt, prompt_client):
+    """docs/TASKS_SCHEDULER_OPS.md design decision 6 — 4 tries, so every 1/5/25 step is reachable
+    (it used to go terminal on the 3rd failure and the 25-minute step was dead code).
+    """
+    FakeAdapter.error_to_raise = _RetryableError(503)
+    item = _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], transport_attempts=2
+    )
+
+    process_claimed_item(db_session, item, now=NOW, dry_run=False, grace_period_minutes=360, default_daily_run_limit=50)
+
+    assert item.status == "queued"
     assert item.transport_attempts == 3
+    assert item.scheduled_for == NOW + timedelta(minutes=25)
+
+
+def test_billing_errors_of_the_same_provider_notify_once(db_session, seed, sample_prompt, prompt_client):
+    """Design decision 7 — two items hitting the same empty account produce ONE notification."""
+    FakeAdapter.error_to_raise = _real_error("billing")
+    first = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
+    _process(db_session, first)
+    db_session.expire_all()
+    second = _make_queue_item(db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], attempts=1)
+    _process(db_session, second, now=NOW + timedelta(minutes=30))
+
+    assert first.status == "deferred" and second.status == "deferred"
+    notifications = db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "provider.billing_exhausted")).all()
+    assert len(notifications) == 1
+    assert notifications[0].payload["provider_code"] == seed["model"].provider.code
+    # and the deferred items did not fire the "ended" notification either
+    assert db_session.scalars(select(NotificationOutbox).where(NotificationOutbox.event_type == "schedule.run_failed")).all() == []
+
+
+def test_deferred_items_count_toward_the_client_queue_depth(db_session, seed, sample_prompt, prompt_client, admin_user):
+    """Design decision 8 — while a provider's credit is out, items wait in `deferred`; they must
+    still fill the client's depth cap, or each window would add to them without limit.
+    """
+    _make_queue_item(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"],
+        status="deferred", scheduled_for=NOW + timedelta(minutes=30),
+    )
+    schedule = _make_schedule(
+        db_session, prompt=sample_prompt, client=prompt_client, model=seed["model"], persona=seed["persona"], admin_user=admin_user
+    )
+
+    enqueue_due_schedules(db_session, now=NOW, grace_period_minutes=360, max_queue_depth_per_client=1)
+
+    items = db_session.scalars(select(RunQueueItem).where(RunQueueItem.schedule_id == schedule.id)).all()
+    assert len(items) == 1
+    assert items[0].skip_reason == "queue_depth_exceeded"
 
 
 def test_transport_attempts_survive_an_unrelated_collision_deferral(db_session, seed, sample_prompt, prompt_client):
@@ -1108,7 +1160,8 @@ def test_billing_error_defers_for_30_minutes_without_using_a_transport_attempt(d
     assert item.transport_attempts == 1  # unchanged: billing never exhausts the retry budget
     assert item.finished_at is None
     assert item.last_error.startswith("[billing] ")
-    assert db_session.scalars(select(NotificationOutbox)).all() == []  # the item did not end
+    # the item did not end, so no "run failed"; the only notification is the once-per-provider billing one
+    assert [n.event_type for n in db_session.scalars(select(NotificationOutbox))] == ["provider.billing_exhausted"]
     # NFR-6: the attempt still left its Run row behind, with the error on it.
     run = db_session.get(Run, item.run_id)
     assert run.status == "error"
