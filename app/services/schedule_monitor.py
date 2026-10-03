@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import String, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import AIModel, Client, Persona, Prompt
+from app.models import AIModel, Client, Persona, Prompt, PromptSet, RawResponse, Run, VerificationJob
 from app.models.notification import WorkerHeartbeat
 from app.models.schedule import RunQueueItem
 
@@ -35,11 +35,29 @@ _TERMINAL_STATUSES = ("done", "error", "skipped", "cancelled")
 
 
 @dataclass
+class WorkerWork:
+    """What one worker is processing right now: a leased `run_queue` item (`kind='run'`) or a
+    leased `verification_job` (`kind='capture'`/`'judge'`).
+    """
+
+    kind: str
+    client_name: str | None
+    model_name: str | None
+    run_id: int | None
+    since: datetime
+    seconds: float
+    is_long: bool
+
+
+@dataclass
 class WorkerStatus:
     """One `worker_heartbeats` row with staleness already resolved against `now` — the /schedules
+    worker panel exists because a stopped worker and an empty queue look identical otherwise
+    (design decision 19), and shows what each worker is working on (docs/TASKS_SCHEDULER_OPS.md
+    design decision 3).
 
-    status bar exists because a stopped worker and an empty queue look identical otherwise
-    (design decision 19).
+    A worker runs one thing at a time (run_queue first, a verification job only when the queue had
+    nothing due), so at most one of `current_run` / `current_job` is set.
     """
 
     worker_name: str
@@ -47,15 +65,98 @@ class WorkerStatus:
     seconds_since: float
     is_stale: bool
     dry_run: bool
+    current_run: WorkerWork | None = None
+    current_job: WorkerWork | None = None
+
+    @property
+    def current_work(self) -> WorkerWork | None:
+        return self.current_run or self.current_job
 
 
-def worker_statuses(db: Session, *, now: datetime) -> list[WorkerStatus]:
-    """Every known worker's liveness, most recently seen first. Empty only when no worker has
+def _leased_run_work(
+    db: Session, *, now: datetime, lease_minutes: int, long_call_seconds: float
+) -> dict[str, WorkerWork]:
+    """Leased `run_queue` items keyed by `leased_by` — one query for all workers.
 
-    ever written a heartbeat at all (the router renders that as its own "never seen" state,
-    distinct from a specific named worker having gone stale).
+    "Since" is the START OF THE CURRENT CLAIM, `leased_until - lease_minutes`, not
+    `RunQueueItem.started_at`: that column is only set on an item's first claim, so a retried item
+    would otherwise show the age of its first attempt.
     """
-    rows = db.scalars(select(WorkerHeartbeat).order_by(WorkerHeartbeat.last_seen_at.desc())).all()
+    rows = db.execute(
+        select(RunQueueItem, Client.name, AIModel)
+        .join(Client, RunQueueItem.client_id == Client.id)
+        .join(AIModel, RunQueueItem.model_id == AIModel.id)
+        .where(RunQueueItem.status == "leased", RunQueueItem.leased_by.is_not(None), RunQueueItem.leased_until.is_not(None))
+    ).all()
+    work: dict[str, WorkerWork] = {}
+    for item, client_name, model in rows:
+        since = item.leased_until - timedelta(minutes=lease_minutes)
+        seconds = max(0.0, (now - since).total_seconds())
+        work[item.leased_by] = WorkerWork(
+            kind="run",
+            client_name=client_name,
+            model_name=model.display_name or model.model_name,
+            run_id=item.run_id,
+            since=since,
+            seconds=seconds,
+            is_long=seconds > long_call_seconds,
+        )
+    return work
+
+
+def _leased_job_work(
+    db: Session, *, now: datetime, lease_minutes: int, long_call_seconds: float
+) -> dict[str, WorkerWork]:
+    """Leased `verification_jobs` keyed by `leased_by` — same shape as `_leased_run_work`."""
+    rows = db.execute(
+        select(VerificationJob, RawResponse.run_id, Client.name, AIModel)
+        .join(RawResponse, VerificationJob.raw_response_id == RawResponse.id)
+        .join(Run, RawResponse.run_id == Run.id)
+        .join(Prompt, Run.prompt_id == Prompt.id)
+        .join(PromptSet, Prompt.prompt_set_id == PromptSet.id)
+        .join(Client, PromptSet.client_id == Client.id)
+        .join(AIModel, Run.model_id == AIModel.id)
+        .where(
+            VerificationJob.status == "leased",
+            VerificationJob.leased_by.is_not(None),
+            VerificationJob.lease_expires_at.is_not(None),
+        )
+    ).all()
+    work: dict[str, WorkerWork] = {}
+    for job, run_id, client_name, model in rows:
+        since = job.lease_expires_at - timedelta(minutes=lease_minutes)
+        seconds = max(0.0, (now - since).total_seconds())
+        work[job.leased_by] = WorkerWork(
+            kind=job.kind,
+            client_name=client_name,
+            model_name=model.display_name or model.model_name,
+            run_id=run_id,
+            since=since,
+            seconds=seconds,
+            is_long=seconds > long_call_seconds,
+        )
+    return work
+
+
+def worker_statuses(
+    db: Session,
+    *,
+    now: datetime,
+    run_lease_minutes: int = 15,
+    job_lease_minutes: int = 15,
+    long_call_seconds: float = 240,
+) -> list[WorkerStatus]:
+    """Every known worker's liveness and current work, sorted by name. Empty only when no worker
+
+    has ever written a heartbeat at all (the router renders that as its own "never seen" state,
+    distinct from a specific named worker having gone stale).
+
+    `long_call_seconds` is `PROVIDER_TIMEOUT_SECONDS` x 2 (design decision 3): work running longer
+    than that is flagged. Two queries for ALL workers' work, not one per worker.
+    """
+    rows = db.scalars(select(WorkerHeartbeat).order_by(WorkerHeartbeat.worker_name)).all()
+    runs = _leased_run_work(db, now=now, lease_minutes=run_lease_minutes, long_call_seconds=long_call_seconds)
+    jobs = _leased_job_work(db, now=now, lease_minutes=job_lease_minutes, long_call_seconds=long_call_seconds)
     return [
         WorkerStatus(
             worker_name=row.worker_name,
@@ -63,6 +164,8 @@ def worker_statuses(db: Session, *, now: datetime) -> list[WorkerStatus]:
             seconds_since=(now - row.last_seen_at).total_seconds(),
             is_stale=(now - row.last_seen_at).total_seconds() > WORKER_STALE_THRESHOLD_SECONDS,
             dry_run=row.dry_run,
+            current_run=runs.get(row.worker_name),
+            current_job=jobs.get(row.worker_name),
         )
         for row in rows
     ]

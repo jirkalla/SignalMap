@@ -1,0 +1,88 @@
+{#- Worker panel (docs/TASKS_SCHEDULER_OPS.md design decision 3). Swapped whole by HTMX every 10 s
+    from /schedules/workers; also included by index.html for the first paint. -#}
+<div id="workers-live" hx-get="/schedules/workers" hx-trigger="every 10s" hx-swap="outerHTML" class="mb-4">
+{% if workers %}
+  {#- desktop: one table -#}
+  <div class="hidden md:block overflow-x-auto bg-white border border-stone-200 rounded-lg">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-stone-50 text-stone-500 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="py-2.5 px-4 font-medium">{{ t('schedules.workers_column_worker') }}</th>
+          <th class="py-2.5 px-4 font-medium">{{ t('common.status') }}</th>
+          <th class="py-2.5 px-4 font-medium">{{ t('schedules.workers_column_signal') }}</th>
+          <th class="py-2.5 px-4 font-medium">{{ t('schedules.workers_column_work') }}</th>
+          <th class="py-2.5 px-4 font-medium">{{ t('schedules.workers_column_running') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in workers %}
+        <tr class="border-t border-stone-100">
+          <td class="py-2.5 px-4 font-medium text-stone-800 whitespace-nowrap">{{ w.worker_name }}</td>
+          <td class="py-2.5 px-4">
+            <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium {{ 'bg-red-50 border-red-200 text-red-800' if w.is_stale else ('bg-amber-50 border-amber-200 text-amber-800' if w.dry_run else 'bg-emerald-50 border-emerald-200 text-emerald-800') }}">
+              <span class="w-1.5 h-1.5 rounded-full {{ 'bg-red-500' if w.is_stale else ('bg-amber-500' if w.dry_run else 'bg-emerald-500') }}"></span>
+              {{ t('schedules.worker_state_stale') if w.is_stale else (t('schedules.worker_state_dry_run') if w.dry_run else t('schedules.worker_state_running')) }}
+            </span>
+          </td>
+          <td class="py-2.5 px-4 text-stone-500 whitespace-nowrap">{{ t('schedules.workers_signal_ago').format(duration=w.last_signal) }}</td>
+          <td class="py-2.5 px-4 text-stone-700">
+            {% if w.work %}
+              {% if w.work.kind != 'run' %}<span class="text-stone-500">{{ t('schedules.work_kind_' ~ w.work.kind) }} · </span>{% endif %}
+              {{ w.work.client_name }} · {{ w.work.model_name }}
+              {% if w.work.run_id %}· <a href="/runs/{{ w.work.run_id }}" class="text-stone-600 hover:underline">#{{ w.work.run_id }}</a>{% endif %}
+            {% elif w.is_stale %}
+              <span class="text-stone-400">—</span>
+            {% else %}
+              <span class="text-stone-400">{{ t('schedules.worker_idle') }}</span>
+            {% endif %}
+          </td>
+          <td class="py-2.5 px-4 whitespace-nowrap">
+            {% if w.work %}
+            <span class="{{ 'text-amber-700 font-medium' if w.work.is_long else 'text-stone-600' }}">{{ w.work.duration }}</span>
+            {% if w.work.is_long %}<span class="ml-1 text-xs rounded-full border border-amber-200 bg-amber-50 text-amber-800 px-2 py-0.5">{{ t('schedules.worker_long_call') }}</span>{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {#- mobile: one card per worker -#}
+  <div class="md:hidden space-y-2">
+    {% for w in workers %}
+    <div class="border rounded-lg p-3 bg-white {{ 'border-red-200' if w.is_stale else 'border-stone-200' }}">
+      <div class="flex items-center justify-between gap-2">
+        <span class="flex items-center gap-2 font-medium text-sm text-stone-800">
+          <span class="w-2 h-2 rounded-full shrink-0 {{ 'bg-red-500' if w.is_stale else ('bg-amber-500' if w.dry_run else 'bg-emerald-500') }}"></span>{{ w.worker_name }}
+        </span>
+        <span class="text-xs font-medium rounded-full border px-2 py-0.5 {{ 'bg-red-50 border-red-200 text-red-800' if w.is_stale else ('bg-amber-50 border-amber-200 text-amber-800' if w.dry_run else 'bg-emerald-50 border-emerald-200 text-emerald-800') }}">
+          {{ t('schedules.worker_state_stale') if w.is_stale else (t('schedules.worker_state_dry_run') if w.dry_run else t('schedules.worker_state_running')) }}
+        </span>
+      </div>
+      <div class="text-xs text-stone-600 mt-1.5 break-words">
+        {% if w.work %}
+          {% if w.work.kind != 'run' %}{{ t('schedules.work_kind_' ~ w.work.kind) }} · {% endif %}{{ w.work.client_name }} · {{ w.work.model_name }}
+          {% if w.work.run_id %}· <a href="/runs/{{ w.work.run_id }}" class="hover:underline">#{{ w.work.run_id }}</a>{% endif %}
+        {% elif w.is_stale %}—
+        {% else %}<span class="text-stone-400">{{ t('schedules.worker_idle') }}</span>{% endif %}
+      </div>
+      <div class="text-xs text-stone-400 mt-1">
+        {{ t('schedules.workers_signal_ago').format(duration=w.last_signal) }}
+        {% if w.work %}
+        · <span class="{{ 'text-amber-700 font-medium' if w.work.is_long else '' }}">{{ t('schedules.workers_running_for').format(duration=w.work.duration) }}</span>
+        {% if w.work.is_long %}<span class="ml-1 rounded-full border border-amber-200 bg-amber-50 text-amber-800 px-2 py-0.5">{{ t('schedules.worker_long_call') }}</span>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if workers|selectattr('dry_run')|list %}
+  <p class="text-xs text-amber-800 mt-2">{{ t('schedules.worker_dry_run_badge') }}</p>
+  {% endif %}
+{% else %}
+  <div class="flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm bg-red-50 border-red-200 text-red-800">
+    <span class="w-2 h-2 rounded-full shrink-0 bg-red-500"></span>
+    <span>{{ t('schedules.worker_never_seen') }}</span>
+  </div>
+{% endif %}
+</div>

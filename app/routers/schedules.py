@@ -24,6 +24,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth import current_active_user, require_role
+from app.config import get_settings
 from app.database import get_db
 from app.errors import AppError
 from app.models import AIModel, Client, Persona, PromptSet, User
@@ -45,6 +46,7 @@ from app.services.schedule_monitor import (
     worker_statuses,
 )
 from app.services.scheduling import ScheduleOccurrenceInput, compute_next_run_at, max_end_date, upcoming_occurrences
+from app.services.verification_queue import DEFAULT_LEASE_MINUTES
 from app.templating import get_t, render
 from app.utils import current_prompt_version, market_options, persona_options
 
@@ -1083,6 +1085,61 @@ def mark_notifications_read(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(url=referer, status_code=303)
 
 
+def _worker_panel_rows(db: Session, t, now: datetime) -> list[dict]:  # noqa: ANN001
+    """Rows for the worker panel (docs/TASKS_SCHEDULER_OPS.md design decision 3), shared by the
+    full page and the `/schedules/workers` HTMX fragment so both show the same thing.
+
+    Also where a stale worker is detected: the worker cannot report its own death, only the web
+    app on a view of this page can (design decision, T8). Cooldown-guarded internally so a stale
+    worker doesn't generate one notification per page load or 10 s refresh.
+    """
+    settings = get_settings()
+    rows = []
+    for worker_status in worker_statuses(
+        db,
+        now=now,
+        run_lease_minutes=settings.scheduler_lease_minutes,
+        job_lease_minutes=DEFAULT_LEASE_MINUTES,
+        long_call_seconds=settings.provider_timeout_seconds * 2,
+    ):
+        if worker_status.is_stale:
+            notify_worker_stale(db, worker_name=worker_status.worker_name, seconds_since=worker_status.seconds_since, now=now)
+        work = worker_status.current_work
+        rows.append(
+            {
+                "worker_name": worker_status.worker_name,
+                "is_stale": worker_status.is_stale,
+                "dry_run": worker_status.dry_run,
+                "last_signal": format_duration_short(t, worker_status.seconds_since),
+                # A stale worker's lease is still in the table until reclaimed, but "working on X
+                # for 3 min" would be a claim about a process that isn't answering.
+                "work": None
+                if work is None or worker_status.is_stale
+                else {
+                    "kind": work.kind,
+                    "client_name": work.client_name,
+                    "model_name": work.model_name,
+                    "run_id": work.run_id,
+                    "duration": format_duration_short(t, work.seconds),
+                    "is_long": work.is_long,
+                },
+            }
+        )
+    return rows
+
+
+@router.get("/workers", dependencies=_editor_or_admin)
+def schedules_workers(request: Request, db: Session = Depends(get_db)):
+    """Worker panel fragment — polled by HTMX every 10 s from the monitoring page.
+
+    Returns only the panel (`schedules/_workers.html`), so the refresh does not re-run the
+    queries of whichever view (schedules / queue / history) the user is looking at.
+    """
+    t = get_t(request)
+    workers = _worker_panel_rows(db, t, datetime.now(timezone.utc))
+    return render(request, "schedules/_workers.html", {"workers": workers})
+
+
 @router.get("", dependencies=_editor_or_admin)
 def schedules_monitor(
     request: Request,
@@ -1105,23 +1162,7 @@ def schedules_monitor(
     t = get_t(request)
     now = datetime.now(timezone.utc)
 
-    workers = []
-    for worker_status in worker_statuses(db, now=now):
-        if worker_status.is_stale:
-            # The worker itself cannot report its own death — only the web app, on a view of
-            # this page, ever detects this (design decision, T8). Cooldown-guarded internally so
-            # a stale worker doesn't generate one notification per page load.
-            notify_worker_stale(db, worker_name=worker_status.worker_name, seconds_since=worker_status.seconds_since, now=now)
-        workers.append(
-            {
-                "worker_name": worker_status.worker_name,
-                "text": t("schedules.worker_stale" if worker_status.is_stale else "schedules.worker_running").format(
-                    duration=format_duration_short(t, worker_status.seconds_since)
-                ),
-                "is_stale": worker_status.is_stale,
-                "dry_run": worker_status.dry_run,
-            }
-        )
+    workers = _worker_panel_rows(db, t, now)
 
     context = {"view": view, "status": status, "q": q, "page": page, "workers": workers}
     context.update(_notification_context(db, t))

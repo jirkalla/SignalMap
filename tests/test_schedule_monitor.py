@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.i18n import get_translator
-from app.models import AIModel, Client, Persona, Prompt
+from app.models import AIModel, Client, Persona, Prompt, RawResponse, Run, VerificationJob
 from app.models.notification import WorkerHeartbeat
 from app.models.schedule import RunQueueItem
 from app.services.schedule_monitor import (
@@ -82,6 +82,119 @@ def test_worker_statuses_stale_threshold(db_session):
 
     assert statuses["fresh"].is_stale is False
     assert statuses["dead"].is_stale is True
+
+
+def _leased_item(db_session, sample_prompt, seed, *, worker: str, claimed_at: datetime, lease_minutes: int = 15, **overrides):
+    client = sample_prompt.prompt_set.client
+    return _make_queue_item(
+        db_session, prompt=sample_prompt, client=client, model=seed["model"], persona=seed["persona"],
+        status="leased", leased_by=worker, leased_until=claimed_at + timedelta(minutes=lease_minutes), **overrides,
+    )
+
+
+def test_worker_statuses_show_the_leased_run_each_worker_is_processing(db_session, seed, sample_prompt):
+    db_session.add_all(
+        [
+            WorkerHeartbeat(worker_name="worker-1", last_seen_at=NOW, dry_run=False),
+            WorkerHeartbeat(worker_name="worker-2", last_seen_at=NOW, dry_run=False),
+        ]
+    )
+    db_session.commit()
+    _leased_item(db_session, sample_prompt, seed, worker="worker-1", claimed_at=NOW - timedelta(seconds=40))
+
+    statuses = {s.worker_name: s for s in worker_statuses(db_session, now=NOW)}
+
+    work = statuses["worker-1"].current_run
+    assert work.kind == "run"
+    assert work.client_name == sample_prompt.prompt_set.client.name
+    assert work.seconds == 40  # age of the CURRENT claim (leased_until - lease), not started_at
+    assert work.is_long is False
+    assert statuses["worker-1"].current_job is None
+    assert statuses["worker-2"].current_work is None  # idle
+
+
+def test_worker_statuses_since_ignores_started_at_of_an_earlier_attempt(db_session, seed, sample_prompt):
+    db_session.add(WorkerHeartbeat(worker_name="worker-1", last_seen_at=NOW, dry_run=False))
+    db_session.commit()
+    _leased_item(
+        db_session, sample_prompt, seed, worker="worker-1", claimed_at=NOW - timedelta(seconds=10),
+        started_at=NOW - timedelta(hours=2),
+    )
+
+    work = worker_statuses(db_session, now=NOW)[0].current_run
+
+    assert work.seconds == 10
+
+
+def test_worker_statuses_flag_a_long_call(db_session, seed, sample_prompt):
+    db_session.add(WorkerHeartbeat(worker_name="worker-1", last_seen_at=NOW, dry_run=False))
+    db_session.commit()
+    _leased_item(db_session, sample_prompt, seed, worker="worker-1", claimed_at=NOW - timedelta(seconds=300))
+
+    assert worker_statuses(db_session, now=NOW, long_call_seconds=240)[0].current_run.is_long is True
+    assert worker_statuses(db_session, now=NOW, long_call_seconds=600)[0].current_run.is_long is False
+
+
+def test_worker_statuses_show_a_leased_verification_job(db_session, seed, sample_prompt):
+    run = Run(
+        prompt_id=sample_prompt.id, model_id=seed["model"].id, market_id=seed["market"].id,
+        persona_id=seed["persona"].id, trigger_type="manual", status="success",
+    )
+    db_session.add(run)
+    db_session.flush()
+    raw = RawResponse(run_id=run.id, raw_payload={}, rendered_text="x")
+    db_session.add(raw)
+    db_session.flush()
+    db_session.add_all(
+        [
+            WorkerHeartbeat(worker_name="worker-3", last_seen_at=NOW, dry_run=False),
+            VerificationJob(
+                raw_response_id=raw.id, kind="capture", status="leased", leased_by="worker-3",
+                lease_expires_at=NOW + timedelta(minutes=15) - timedelta(seconds=90),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    status = worker_statuses(db_session, now=NOW)[0]
+
+    assert status.current_run is None
+    assert status.current_job.kind == "capture"
+    assert status.current_job.run_id == run.id
+    assert status.current_job.seconds == 90
+
+
+def test_worker_statuses_are_sorted_by_name(db_session):
+    db_session.add_all(
+        [WorkerHeartbeat(worker_name=n, last_seen_at=NOW, dry_run=False) for n in ("worker-3", "worker-1", "worker-2")]
+    )
+    db_session.commit()
+
+    assert [s.worker_name for s in worker_statuses(db_session, now=NOW)] == ["worker-1", "worker-2", "worker-3"]
+
+
+def test_workers_fragment_route_renders_the_panel(admin_client, db_session, seed, sample_prompt):
+    db_session.add_all(
+        [
+            WorkerHeartbeat(worker_name="worker-1", last_seen_at=datetime.now(timezone.utc), dry_run=False),
+            WorkerHeartbeat(worker_name="worker-2", last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5), dry_run=False),
+        ]
+    )
+    db_session.commit()
+    claimed = datetime.now(timezone.utc) - timedelta(seconds=30)
+    _leased_item(db_session, sample_prompt, seed, worker="worker-1", claimed_at=claimed)
+
+    response = admin_client.get("/schedules/workers")
+
+    assert response.status_code == 200
+    assert 'id="workers-live"' in response.text
+    assert "worker-1" in response.text and "worker-2" in response.text
+    assert sample_prompt.prompt_set.client.name in response.text
+    assert "<html" not in response.text  # a fragment, not a full page
+
+
+def test_workers_fragment_route_requires_a_login(client):
+    assert client.get("/schedules/workers", follow_redirects=False).status_code in (303, 401, 403)
 
 
 def test_worker_statuses_empty_when_none_ever_reported(db_session):

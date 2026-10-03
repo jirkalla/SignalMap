@@ -50,22 +50,7 @@
   </div>
 </div>
 
-{% if workers %}
-{% for w in workers %}
-<div class="flex items-center gap-2 rounded-lg border px-4 py-2.5 mb-3 text-sm {{ 'bg-red-50 border-red-200 text-red-800' if w.is_stale else ('bg-amber-50 border-amber-200 text-amber-800' if w.dry_run else 'bg-emerald-50 border-emerald-200 text-emerald-800') }}">
-  <span class="w-2 h-2 rounded-full shrink-0 {{ 'bg-red-500' if w.is_stale else ('bg-amber-500' if w.dry_run else 'bg-emerald-500') }}"></span>
-  <span>{{ w.text }}</span>
-  {% if w.dry_run and not w.is_stale %}
-  <span class="text-xs font-medium">· {{ t('schedules.worker_dry_run_badge') }}</span>
-  {% endif %}
-</div>
-{% endfor %}
-{% else %}
-<div class="flex items-center gap-2 rounded-lg border px-4 py-2.5 mb-3 text-sm bg-red-50 border-red-200 text-red-800">
-  <span class="w-2 h-2 rounded-full shrink-0 bg-red-500"></span>
-  <span>{{ t('schedules.worker_never_seen') }}</span>
-</div>
-{% endif %}
+{% include 'schedules/_workers.html' %}
 
 <div class="flex gap-1 mb-5 border-b border-stone-200">
   {% for tab_view, label_key in [('schedules', 'schedules.monitor_tab_schedules'), ('queue', 'schedules.monitor_tab_queue'), ('history', 'schedules.monitor_tab_history')] %}
